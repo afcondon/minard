@@ -86,7 +86,8 @@ type Config =
   , projectPackages :: Set String  -- Packages our project uses
   , maxTopoLayer :: Int
   , colorMode :: ColorMode  -- How to color the packages
-  , onPackageClick :: Maybe (String -> Effect Unit)  -- packageName -> Effect
+  , onPackageClick :: Maybe (String -> Effect Unit)  -- Circle click: packageName -> Effect
+  , onPackageLabelClick :: Maybe (String -> Effect Unit)  -- Label click: packageName -> Effect
   , enableHighlighting :: Boolean  -- Enable coordinated highlighting on hover
   }
 
@@ -254,7 +255,9 @@ prepareNodeAtPosition
 prepareNodeAtPosition config dateRange cumulativeX positionMap dependedOnByMap idx pkg =
   let
     padding = 60.0
-    targetX = padding + getLayerX pkg.topoLayer cumulativeX - config.width / 2.0
+    -- Low topo layer (prelude) LEFT, high topo layer (apps) RIGHT
+    layerX = getLayerX pkg.topoLayer cumulativeX
+    targetX = padding + layerX - config.width / 2.0
 
     kloc = toNumber pkg.totalLoc / 1000.0
     r = 8.0 + sqrt (max 0.1 kloc) * 5.0
@@ -298,7 +301,9 @@ prepareNode :: Config -> DateRange -> Array Number -> Map String (Array String) 
 prepareNode config dateRange cumulativeX dependedOnByMap idx pkg =
   let
     padding = 60.0
-    targetX = padding + getLayerX pkg.topoLayer cumulativeX - config.width / 2.0
+    -- Low topo layer (prelude) LEFT, high topo layer (apps) RIGHT
+    layerX = getLayerX pkg.topoLayer cumulativeX
+    targetX = padding + layerX - config.width / 2.0
 
     kloc = toNumber pkg.totalLoc / 1000.0
     r = 8.0 + sqrt (max 0.1 kloc) * 5.0
@@ -525,9 +530,9 @@ createPackageNodesTree config nodes =
 packageNodeHATS :: Config -> PackageNode -> Tree
 packageNodeHATS config node =
   let
-    -- Build behaviors based on config
-    behaviors =
-      (if config.enableHighlighting
+    -- Highlighting behavior on the Group
+    highlightBehaviors =
+      if config.enableHighlighting
         then [ onCoordinatedHighlight
                  { identify: node.pkg.name
                  , classify: \hoveredPkg ->
@@ -540,12 +545,19 @@ packageNodeHATS config node =
                  , group: Nothing  -- Global coordination
                  }
              ]
-        else [])
-      <> case config.onPackageClick of
-           Just clickHandler -> [ onClick (clickHandler node.pkg.name) ]
-           Nothing -> []
+        else []
+
+    -- Circle click behavior (neighborhood view)
+    circleBehaviors = case config.onPackageClick of
+      Just clickHandler -> [ onClick (clickHandler node.pkg.name) ]
+      Nothing -> []
+
+    -- Label click behavior (treemap view)
+    labelBehaviors = case config.onPackageLabelClick of
+      Just clickHandler -> [ onClick (clickHandler node.pkg.name) ]
+      Nothing -> []
   in
-    withBehaviors behaviors $
+    withBehaviors highlightBehaviors $
       elem Group
         [ thunkedStr "transform" ("translate(" <> show node.x <> "," <> show node.y <> ")")
         , thunkedStr "class" ("package-group" <> if node.isUsed then " project-package" else "")
@@ -553,32 +565,34 @@ packageNodeHATS config node =
         , thunkedStr "data-name" node.pkg.name
         , thunkedStr "data-layer" (show node.pkg.topoLayer)
         ]
-        [ -- Package circle
-          elem Circle
-            [ staticStr "cx" "0"
-            , staticStr "cy" "0"
-            , thunkedNum "r" node.r
-            , thunkedStr "fill" node.color
-            , staticStr "stroke" "#333"
-            , thunkedStr "stroke-width" (if node.isUsed then "1.5" else "0.5")
-            , staticStr "opacity" "1.0"
-            , staticStr "cursor" "pointer"
-            , staticStr "class" "package-circle"  -- For CSS transitions
-            ]
-            []
-        , -- Package name label (shown on highlight via CSS)
-          elem Text
-            [ staticStr "x" "0"
-            , thunkedStr "y" (show (node.r + 12.0))  -- Below the circle
-            , staticStr "text-anchor" "middle"
-            , staticStr "font-size" "9"
-            , staticStr "font-family" "'Courier New', monospace"
-            , staticStr "fill" "#fff"
-            , staticStr "class" "package-label"
-            , staticStr "pointer-events" "none"
-            , thunkedStr "textContent" node.pkg.name
-            ]
-            []
+        [ -- Package circle (click → neighborhood view)
+          withBehaviors circleBehaviors $
+            elem Circle
+              [ staticStr "cx" "0"
+              , staticStr "cy" "0"
+              , thunkedNum "r" node.r
+              , thunkedStr "fill" node.color
+              , staticStr "stroke" "#333"
+              , thunkedStr "stroke-width" (if node.isUsed then "1.5" else "0.5")
+              , staticStr "opacity" "1.0"
+              , staticStr "cursor" "pointer"
+              , staticStr "class" "package-circle"  -- For CSS transitions
+              ]
+              []
+        , -- Package name label (click → treemap view)
+          withBehaviors labelBehaviors $
+            elem Text
+              [ staticStr "x" "0"
+              , thunkedStr "y" (show (node.r + 12.0))  -- Below the circle
+              , staticStr "text-anchor" "middle"
+              , staticStr "font-size" "9"
+              , staticStr "font-family" "'Courier New', monospace"
+              , staticStr "fill" "#fff"
+              , staticStr "class" "package-label"
+              , staticStr "cursor" "pointer"  -- Indicate clickable
+              , thunkedStr "textContent" node.pkg.name
+              ]
+              []
         ]
 
 -- =============================================================================

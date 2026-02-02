@@ -180,12 +180,16 @@ impl LoadPipeline {
         stats.dependencies_loaded = package_deps.len();
 
         // Create workspace package for local modules
+        // Use the spago package name (for dependency resolution) but keep path in description
+        let workspace_pkg_name = spago_lock
+            .root_workspace_name()
+            .unwrap_or_else(|| project_name.to_string());
         let workspace_pkg_id = self.id_gen.next_package_id();
         let workspace_pkg = PackageVersion {
             id: workspace_pkg_id,
-            name: project_name.to_string(),
+            name: workspace_pkg_name.clone(),
             version: "0.0.0".to_string(),
-            description: Some(format!("Workspace package for {}", project_name)),
+            description: Some(format!("Workspace package at {}", project_name)),
             license: None,
             repository: None,
             source: "workspace".to_string(),
@@ -207,6 +211,20 @@ impl LoadPipeline {
             stats.packages_loaded += 1;
         } else {
             stats.packages_reused += 1;
+        }
+
+        // Add dependencies for the workspace package (from spago.lock root package)
+        let ws_deps: Vec<PackageDependency> = spago_lock
+            .root_workspace_dependencies()
+            .into_iter()
+            .map(|dep_name| PackageDependency {
+                dependent_id: workspace_pkg_id,
+                dependency_name: dep_name,
+            })
+            .collect();
+        if !ws_deps.is_empty() {
+            insert_package_dependencies(conn, &ws_deps)?;
+            stats.dependencies_loaded += ws_deps.len();
         }
 
         // Create snapshot_packages with actual IDs

@@ -81,7 +81,8 @@ type Config =
 
 -- | Callbacks for user interactions
 type Callbacks =
-  { onPackageClick :: String -> Effect Unit  -- Package name
+  { onPackageClick :: String -> Effect Unit  -- Circle click: package name → neighborhood view
+  , onPackageLabelClick :: String -> Effect Unit  -- Label click: package name → treemap view
   , onPackageHover :: Maybe String -> Effect Unit  -- Package name or Nothing
   , onModuleClick :: String -> String -> Effect Unit  -- Package name, Module name
   , onModuleHover :: String -> Maybe String -> Effect Unit  -- Package name, Maybe module name
@@ -515,10 +516,10 @@ createPackageNodesTree callbacks nodes =
 -- | Package node template using HATS
 packageNodeHATS :: Callbacks -> PackedPackageNode -> Tree
 packageNodeHATS callbacks node =
+  -- Hover behaviors on the Group (affects all children)
   withBehaviors
     [ onMouseEnter (callbacks.onPackageHover (Just node.name))
     , onMouseLeave (callbacks.onPackageHover Nothing)
-    , onClick (callbacks.onPackageClick node.name)
     ]
   $ elem Group
       [ thunkedStr "transform" ("translate(" <> show node.x <> "," <> show node.y <> ")")
@@ -527,8 +528,9 @@ packageNodeHATS callbacks node =
       , thunkedStr "data-name" node.name
       , staticStr "cursor" "pointer"
       ]
-      ( [ -- Package enclosing circle (translucent)
-          elem Circle
+      ( [ -- Package enclosing circle (click → neighborhood view)
+          withBehaviors [ onClick (callbacks.onPackageClick node.name) ]
+          $ elem Circle
             [ staticStr "class" "package-circle"
             , staticStr "cx" "0"
             , staticStr "cy" "0"
@@ -543,8 +545,9 @@ packageNodeHATS callbacks node =
         -- Module circles inside
         <> map (moduleCircleHATS callbacks node) node.modules
         <>
-        [ -- Package label below
-          elem Text
+        [ -- Package label below (click → treemap view)
+          withBehaviors [ onClick (callbacks.onPackageLabelClick node.name) ]
+          $ elem Text
             [ staticStr "class" "package-label"
             , thunkedNum "y" (node.r + 15.0)
             , staticStr "text-anchor" "middle"
@@ -552,6 +555,7 @@ packageNodeHATS callbacks node =
             , staticStr "font-size" "11px"
             , staticStr "font-weight" "500"
             , staticStr "font-family" "system-ui, sans-serif"
+            , staticStr "cursor" "pointer"  -- Indicate clickable
             , thunkedStr "textContent" node.name
             ]
             []

@@ -1,0 +1,60 @@
+# Minard Code Explorer - Local Docker Setup
+#
+# Usage:
+#   docker compose -f docker-compose.local.yml up --build
+#
+# Access at: http://localhost:8080/code/
+#
+# This mirrors the MacMini deployment but runs locally.
+
+services:
+  # API Backend (Node.js + DuckDB)
+  minard-backend:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: minard-backend
+    networks:
+      - minard-local
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+  # Frontend (nginx serving static files)
+  minard-frontend:
+    build:
+      context: ./frontend
+    container_name: minard-frontend
+    networks:
+      - minard-local
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/code/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Reverse proxy to route /code/api/* to backend, /code/* to frontend
+  minard-proxy:
+    image: nginx:alpine
+    container_name: minard-proxy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-local.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - minard-backend
+      - minard-frontend
+    networks:
+      - minard-local
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/code/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+networks:
+  minard-local:
+    driver: bridge

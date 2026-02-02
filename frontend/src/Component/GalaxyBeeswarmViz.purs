@@ -55,7 +55,8 @@ type Input =
 
 -- | Output to parent
 data Output
-  = PackageClicked String  -- Package name
+  = PackageClicked String       -- Circle click: package name → neighborhood view
+  | PackageLabelClicked String  -- Label click: package name → treemap view
   | PackageHovered (Maybe String)
 
 -- | Slot type for parent component
@@ -80,7 +81,8 @@ data Action
   = Initialize
   | Receive Input
   | Finalize
-  | HandlePackageClick String
+  | HandlePackageClick String       -- Circle click → neighborhood view
+  | HandlePackageLabelClick String  -- Label click → treemap view
   | HandlePackageHover (Maybe String)
 
 -- =============================================================================
@@ -213,8 +215,12 @@ handleAction = case _ of
       pure unit
 
   HandlePackageClick packageName -> do
-    log $ "[GalaxyBeeswarmViz] Package clicked: " <> packageName
+    log $ "[GalaxyBeeswarmViz] Package circle clicked: " <> packageName
     H.raise (PackageClicked packageName)
+
+  HandlePackageLabelClick packageName -> do
+    log $ "[GalaxyBeeswarmViz] Package label clicked: " <> packageName
+    H.raise (PackageLabelClicked packageName)
 
   HandlePackageHover mPackageName -> do
     H.raise (PackageHovered mPackageName)
@@ -257,8 +263,9 @@ startVisualization input = do
 
   -- Render beeswarm with filtered packages
   let filteredPkgs = filterPackagesByScope input.scope input.packages
-      clickHandler = makeClickHandler state.actionListener
-  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.initialPositions clickHandler
+      circleClickHandler = makeClickHandler state.actionListener HandlePackageClick
+      labelClickHandler = makeClickHandler state.actionListener HandlePackageLabelClick
+  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.initialPositions circleClickHandler labelClickHandler
 
   -- Store handle (initialPositions consumed from input, not stored in state)
   H.modify_ _ { handle = Just handle, initialized = true }
@@ -300,9 +307,10 @@ renderBeeswarmWithPositions
   -> Array Loader.PackageSetPackage
   -> ColorMode
   -> Maybe (Array InitialPosition)
-  -> Maybe (String -> Effect Unit)  -- Click handler
+  -> Maybe (String -> Effect Unit)  -- Circle click handler (neighborhood view)
+  -> Maybe (String -> Effect Unit)  -- Label click handler (treemap view)
   -> Effect Beeswarm.BeeswarmHandle
-renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPositions mClickHandler = do
+renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPositions mCircleClick mLabelClick = do
   let maxLayer = Array.foldl (\acc pkg -> max acc pkg.topoLayer) 0 allPackages
       config :: Beeswarm.Config
       config =
@@ -312,7 +320,8 @@ renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPosit
         , projectPackages: Set.fromFoldable projectPackages
         , maxTopoLayer: maxLayer
         , colorMode: colorMode
-        , onPackageClick: mClickHandler
+        , onPackageClick: mCircleClick           -- Circle → neighborhood
+        , onPackageLabelClick: mLabelClick       -- Label → treemap
         , enableHighlighting: true
         }
 
@@ -326,9 +335,9 @@ renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPosit
       Beeswarm.render config filteredPackages
 
 -- | Build click handler that routes D3 events to Halogen actions via the listener
-makeClickHandler :: Maybe (HS.Listener Action) -> Maybe (String -> Effect Unit)
-makeClickHandler mListener = case mListener of
+makeClickHandler :: Maybe (HS.Listener Action) -> (String -> Action) -> Maybe (String -> Effect Unit)
+makeClickHandler mListener mkAction = case mListener of
   Just listener -> Just $ \packageName ->
-    HS.notify listener (HandlePackageClick packageName)
+    HS.notify listener (mkAction packageName)
   Nothing -> Nothing
 

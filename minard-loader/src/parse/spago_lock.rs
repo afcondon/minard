@@ -123,12 +123,56 @@ impl SpagoLock {
             });
         }
 
+        // Workspace packages (their deps are in core.dependencies)
+        for (name, ws_pkg) in &self.workspace.packages {
+            let dependencies = ws_pkg
+                .core
+                .as_ref()
+                .map(|c| c.dependencies.clone())
+                .unwrap_or_default();
+            result.push(PackageInfo {
+                name: name.clone(),
+                version: "0.0.0".to_string(),
+                source: "workspace".to_string(),
+                dependencies,
+            });
+        }
+
         result
     }
 
     /// Get workspace package names
     pub fn workspace_packages(&self) -> Vec<String> {
         self.workspace.packages.keys().cloned().collect()
+    }
+
+    /// Get dependencies for the root workspace package (path = "." or "./")
+    /// This is the main project package that we load modules from
+    pub fn root_workspace_dependencies(&self) -> Vec<String> {
+        for (_name, ws_pkg) in &self.workspace.packages {
+            // Handle both "." and "./" as root path
+            if ws_pkg.path == "." || ws_pkg.path == "./" {
+                return ws_pkg
+                    .core
+                    .as_ref()
+                    .map(|c| c.dependencies.clone())
+                    .unwrap_or_default();
+            }
+        }
+        // Fallback: if no root package found, return empty
+        Vec::new()
+    }
+
+    /// Get the name of the root workspace package (path = "." or "./")
+    /// This is the spago.yaml package name, used for dependency resolution
+    pub fn root_workspace_name(&self) -> Option<String> {
+        for (name, ws_pkg) in &self.workspace.packages {
+            // Handle both "." and "./" as root path
+            if ws_pkg.path == "." || ws_pkg.path == "./" {
+                return Some(name.clone());
+            }
+        }
+        None
     }
 }
 

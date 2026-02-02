@@ -41,7 +41,8 @@ export const buildPackagesJson = (rows) => {
     moduleCount: Number(row.module_count) || 0,
     declarationCount: Number(row.declaration_count) || 0,
     totalLoc: Number(row.total_loc) || 0,
-    depends: row.depends ? row.depends.split(',').filter(d => d.trim()) : []
+    depends: row.depends ? row.depends.split(',').filter(d => d.trim()) : [],
+    topoLayer: row.topo_layer != null ? Number(row.topo_layer) : 0
   }));
   return JSON.stringify({ packages, count: packages.length });
 };
@@ -55,6 +56,7 @@ export const buildPackageWithModulesJson = (pkg) => (modules) => {
     license: pkg.license || null,
     repository: pkg.repository || null,
     source: pkg.source || 'registry',
+    depends: pkg.depends ? pkg.depends.split(',').filter(d => d.trim()) : [],
     modules: (modules || []).map(m => ({
       id: Number(m.id),
       name: m.name,

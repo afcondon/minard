@@ -1,100 +1,47 @@
--- | Data loading and transformation
+-- | Data loading from Minard V2 API
 -- |
--- | Loads JSON data from ce-server API and transforms into SimNode/SimLink arrays with
--- | pre-calculated positions for Grid, Orbit, and Tree scenes.
--- |
--- | Supports multi-project/snapshot selection via:
--- | - fetchProjects: get available projects with their snapshots
--- | - loadModelForSnapshot: load model for a specific snapshot ID
--- | - loadModel: (legacy) loads latest snapshot for backward compatibility
+-- | Loads data from the unified schema API and transforms into visualization-ready structures.
 module CE2.Data.Loader
-  ( loadModel
-  , loadModelForSnapshot
-  , loadModelForProject
-  , fetchProjects
-  , fetchProjectWithSnapshots
-  , fetchFunctionCalls
-  -- Granular on-demand fetchers
-  , fetchModuleDeclarations
-  , fetchModuleDeclarationsWithSource
-  , fetchModuleFunctionCalls
-  , fetchModuleMetrics
-  , fetchCallGraphData
-  , ModuleDeclarationsResponse
-  , ModuleFunctionCallsResponse
-  -- Batch fetchers (single request for multiple modules)
-  , fetchBatchDeclarations
-  , fetchBatchFunctionCalls
-  , fetchBatchCoupling
-  -- Coupling metrics
-  , fetchCouplingMetrics
-  , DeclarationCoupling
-  , CouplingMap
-  -- Package Sets (Registry)
-  , fetchPackageSets
-  , fetchPackageSet
-  , fetchPackageSetFromV2  -- New: loads from v2 API and converts to PackageSetData
+  ( -- API base
+    apiBaseUrl
+    -- Model types
+  , LoadedModel
+  , LoadedModelWithV2
+  , DeclarationsMap
+  , Declaration
+    -- Package Set types (for galaxy visualizations)
   , PackageSetInfo
   , PackageSetPackage
   , PackageSetData
-  -- Package Set History (GitHub)
-  , fetchDefaultHistory
-  , fetchPackageSetHistory
-  , TemporalPackageSet
-  , sampleVersions
-  -- Types
-  , LoadedModel
-  , Project
-  , Snapshot
-  , apiBaseUrl
-  , Declaration
-  , DeclarationWithSource
-  , DeclarationsMap
-  , FunctionCallsMap
-  , FunctionInfo
-  , CallInfo
-  , CallGraphData
-  , GitMetrics
-  -- ===========================================
-  -- Unified API v2 (new schema)
-  -- ===========================================
+    -- V2 API types
   , V2Stats
   , V2Package
   , V2Module
+  , V2ModuleListItem
+  , V2ModuleImports
+  , V2ModuleDeclarationStats
   , V2Declaration
   , V2ChildDeclaration
   , V2Namespace
   , V2SearchResult
   , V2FunctionCall
   , V2Import
-  , V2ModuleListItem  -- Needed by LoadedModelWithV2
-  , fetchV2Stats
-  , fetchV2Packages
-  , fetchV2Package
-  , fetchV2Modules
-  , fetchV2Module
-  , fetchV2ModuleDeclarations
-  , fetchV2ModuleImports
-  , fetchV2ModuleCalls
-  , fetchV2Namespaces
-  , fetchV2Namespace
-  , searchV2Declarations
-  -- New unified loader
-  , V2ModuleImports
-  , fetchV2AllImports
-  , loadModelFromV2
-  -- Extended loader with raw V2 data (for BeeswarmViz etc.)
-  , LoadedModelWithV2
-  , loadModelFromV2WithRaw
-  -- Module declaration stats (for bubble pack)
-  , V2ModuleDeclarationStats
-  , fetchV2ModuleDeclarationStats
-  -- Polyglot summary (for sunburst)
+    -- Polyglot types
   , PolyglotSummary
   , PolyglotBackend
   , PolyglotProject
   , PolyglotPackage
   , FfiLoc
+    -- Loaders
+  , loadModelFromV2WithRaw
+  , fetchPackageSetFromV2
+    -- V2 API fetchers
+  , fetchV2Stats
+  , fetchV2Packages
+  , fetchV2Modules
+  , fetchV2ModuleDeclarations
+  , fetchV2ModuleDeclarationStats
+  , fetchV2AllImports
   , fetchPolyglotSummary
   ) where
 
@@ -1096,27 +1043,13 @@ fetchPackageSetFromV2 = do
     Right $ v2ToPackageSetData v2Packages
 
 -- | Convert V2 packages to PackageSetData format
--- | Computes topological layers from package dependencies
+-- | Uses topoLayer from API (computed by loader, single source of truth)
 v2ToPackageSetData :: Array V2Package -> PackageSetData
 v2ToPackageSetData v2Packages =
   let
-    -- Build TaskNodes for topo sort using dependency data from API
-    packageTaskNodes :: Array (TopoAlgorithms.TaskNode String)
-    packageTaskNodes = v2Packages <#> \p ->
-      { id: p.name
-      , depends: p.depends
-      }
-
-    -- Get layered packages (each has id, layer, depends)
-    layeredPackages = TopoAlgorithms.addLayers packageTaskNodes
-
-    -- Build a map from package name to layer
-    layerMap :: Map String Int
-    layerMap = Map.fromFoldable $ layeredPackages <#> \lp -> Tuple lp.id lp.layer
-
-    -- Convert packages with computed topo layers
-    convertWithLayer :: V2Package -> PackageSetPackage
-    convertWithLayer pkg =
+    -- Convert packages using topoLayer from API
+    convert :: V2Package -> PackageSetPackage
+    convert pkg =
       { id: pkg.id
       , name: pkg.name
       , version: pkg.version
@@ -1125,7 +1058,7 @@ v2ToPackageSetData v2Packages =
       , repositoryOwner: Nothing
       , repositoryName: pkg.repository
       , depends: pkg.depends
-      , topoLayer: fromMaybe 0 (Map.lookup pkg.name layerMap)
+      , topoLayer: pkg.topoLayer  -- From API (computed by loader)
       , publishedAt: Nothing
       , releaseNumber: 0
       , moduleCount: pkg.moduleCount
@@ -1140,11 +1073,10 @@ v2ToPackageSetData v2Packages =
         , publishedAt: Nothing
         , packageCount: Array.length v2Packages
         }
-    , packages: map convertWithLayer v2Packages
+    , packages: map convert v2Packages
     }
 
--- | Convert a single V2Package to PackageSetPackage format (without topo layer)
--- | Note: Use v2ToPackageSetData instead to get proper topo layers
+-- | Convert a single V2Package to PackageSetPackage format
 v2PackageToPackageSetPackage :: V2Package -> PackageSetPackage
 v2PackageToPackageSetPackage pkg =
   { id: pkg.id
@@ -1155,7 +1087,7 @@ v2PackageToPackageSetPackage pkg =
   , repositoryOwner: Nothing  -- V2 API doesn't split repository
   , repositoryName: pkg.repository  -- Use full repo URL as name
   , depends: pkg.depends  -- From package_dependencies table
-  , topoLayer: 0  -- Use v2ToPackageSetData for proper layer computation
+  , topoLayer: pkg.topoLayer  -- From API (computed by loader)
   , publishedAt: Nothing
   , releaseNumber: 0
   , moduleCount: pkg.moduleCount
@@ -1262,6 +1194,7 @@ type V2Package =
   , declarationCount :: Int
   , totalLoc :: Int         -- Sum of all module LOC in this package
   , depends :: Array String -- Package dependency names
+  , topoLayer :: Int        -- Topological layer (0 = no deps, computed by loader)
   }
 
 -- | Package with modules from v2 API
@@ -1557,56 +1490,23 @@ transformV2ToModel v2Packages v2Modules v2Imports =
     packageIndexMap = Map.fromFoldable $ Array.mapWithIndex (\i p -> Tuple p.name i) v2Packages
 
     -- =========================================================================
-    -- Compute topological layers for packages
+    -- Use topological layers from API (computed by loader, single source of truth)
     -- =========================================================================
 
-    -- Derive package dependencies from module imports
-    derivedPackageDeps :: Map String (Set String)
-    derivedPackageDeps = foldl addModuleDeps Map.empty v2Modules
-      where
-        -- Get module's package name
-        modulePackageMap :: Map String String
-        modulePackageMap = Map.fromFoldable $ v2Modules <#> \m -> Tuple m.name m.package.name
-
-        addModuleDeps :: Map String (Set String) -> V2ModuleListItem -> Map String (Set String)
-        addModuleDeps acc mod =
-          let
-            thisPackage = mod.package.name
-            -- Get imports for this module
-            moduleImports = fromMaybe [] (Map.lookup mod.id importsMap)
-            -- Find packages of all imported modules
-            depPackages = Set.fromFoldable $ Array.mapMaybe (\impName -> Map.lookup impName modulePackageMap) moduleImports
-            -- Remove self-dependency
-            externalDeps = Set.delete thisPackage depPackages
-            -- Add to existing deps for this package
-            existing = fromMaybe Set.empty (Map.lookup thisPackage acc)
-          in
-            Map.insert thisPackage (Set.union existing externalDeps) acc
-
-    -- Convert packages to TaskNodes for topo sort
-    packageTaskNodes :: Array (TopoAlgorithms.TaskNode String)
-    packageTaskNodes = v2Packages <#> \p ->
-      { id: p.name
-      , depends: Array.fromFoldable $ fromMaybe Set.empty (Map.lookup p.name derivedPackageDeps)
-      }
-
-    -- Get layered packages (each has id, layer, depends)
-    layeredPackages = TopoAlgorithms.addLayers packageTaskNodes
-
-    -- Build a map from package name to layer
+    -- Build a map from package name to layer (using API-provided topoLayer)
     packageLayerMap :: Map String Int
-    packageLayerMap = Map.fromFoldable $ layeredPackages <#> \lp -> Tuple lp.id lp.layer
+    packageLayerMap = Map.fromFoldable $ v2Packages <#> \p -> Tuple p.name p.topoLayer
 
     -- Find max layer for positioning
-    maxLayer = fromMaybe 0 $ Foldable.maximum (layeredPackages <#> _.layer)
+    maxLayer = fromMaybe 0 $ Foldable.maximum (v2Packages <#> _.topoLayer)
 
     -- Count packages per layer for x-positioning within layer
     packagesByLayer :: Map Int (Array String)
-    packagesByLayer = foldl addToLayer Map.empty layeredPackages
+    packagesByLayer = foldl addToLayer Map.empty v2Packages
       where
-        addToLayer acc lp =
-          let existing = fromMaybe [] $ Map.lookup lp.layer acc
-          in Map.insert lp.layer (Array.snoc existing lp.id) acc
+        addToLayer acc pkg =
+          let existing = fromMaybe [] $ Map.lookup pkg.topoLayer acc
+          in Map.insert pkg.topoLayer (Array.snoc existing pkg.name) acc
 
     -- =========================================================================
     -- Create Package Nodes
@@ -1643,14 +1543,12 @@ transformV2ToModel v2Packages v2Modules v2Imports =
         tx = (toNumber maxLayer / 2.0 - toNumber layer) * topoLayerSpacing
         ty = (toNumber indexInLayer - toNumber countInLayer / 2.0 + 0.5) * topoNodeSpacing
 
-        -- Package dependencies (targets)
-        depPackageNames = fromMaybe Set.empty (Map.lookup pkg.name derivedPackageDeps)
-        targets = Array.mapMaybe (\n -> Map.lookup n packageIndexMap) (Array.fromFoldable depPackageNames)
+        -- Package dependencies (targets) - use API dependencies
+        targets = Array.mapMaybe (\n -> Map.lookup n packageIndexMap) pkg.depends
 
-        -- Package dependents (sources)
+        -- Package dependents (sources) - packages that have this package in their depends
         sources = Array.mapMaybe (\n -> Map.lookup n packageIndexMap) $
-          Array.filter (\otherName -> Set.member pkg.name (fromMaybe Set.empty (Map.lookup otherName derivedPackageDeps)))
-            (v2Packages <#> _.name)
+          Array.filter (\other -> Array.elem pkg.name other.depends) v2Packages <#> _.name
       in
         { id: idx
         , name: pkg.name
@@ -1790,11 +1688,11 @@ transformV2ToModel v2Packages v2Modules v2Imports =
     nodes = packageNodes <> moduleNodes
 
     -- Create Package records for model
-    -- depends is derived from module imports (derivedPackageDeps)
+    -- Use package dependencies from API (not derived from module imports)
     packages :: Array Package
     packages = v2Packages <#> \p ->
       { name: p.name
-      , depends: Array.fromFoldable $ fromMaybe Set.empty (Map.lookup p.name derivedPackageDeps)
+      , depends: p.depends  -- Package dependencies from API
       , modules: Array.filter (\m -> m.package.name == p.name) v2Modules <#> _.name
       }
 

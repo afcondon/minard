@@ -861,10 +861,14 @@ handleAction = case _ of
 
   HandleBubblePackBeeswarmOutput output -> case output of
     BubblePackBeeswarmViz.PackageClicked pkgName -> do
-      log $ "[SceneCoordinator] BubblePack package clicked: " <> pkgName
-      -- Open panel with package info, set focal to filter to neighborhood
+      log $ "[SceneCoordinator] BubblePack package circle clicked: " <> pkgName
+      -- Circle click → set focal to filter to neighborhood (stay in SolarSwarm)
       handleAction (OpenPackagePanel pkgName)
       handleAction (SetFocalPackage (Just pkgName))
+    BubblePackBeeswarmViz.PackageLabelClicked pkgName -> do
+      log $ "[SceneCoordinator] BubblePack package label clicked: " <> pkgName
+      -- Label click → package treemap (module-level detail)
+      handleAction (NavigateTo (PkgTreemap pkgName))
     BubblePackBeeswarmViz.PackageHovered mPkgName ->
       H.modify_ _ { hoveredPackage = mPkgName }
     BubblePackBeeswarmViz.ModuleClicked pkgName modName -> do
@@ -881,11 +885,15 @@ handleAction = case _ of
 
   HandleGalaxyBeeswarmOutput output -> case output of
     GalaxyBeeswarmViz.PackageClicked pkgName -> do
-      log $ "[SceneCoordinator] Galaxy package clicked: " <> pkgName
-      -- Set focal package and navigate to SolarSwarm with that package selected
+      log $ "[SceneCoordinator] Galaxy package circle clicked: " <> pkgName
+      -- Circle click → neighborhood view (SolarSwarm with focal package)
       handleAction (OpenPackagePanel pkgName)
       handleAction (SetFocalPackage (Just pkgName))
       handleAction (NavigateTo SolarSwarm)
+    GalaxyBeeswarmViz.PackageLabelClicked pkgName -> do
+      log $ "[SceneCoordinator] Galaxy package label clicked: " <> pkgName
+      -- Label click → package treemap (module-level detail)
+      handleAction (NavigateTo (PkgTreemap pkgName))
     GalaxyBeeswarmViz.PackageHovered mPkgName ->
       H.modify_ _ { hoveredPackage = mPkgName }
 

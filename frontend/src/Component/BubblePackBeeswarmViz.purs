@@ -58,7 +58,8 @@ type Input =
 
 -- | Output to parent
 data Output
-  = PackageClicked String  -- Package name
+  = PackageClicked String       -- Circle click: package name → neighborhood view
+  | PackageLabelClicked String  -- Label click: package name → treemap view
   | PackageHovered (Maybe String)
   | ModuleClicked String String  -- Package name, Module name
   | ModuleHovered String (Maybe String)  -- Package name, Maybe module name (Nothing = mouse left)
@@ -84,7 +85,8 @@ data Action
   = Initialize
   | Receive Input
   | Finalize
-  | HandlePackageClick String
+  | HandlePackageClick String       -- Circle click → neighborhood view
+  | HandlePackageLabelClick String  -- Label click → treemap view
   | HandlePackageHover (Maybe String)
   | HandleModuleClick String String  -- Package name, Module name
   | HandleModuleHover String (Maybe String)  -- Package name, Maybe module name
@@ -216,8 +218,12 @@ handleAction = case _ of
         log "[BubblePackBeeswarmViz] No handle to stop"
 
   HandlePackageClick packageName -> do
-    log $ "[BubblePackBeeswarmViz] Package clicked: " <> packageName
+    log $ "[BubblePackBeeswarmViz] Package circle clicked: " <> packageName
     H.raise (PackageClicked packageName)
+
+  HandlePackageLabelClick packageName -> do
+    log $ "[BubblePackBeeswarmViz] Package label clicked: " <> packageName
+    H.raise (PackageLabelClicked packageName)
 
   HandlePackageHover mPackageName -> do
     H.raise (PackageHovered mPackageName)
@@ -302,6 +308,9 @@ makeCallbacks :: Maybe (HS.Listener Action) -> BubblePackBeeswarm.Callbacks
 makeCallbacks mListener =
   { onPackageClick: \packageName -> case mListener of
       Just listener -> HS.notify listener (HandlePackageClick packageName)
+      Nothing -> pure unit
+  , onPackageLabelClick: \packageName -> case mListener of
+      Just listener -> HS.notify listener (HandlePackageLabelClick packageName)
       Nothing -> pure unit
   , onPackageHover: \mPackageName -> case mListener of
       Just listener -> HS.notify listener (HandlePackageHover mPackageName)
