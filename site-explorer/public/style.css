@@ -1,0 +1,355 @@
+    /*
+     * Rose Adler Art Deco Palette (inspired by Chéri binding, 1931)
+     * --navy: deep midnight blue
+     * --burgundy: rich wine red
+     * --gold: warm champagne gold
+     * --cream: soft ivory
+     * --blush: muted coral
+     * --taupe: warm grey
+     */
+    :root {
+      --navy: #1a1a2e;
+      --navy-light: #252541;
+      --burgundy: #722f37;
+      --burgundy-light: #8b3a44;
+      --gold: #c9a227;
+      --gold-light: #d4b84a;
+      --gold-pale: #f0e6c8;
+      --cream: #faf6ed;
+      --cream-dark: #ebe4d4;
+      --blush: #d4a574;
+      --taupe: #8a7f72;
+      --taupe-light: #a89f94;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Raleway', sans-serif;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--cream);
+    }
+
+    /* Main graph area */
+    #graph {
+      flex: 1;
+      background:
+        linear-gradient(135deg, var(--cream) 0%, var(--cream-dark) 100%);
+      position: relative;
+    }
+
+    /* Decorative corner accents à la Adler */
+    #graph::before,
+    #graph::after {
+      content: '';
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      border: 2px solid var(--gold);
+      opacity: 0.4;
+    }
+    #graph::before {
+      top: 20px;
+      left: 20px;
+      border-right: none;
+      border-bottom: none;
+    }
+    #graph::after {
+      bottom: 20px;
+      right: 20px;
+      border-left: none;
+      border-top: none;
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 350px;
+      background: var(--navy);
+      color: var(--cream);
+      padding: 1.5rem;
+      overflow-y: auto;
+      border-left: 3px solid var(--gold);
+      box-shadow: -4px 0 20px rgba(26, 26, 46, 0.3);
+    }
+
+    /* Art Deco decorative line */
+    #sidebar::before {
+      content: '';
+      display: block;
+      width: 40px;
+      height: 3px;
+      background: linear-gradient(90deg, var(--gold), var(--gold-light));
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.6rem;
+      font-weight: 400;
+      margin-bottom: 0.5rem;
+      color: var(--gold);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    h1::after {
+      content: '';
+      display: block;
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, var(--gold), transparent);
+      margin-top: 0.5rem;
+    }
+
+    h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.75rem;
+      color: var(--cream);
+      background: linear-gradient(90deg, var(--burgundy), var(--burgundy-light));
+      padding: 0.5rem 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      border-left: 3px solid var(--gold);
+    }
+
+    .stat {
+      margin: 0.5rem 0;
+      font-size: 0.9rem;
+      color: var(--cream-dark);
+      display: flex;
+      justify-content: space-between;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid rgba(201, 162, 39, 0.1);
+    }
+
+    .stat-value {
+      color: var(--gold);
+      font-weight: 600;
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.1rem;
+    }
+
+    #details { margin-top: 1rem; }
+    #details h3 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1rem;
+      color: var(--gold-light);
+      margin-bottom: 0.5rem;
+      font-weight: 400;
+    }
+
+    #details .field {
+      margin: 0.6rem 0;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid rgba(201, 162, 39, 0.1);
+    }
+
+    #details .label {
+      color: var(--taupe-light);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 0.2rem;
+    }
+
+    #details .value {
+      color: var(--cream);
+      word-break: break-all;
+      font-weight: 500;
+    }
+
+    #details a {
+      color: var(--gold);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    #details a:hover {
+      color: var(--gold-light);
+      text-decoration: underline;
+    }
+
+    /* Legend */
+    .legend { margin-top: 1rem; }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin: 0.5rem 0;
+      font-size: 0.85rem;
+      color: var(--cream-dark);
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 0.75rem;
+      border: 2px solid rgba(250, 246, 237, 0.3);
+      box-shadow: 0 0 4px rgba(0,0,0,0.2);
+    }
+
+    /* Graph nodes */
+    .node {
+      cursor: pointer;
+      stroke: var(--cream);
+      stroke-width: 2px;
+      filter: drop-shadow(0 2px 4px rgba(26, 26, 46, 0.3));
+      transition: all 0.2s;
+    }
+    .node:hover {
+      stroke: var(--gold);
+      stroke-width: 3px;
+      filter: drop-shadow(0 4px 8px rgba(26, 26, 46, 0.4));
+    }
+    .node.selected {
+      stroke: var(--gold);
+      stroke-width: 4px;
+      filter: drop-shadow(0 0 12px rgba(201, 162, 39, 0.6));
+    }
+
+    .link { stroke-opacity: 0.6; }
+
+    .label {
+      font-family: 'Raleway', sans-serif;
+      font-size: 9px;
+      fill: var(--navy);
+      pointer-events: none;
+      font-weight: 500;
+    }
+
+    .cluster-label {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 13px;
+      fill: var(--taupe);
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    /* Annotation form */
+    #annotation-form {
+      margin-top: 1.25rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid rgba(201, 162, 39, 0.3);
+    }
+
+    #annotation-form h3 {
+      font-family: 'Cormorant Garamond', serif;
+      color: var(--gold);
+      font-size: 1rem;
+      margin-bottom: 0.75rem;
+      letter-spacing: 0.05em;
+    }
+
+    #annotation-form select,
+    #annotation-form textarea,
+    #annotation-form input {
+      width: 100%;
+      margin: 0.4rem 0;
+      padding: 0.6rem 0.75rem;
+      background: var(--navy-light);
+      color: var(--cream);
+      border: 1px solid rgba(201, 162, 39, 0.3);
+      border-radius: 2px;
+      font-size: 0.9rem;
+      font-family: 'Raleway', sans-serif;
+    }
+
+    #annotation-form select:focus,
+    #annotation-form textarea:focus,
+    #annotation-form input:focus {
+      outline: none;
+      border-color: var(--gold);
+      box-shadow: 0 0 0 2px rgba(201, 162, 39, 0.2);
+    }
+
+    #annotation-form select option {
+      background: var(--navy);
+    }
+
+    #annotation-form label {
+      display: block;
+      margin-top: 0.6rem;
+      font-size: 0.7rem;
+      color: var(--taupe-light);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    #annotation-form button {
+      margin-top: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: linear-gradient(135deg, var(--gold), var(--gold-light));
+      color: var(--navy);
+      border: none;
+      border-radius: 2px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+      width: 100%;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      transition: all 0.2s;
+      box-shadow: 0 2px 8px rgba(201, 162, 39, 0.3);
+    }
+
+    #annotation-form button:hover {
+      background: linear-gradient(135deg, var(--gold-light), var(--gold));
+      box-shadow: 0 4px 12px rgba(201, 162, 39, 0.4);
+      transform: translateY(-1px);
+    }
+
+    #annotation-form button:disabled {
+      background: var(--taupe);
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .save-status {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      border-radius: 2px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .save-status.success {
+      background: rgba(201, 162, 39, 0.2);
+      color: var(--gold-light);
+      border: 1px solid var(--gold);
+    }
+    .save-status.error {
+      background: rgba(114, 47, 55, 0.3);
+      color: var(--blush);
+      border: 1px solid var(--burgundy);
+    }
+
+    .existing-annotation {
+      background: rgba(201, 162, 39, 0.1);
+      border: 1px solid rgba(201, 162, 39, 0.3);
+      border-radius: 2px;
+      padding: 0.6rem;
+      margin-bottom: 0.75rem;
+    }
+    .existing-annotation .label {
+      font-size: 0.7rem;
+      color: var(--gold);
+      letter-spacing: 0.1em;
+    }
+
+    /* Scrollbar styling */
+    #sidebar::-webkit-scrollbar {
+      width: 6px;
+    }
+    #sidebar::-webkit-scrollbar-track {
+      background: var(--navy-light);
+    }
+    #sidebar::-webkit-scrollbar-thumb {
+      background: var(--gold);
+      border-radius: 3px;
+    }
+  

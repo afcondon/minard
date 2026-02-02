@@ -1,0 +1,60 @@
+workspace:
+  packageSet:
+    registry: 67.0.1
+  extraPackages:
+    hylograph-selection:
+      path: "../../../visualisation libraries/purescript-hylograph-selection"
+    hylograph-graph:
+      path: "../../../visualisation libraries/purescript-hylograph-graph"
+    hylograph-layout:
+      path: "../../../visualisation libraries/purescript-hylograph-layout"
+    hylograph-transitions:
+      path: "../../../visualisation libraries/purescript-hylograph-transitions"
+    hylograph-simulation:
+      path: "../../../visualisation libraries/purescript-hylograph-simulation"
+    hylograph-simulation-core:
+      path: "../../../visualisation libraries/purescript-hylograph-simulation-core"
+    hylograph-d3-kernel:
+      path: "../../../visualisation libraries/purescript-hylograph-d3-kernel"
+
+package:
+  name: minard-site-explorer
+  description: "Minard Site Explorer: Route analysis and dead code detection"
+  dependencies:
+    # Core
+    - aff
+    - arrays
+    - console
+    - effect
+    - either
+    - foldable-traversable
+    - maybe
+    - ordered-collections
+    - prelude
+    - strings
+    - tuples
+    # Halogen
+    - halogen
+    - halogen-subscriptions
+    # Web
+    - web-dom
+    - web-html
+    - web-events
+    # Hylograph
+    - hylograph-selection
+    - hylograph-graph
+    - hylograph-layout
+    - hylograph-simulation
+    # Other
+    - refs
+    - nullable
+    # JSON
+    - argonaut-core
+    - argonaut-codecs
+    - foreign-object
+    - random
+
+  bundle:
+    module: SiteExplorer.Main
+    outfile: public/bundle.js
+    platform: browser

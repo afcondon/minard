@@ -1,0 +1,25 @@
+# Build artifacts
+node_modules/
+output/
+.spago/
+.psc-ide-port
+
+# Database files (large, regenerated)
+*.duckdb
+*.sqlite
+*.db
+database/_registry-index/
+database/.package-cache/
+
+# OS files
+.DS_Store
+
+# IDE
+.claude/
+
+# Bundles are generated
+frontend/public/bundle.js
+# Ignore test files
+frontend/test-*.js
+frontend/test-*.html
+*.duckdb

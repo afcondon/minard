@@ -1,0 +1,10 @@
+# Database files (regenerate with unified-loader)
+*.duckdb
+*.duckdb.wal
+
+# Node
+node_modules/
+
+# Generated
+*.pdf
+.package-cache/

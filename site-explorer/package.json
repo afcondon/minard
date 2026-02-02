@@ -1,0 +1,15 @@
+{
+  "name": "halogen-spider",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Analyze Halogen routing to find unused routes and orphaned modules",
+  "main": "bundle.js",
+  "scripts": {
+    "build": "spago build",
+    "bundle": "spago bundle --platform node --bundle-type app --outfile bundle.js",
+    "analyze": "node bundle.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.36.1"
+  }
+}

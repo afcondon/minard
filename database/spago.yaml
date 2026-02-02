@@ -1,0 +1,17 @@
+package:
+  name: minard-database
+  description: Minard - DuckDB schema and data layer
+  dependencies:
+    - aff
+    - aff-promise
+    - argonaut-core
+    - argonaut-codecs
+    - arrays
+    - effect
+    - either
+    - foreign
+    - foreign-object
+    - maybe
+    - nullable
+    - prelude
+    - transformers

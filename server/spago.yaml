@@ -1,0 +1,23 @@
+package:
+  name: minard-server
+  description: Minard - REST API server over DuckDB
+  dependencies:
+    - aff
+    - argonaut-core
+    - argonaut-codecs
+    - arrays
+    - minard-database
+    - console
+    - effect
+    - either
+    - foldable-traversable
+    - foreign
+    - foreign-object
+    - httpurple
+    - maybe
+    - node-buffer
+    - node-fs
+    - prelude
+    - strings
+    - transformers
+    - tuples

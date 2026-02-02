@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site Explorer — Rose Adler Edition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Raleway:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    /*
+     * Rose Adler Art Deco Palette (inspired by Chéri binding, 1931)
+     * --navy: deep midnight blue
+     * --burgundy: rich wine red
+     * --gold: warm champagne gold
+     * --cream: soft ivory
+     * --blush: muted coral
+     * --taupe: warm grey
+     */
+    :root {
+      --navy: #1a1a2e;
+      --navy-light: #252541;
+      --burgundy: #722f37;
+      --burgundy-light: #8b3a44;
+      --gold: #c9a227;
+      --gold-light: #d4b84a;
+      --gold-pale: #f0e6c8;
+      --cream: #faf6ed;
+      --cream-dark: #ebe4d4;
+      --blush: #d4a574;
+      --taupe: #8a7f72;
+      --taupe-light: #a89f94;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Raleway', sans-serif;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--cream);
+    }
+
+    /* Main graph area */
+    #graph {
+      flex: 1;
+      background:
+        linear-gradient(135deg, var(--cream) 0%, var(--cream-dark) 100%);
+      position: relative;
+    }
+
+    /* Decorative corner accents à la Adler */
+    #graph::before,
+    #graph::after {
+      content: '';
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      border: 2px solid var(--gold);
+      opacity: 0.4;
+    }
+    #graph::before {
+      top: 20px;
+      left: 20px;
+      border-right: none;
+      border-bottom: none;
+    }
+    #graph::after {
+      bottom: 20px;
+      right: 20px;
+      border-left: none;
+      border-top: none;
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 350px;
+      background: var(--navy);
+      color: var(--cream);
+      padding: 1.5rem;
+      overflow-y: auto;
+      border-left: 3px solid var(--gold);
+      box-shadow: -4px 0 20px rgba(26, 26, 46, 0.3);
+    }
+
+    /* Art Deco decorative line */
+    #sidebar::before {
+      content: '';
+      display: block;
+      width: 40px;
+      height: 3px;
+      background: linear-gradient(90deg, var(--gold), var(--gold-light));
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.6rem;
+      font-weight: 400;
+      margin-bottom: 0.5rem;
+      color: var(--gold);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    h1::after {
+      content: '';
+      display: block;
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, var(--gold), transparent);
+      margin-top: 0.5rem;
+    }
+
+    h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.75rem;
+      color: var(--cream);
+      background: linear-gradient(90deg, var(--burgundy), var(--burgundy-light));
+      padding: 0.5rem 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      border-left: 3px solid var(--gold);
+    }
+
+    .stat {
+      margin: 0.5rem 0;
+      font-size: 0.9rem;
+      color: var(--cream-dark);
+      display: flex;
+      justify-content: space-between;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid rgba(201, 162, 39, 0.1);
+    }
+
+    .stat-value {
+      color: var(--gold);
+      font-weight: 600;
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.1rem;
+    }
+
+    #details { margin-top: 1rem; }
+    #details h3 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1rem;
+      color: var(--gold-light);
+      margin-bottom: 0.5rem;
+      font-weight: 400;
+    }
+
+    #details .field {
+      margin: 0.6rem 0;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid rgba(201, 162, 39, 0.1);
+    }
+
+    #details .label {
+      color: var(--taupe-light);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 0.2rem;
+    }
+
+    #details .value {
+      color: var(--cream);
+      word-break: break-all;
+      font-weight: 500;
+    }
+
+    #details a {
+      color: var(--gold);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    #details a:hover {
+      color: var(--gold-light);
+      text-decoration: underline;
+    }
+
+    /* Legend */
+    .legend { margin-top: 1rem; }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin: 0.5rem 0;
+      font-size: 0.85rem;
+      color: var(--cream-dark);
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 0.75rem;
+      border: 2px solid rgba(250, 246, 237, 0.3);
+      box-shadow: 0 0 4px rgba(0,0,0,0.2);
+    }
+
+    /* Graph nodes */
+    .node {
+      cursor: pointer;
+      stroke: var(--cream);
+      stroke-width: 2px;
+      filter: drop-shadow(0 2px 4px rgba(26, 26, 46, 0.3));
+      transition: all 0.2s;
+    }
+    .node:hover {
+      stroke: var(--gold);
+      stroke-width: 3px;
+      filter: drop-shadow(0 4px 8px rgba(26, 26, 46, 0.4));
+    }
+    .node.selected {
+      stroke: var(--gold);
+      stroke-width: 4px;
+      filter: drop-shadow(0 0 12px rgba(201, 162, 39, 0.6));
+    }
+
+    .link { stroke-opacity: 0.6; }
+
+    .label {
+      font-family: 'Raleway', sans-serif;
+      font-size: 9px;
+      fill: var(--navy);
+      pointer-events: none;
+      font-weight: 500;
+    }
+
+    .cluster-label {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 13px;
+      fill: var(--taupe);
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    /* Annotation form */
+    #annotation-form {
+      margin-top: 1.25rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid rgba(201, 162, 39, 0.3);
+    }
+
+    #annotation-form h3 {
+      font-family: 'Cormorant Garamond', serif;
+      color: var(--gold);
+      font-size: 1rem;
+      margin-bottom: 0.75rem;
+      letter-spacing: 0.05em;
+    }
+
+    #annotation-form select,
+    #annotation-form textarea,
+    #annotation-form input {
+      width: 100%;
+      margin: 0.4rem 0;
+      padding: 0.6rem 0.75rem;
+      background: var(--navy-light);
+      color: var(--cream);
+      border: 1px solid rgba(201, 162, 39, 0.3);
+      border-radius: 2px;
+      font-size: 0.9rem;
+      font-family: 'Raleway', sans-serif;
+    }
+
+    #annotation-form select:focus,
+    #annotation-form textarea:focus,
+    #annotation-form input:focus {
+      outline: none;
+      border-color: var(--gold);
+      box-shadow: 0 0 0 2px rgba(201, 162, 39, 0.2);
+    }
+
+    #annotation-form select option {
+      background: var(--navy);
+    }
+
+    #annotation-form label {
+      display: block;
+      margin-top: 0.6rem;
+      font-size: 0.7rem;
+      color: var(--taupe-light);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    #annotation-form button {
+      margin-top: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: linear-gradient(135deg, var(--gold), var(--gold-light));
+      color: var(--navy);
+      border: none;
+      border-radius: 2px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+      width: 100%;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      transition: all 0.2s;
+      box-shadow: 0 2px 8px rgba(201, 162, 39, 0.3);
+    }
+
+    #annotation-form button:hover {
+      background: linear-gradient(135deg, var(--gold-light), var(--gold));
+      box-shadow: 0 4px 12px rgba(201, 162, 39, 0.4);
+      transform: translateY(-1px);
+    }
+
+    #annotation-form button:disabled {
+      background: var(--taupe);
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .save-status {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      border-radius: 2px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .save-status.success {
+      background: rgba(201, 162, 39, 0.2);
+      color: var(--gold-light);
+      border: 1px solid var(--gold);
+    }
+    .save-status.error {
+      background: rgba(114, 47, 55, 0.3);
+      color: var(--blush);
+      border: 1px solid var(--burgundy);
+    }
+
+    .existing-annotation {
+      background: rgba(201, 162, 39, 0.1);
+      border: 1px solid rgba(201, 162, 39, 0.3);
+      border-radius: 2px;
+      padding: 0.6rem;
+      margin-bottom: 0.75rem;
+    }
+    .existing-annotation .label {
+      font-size: 0.7rem;
+      color: var(--gold);
+      letter-spacing: 0.1em;
+    }
+
+    /* Scrollbar styling */
+    #sidebar::-webkit-scrollbar {
+      width: 6px;
+    }
+    #sidebar::-webkit-scrollbar-track {
+      background: var(--navy-light);
+    }
+    #sidebar::-webkit-scrollbar-thumb {
+      background: var(--gold);
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div id="graph"></div>
+  <div id="sidebar">
+    <h1>Site Explorer</h1>
+
+    <h2>Summary</h2>
+    <div class="stat">Static routes: <span class="stat-value" id="stat-static">-</span></div>
+    <div class="stat">Discovered routes: <span class="stat-value" id="stat-discovered">-</span></div>
+    <div class="stat">Unreachable: <span class="stat-value" id="stat-unreachable">-</span></div>
+    <div class="stat">Extra (undocumented): <span class="stat-value" id="stat-extra">-</span></div>
+
+    <div class="legend">
+      <h2>Legend</h2>
+      <div class="legend-item"><div class="legend-dot" style="background: #c9a227"></div> Reachable & Defined</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #722f37"></div> Defined but Unreachable</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #d4a574"></div> Discovered (not defined)</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #8a7f72"></div> Archived</div>
+    </div>
+
+    <div id="details">
+      <h2>Details</h2>
+      <p style="color: #94a3b8; font-size: 0.85rem;">Click a node to see details</p>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const API_BASE = 'http://localhost:3000';
+    const SNAPSHOT_ID = 1;
+    const BASE_URL = 'http://100.101.177.83';
+    const CODE_EXPLORER_URL = 'http://localhost:8082';  // Code Explorer frontend
+
+    // Colors - Rose Adler Art Deco palette
+    const COLORS = {
+      reachable: '#c9a227',    // Gold - healthy, active routes
+      unreachable: '#722f37',  // Burgundy - dead code candidates
+      extra: '#d4a574',        // Blush/coral - undocumented discoveries
+      archived: '#8a7f72',     // Taupe - archived/deprecated
+      link: '#a89f94',         // Warm grey for links
+      linkHighlight: '#c9a227' // Gold for highlighted links
+    };
+
+    // State
+    let allNodes = [];
+    let allLinks = [];
+    let selectedNode = null;
+    let simulation = null;
+
+    // Load data and render
+    async function init() {
+      try {
+        let data;
+        try {
+          const response = await fetch(`${API_BASE}/api/site-explorer/routes/${SNAPSHOT_ID}`);
+          if (response.ok) {
+            data = await response.json();
+            console.log('Loaded from API:', data.length, 'routes');
+          } else {
+            throw new Error('API not available');
+          }
+        } catch (e) {
+          console.log('API not available, using sample data');
+          data = await loadSampleData();
+        }
+
+        processData(data);
+        renderGraph();
+        updateStats();
+      } catch (e) {
+        console.error('Failed to load data:', e);
+        document.getElementById('details').innerHTML = '<p style="color: #d4a574;">Failed to load data. Is the server running?</p>';
+      }
+    }
+
+    async function loadSampleData() {
+      return [
+        { id: 1, routeName: 'Home', urlPattern: '/', moduleName: 'Hylograph.Home', isArchived: false, isReachable: true, depth: 0, foundFrom: null, classification: null, actionHint: null, note: null },
+        { id: 2, routeName: 'GettingStarted', urlPattern: '/getting-started', moduleName: 'Hylograph.Tutorial', isArchived: false, isReachable: true, depth: 1, foundFrom: '/', classification: null, actionHint: null, note: null },
+        { id: 3, routeName: 'HowtoIndex', urlPattern: '/howto', moduleName: 'Hylograph.HowTo', isArchived: false, isReachable: true, depth: 1, foundFrom: '/', classification: null, actionHint: null, note: null },
+        { id: 4, routeName: 'NotFound', urlPattern: '/not-found', moduleName: 'Hylograph.NotFound', isArchived: false, isReachable: false, depth: null, foundFrom: null, classification: 'review', actionHint: 'investigate', note: 'Sample annotation' },
+      ];
+    }
+
+    function processData(routes) {
+      const nodeMap = new Map();
+
+      // Add static routes as nodes
+      routes.forEach(r => {
+        const status = r.isArchived ? 'archived' :
+                       r.isReachable ? 'reachable' : 'unreachable';
+        const nodeId = r.urlPattern || r.routeName;
+        nodeMap.set(nodeId, {
+          id: nodeId,
+          routeId: r.id,  // Store the original database ID for annotations
+          routeName: r.routeName,
+          urlPattern: r.urlPattern,
+          moduleName: r.moduleName,
+          isStatic: true,
+          isDiscovered: r.isReachable,
+          depth: r.depth,
+          foundFrom: r.foundFrom,
+          status,
+          classification: r.classification,
+          actionHint: r.actionHint,
+          note: r.note
+        });
+      });
+
+      // Build links from foundFrom relationships
+      const links = [];
+      nodeMap.forEach((node, id) => {
+        if (node.foundFrom && nodeMap.has(node.foundFrom)) {
+          links.push({
+            source: node.foundFrom,
+            target: id
+          });
+        }
+      });
+
+      allNodes = Array.from(nodeMap.values());
+      allLinks = links;
+    }
+
+    function renderGraph() {
+      const container = document.getElementById('graph');
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+
+      container.innerHTML = '';
+
+      const svg = d3.select('#graph')
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+      // Define arrow marker for directed edges
+      svg.append('defs').append('marker')
+        .attr('id', 'arrowhead')
+        .attr('viewBox', '-0 -5 10 10')
+        .attr('refX', 20)
+        .attr('refY', 0)
+        .attr('orient', 'auto')
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .append('path')
+        .attr('d', 'M 0,-5 L 10,0 L 0,5')
+        .attr('fill', COLORS.link);
+
+      // Calculate cluster centers (shifted right to balance with sidebar)
+      const reachableCenter = { x: width * 0.62, y: height * 0.5 };
+      const orphanCenter = { x: width * 0.22, y: height * 0.5 };
+
+      // Create force simulation with clustering
+      simulation = d3.forceSimulation(allNodes)
+        .force('link', d3.forceLink(allLinks)
+          .id(d => d.id)
+          .distance(60)
+          .strength(1))
+        .force('charge', d3.forceManyBody()
+          .strength(d => d.status === 'unreachable' || d.status === 'archived' ? -50 : -150))
+        .force('collision', d3.forceCollide().radius(25))
+        // Clustering force: pull orphans to their own cluster
+        .force('cluster', d3.forceX(d => {
+          if (d.status === 'unreachable' || d.status === 'archived') {
+            return orphanCenter.x;
+          }
+          return reachableCenter.x;
+        }).strength(d => {
+          // Stronger pull for orphans
+          return (d.status === 'unreachable' || d.status === 'archived') ? 0.15 : 0.05;
+        }))
+        .force('clusterY', d3.forceY(d => {
+          if (d.status === 'unreachable' || d.status === 'archived') {
+            return orphanCenter.y;
+          }
+          return reachableCenter.y;
+        }).strength(d => {
+          return (d.status === 'unreachable' || d.status === 'archived') ? 0.15 : 0.05;
+        }));
+
+      // Container for zoom
+      const g = svg.append('g');
+
+      // Draw links with arrows
+      const link = g.append('g')
+        .selectAll('line')
+        .data(allLinks)
+        .join('line')
+        .attr('class', 'link')
+        .attr('stroke', COLORS.link)
+        .attr('stroke-width', 2)
+        .attr('marker-end', 'url(#arrowhead)');
+
+      // Draw nodes
+      const node = g.append('g')
+        .selectAll('circle')
+        .data(allNodes)
+        .join('circle')
+        .attr('class', 'node')
+        .attr('r', d => d.depth === 0 ? 16 : d.depth === 1 ? 12 : 10)
+        .attr('fill', d => COLORS[d.status])
+        .call(drag(simulation))
+        .on('click', (event, d) => {
+          event.stopPropagation();
+          selectNode(d, node, link);
+        })
+        .on('dblclick', (event, d) => {
+          // Double-click opens the route in new tab
+          if (d.urlPattern) {
+            window.open(`${BASE_URL}/#${d.urlPattern}`, '_blank');
+          }
+        });
+
+      // Add tooltips
+      node.append('title')
+        .text(d => `${d.routeName}\n${d.urlPattern}\nDouble-click to open`);
+
+      // Add labels
+      const labels = g.append('g')
+        .selectAll('text')
+        .data(allNodes)
+        .join('text')
+        .attr('class', 'label')
+        .attr('dy', d => d.depth === 0 ? -20 : -14)
+        .attr('text-anchor', 'middle')
+        .text(d => d.routeName.length > 20 ? d.routeName.slice(0, 18) + '...' : d.routeName);
+
+      // Add cluster labels
+      g.append('text')
+        .attr('class', 'cluster-label')
+        .attr('x', orphanCenter.x)
+        .attr('y', 30)
+        .attr('text-anchor', 'middle')
+        .text('UNREACHABLE');
+
+      g.append('text')
+        .attr('class', 'cluster-label')
+        .attr('x', reachableCenter.x)
+        .attr('y', 30)
+        .attr('text-anchor', 'middle')
+        .text('REACHABLE');
+
+      // Update positions on tick
+      simulation.on('tick', () => {
+        link
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+
+        node
+          .attr('cx', d => d.x)
+          .attr('cy', d => d.y);
+
+        labels
+          .attr('x', d => d.x)
+          .attr('y', d => d.y);
+      });
+
+      // Drag behavior
+      function drag(simulation) {
+        return d3.drag()
+          .on('start', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+          })
+          .on('drag', (event, d) => {
+            d.fx = event.x;
+            d.fy = event.y;
+          })
+          .on('end', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+          });
+      }
+
+      // Zoom behavior
+      const zoom = d3.zoom()
+        .scaleExtent([0.2, 4])
+        .on('zoom', (event) => {
+          g.attr('transform', event.transform);
+        });
+
+      svg.call(zoom);
+
+      // Click on background to deselect
+      svg.on('click', () => {
+        deselectAll(node, link);
+      });
+    }
+
+    function selectNode(d, nodeSelection, linkSelection) {
+      selectedNode = d;
+
+      // Update visual selection
+      nodeSelection.classed('selected', n => n.id === d.id);
+
+      // Highlight connected links
+      linkSelection
+        .attr('stroke', l => (l.source.id === d.id || l.target.id === d.id) ? COLORS.linkHighlight : COLORS.link)
+        .attr('stroke-width', l => (l.source.id === d.id || l.target.id === d.id) ? 3 : 2);
+
+      const fullUrl = `${BASE_URL}/#${d.urlPattern}`;
+
+      const details = document.getElementById('details');
+      details.innerHTML = `
+        <h2>Details</h2>
+        <div class="field">
+          <div class="label">Route Name</div>
+          <div class="value">${d.routeName}</div>
+        </div>
+        <div class="field">
+          <div class="label">URL Pattern</div>
+          <div class="value"><a href="${fullUrl}" target="_blank">${d.urlPattern} ↗</a></div>
+        </div>
+        <div class="field">
+          <div class="label">Module</div>
+          <div class="value">${d.moduleName && d.moduleName !== 'ARCHIVED'
+            ? `<a href="${CODE_EXPLORER_URL}/?module=${encodeURIComponent(d.moduleName)}" target="_blank" title="View in Code Explorer">${d.moduleName} ↗</a>`
+            : (d.moduleName || '-')}</div>
+        </div>
+        <div class="field">
+          <div class="label">Status</div>
+          <div class="value" style="color: ${COLORS[d.status]}; font-weight: 600;">${d.status.toUpperCase()}</div>
+        </div>
+        <div class="field">
+          <div class="label">Discovery Depth</div>
+          <div class="value">${d.depth !== null ? d.depth : 'Not discovered'}</div>
+        </div>
+        <div class="field">
+          <div class="label">Found From</div>
+          <div class="value">${d.foundFrom || 'Entry point / Not discovered'}</div>
+        </div>
+        <div id="annotation-form">
+          <h3 style="color: #0f172a; margin-bottom: 0.5rem; font-size: 0.9rem;">Annotation</h3>
+          ${d.classification ? `
+          <div class="existing-annotation">
+            <div class="label">Current Classification</div>
+            <strong>${d.classification}</strong>
+            ${d.actionHint ? ` • ${d.actionHint}` : ''}
+            ${d.note ? `<div style="margin-top: 0.3rem; font-size: 0.85rem;">${d.note}</div>` : ''}
+          </div>` : ''}
+
+          <label for="classification">Classification</label>
+          <select id="classification">
+            <option value="">-- Select --</option>
+            <option value="active" ${d.classification === 'active' ? 'selected' : ''}>Active (in use)</option>
+            <option value="keep" ${d.classification === 'keep' ? 'selected' : ''}>Keep (needed)</option>
+            <option value="review" ${d.classification === 'review' ? 'selected' : ''}>Needs Review</option>
+            <option value="deprecated" ${d.classification === 'deprecated' ? 'selected' : ''}>Deprecated</option>
+            <option value="obsolete" ${d.classification === 'obsolete' ? 'selected' : ''}>Obsolete (remove)</option>
+          </select>
+
+          <label for="actionHint">Action Hint</label>
+          <select id="actionHint">
+            <option value="">-- Select --</option>
+            <option value="keep" ${d.actionHint === 'keep' ? 'selected' : ''}>Keep as-is</option>
+            <option value="refactor" ${d.actionHint === 'refactor' ? 'selected' : ''}>Refactor</option>
+            <option value="delete" ${d.actionHint === 'delete' ? 'selected' : ''}>Delete</option>
+            <option value="archive" ${d.actionHint === 'archive' ? 'selected' : ''}>Archive</option>
+            <option value="investigate" ${d.actionHint === 'investigate' ? 'selected' : ''}>Investigate</option>
+          </select>
+
+          <label for="note">Notes (for LLM)</label>
+          <textarea id="note" placeholder="Context for automated refactoring..." rows="3">${d.note || ''}</textarea>
+
+          <button id="saveBtn" onclick="saveAnnotation()">Save Annotation</button>
+          <div id="saveStatus"></div>
+        </div>
+      `;
+    }
+
+    function deselectAll(nodeSelection, linkSelection) {
+      selectedNode = null;
+      nodeSelection.classed('selected', false);
+      linkSelection
+        .attr('stroke', COLORS.link)
+        .attr('stroke-width', 2);
+
+      document.getElementById('details').innerHTML = `
+        <h2>Details</h2>
+        <p style="color: #94a3b8; font-size: 0.85rem;">Click a node to see details<br>Double-click to open route</p>
+      `;
+    }
+
+    function updateStats() {
+      const staticCount = allNodes.filter(n => n.isStatic).length;
+      const discoveredCount = allNodes.filter(n => n.isDiscovered).length;
+      const unreachableCount = allNodes.filter(n => n.status === 'unreachable').length;
+      const extraCount = allNodes.filter(n => n.status === 'extra').length;
+
+      document.getElementById('stat-static').textContent = staticCount;
+      document.getElementById('stat-discovered').textContent = discoveredCount;
+      document.getElementById('stat-unreachable').textContent = unreachableCount;
+      document.getElementById('stat-extra').textContent = extraCount;
+    }
+
+    async function saveAnnotation() {
+      if (!selectedNode) return;
+
+      const classification = document.getElementById('classification').value;
+      const actionHint = document.getElementById('actionHint').value;
+      const note = document.getElementById('note').value;
+      const saveBtn = document.getElementById('saveBtn');
+      const saveStatus = document.getElementById('saveStatus');
+
+      if (!classification) {
+        saveStatus.className = 'save-status error';
+        saveStatus.textContent = 'Please select a classification';
+        return;
+      }
+
+      // Disable button while saving
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving...';
+      saveStatus.className = '';
+      saveStatus.textContent = '';
+
+      try {
+        // Need to find the route's numeric ID from the original data
+        // selectedNode.id is the urlPattern, we need to look up the route ID
+        const routeId = selectedNode.routeId || findRouteId(selectedNode);
+
+        const response = await fetch(`${API_BASE}/api/site-explorer/annotations`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            targetType: 'route',
+            targetId: routeId,
+            classification,
+            actionHint: actionHint || '',
+            note: note || ''
+          })
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log('Annotation saved:', result);
+
+          // Update the node data
+          selectedNode.classification = classification;
+          selectedNode.actionHint = actionHint;
+          selectedNode.note = note;
+
+          saveStatus.className = 'save-status success';
+          saveStatus.textContent = '✓ Annotation saved';
+
+          // Re-render details to show the new annotation
+          setTimeout(() => {
+            const nodeSelection = d3.select('#graph svg').selectAll('circle.node');
+            const linkSelection = d3.select('#graph svg').selectAll('line.link');
+            selectNode(selectedNode, nodeSelection, linkSelection);
+          }, 1500);
+        } else {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to save');
+        }
+      } catch (e) {
+        console.error('Failed to save annotation:', e);
+        saveStatus.className = 'save-status error';
+        saveStatus.textContent = '✗ ' + e.message;
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Annotation';
+      }
+    }
+
+    // Helper to find route ID from the original API response
+    function findRouteId(node) {
+      // Use the stored routeId from the API response
+      return node.routeId || 1; // fallback
+    }
+
+    // Initialize
+    init();
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+      renderGraph();
+    });
+  </script>
+</body>
+</html>
