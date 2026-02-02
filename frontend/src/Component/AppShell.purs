@@ -107,11 +107,8 @@ render :: forall m. MonadAff m => State -> H.ComponentHTML Action Slots m
 render state =
   HH.div
     [ HP.class_ (HH.ClassName "explorer-app") ]
-    [ -- Header with status
-      renderHeader state
-
-      -- Main content area
-    , case state.phase of
+    [ -- Main content area (header is now in SceneCoordinator)
+      case state.phase of
         Loading ->
           HH.div [ HP.class_ (HH.ClassName "loading") ]
             [ HH.text "Loading from unified database..." ]

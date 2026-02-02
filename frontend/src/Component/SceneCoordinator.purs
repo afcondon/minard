@@ -310,44 +310,48 @@ isPackageTreemap _ = false
 -- Header, Tab Strip, and Footer
 -- =============================================================================
 
--- | Render the header bar (thin, info-dense, subtle)
+-- | Render the header bar (editorial beige style with Courier typography)
 renderHeaderBar :: forall m. State -> H.ComponentHTML Action Slots m
 renderHeaderBar state =
   let
-    theme = themeForScene state.scene
-    -- Use inverted colors for header text based on theme
-    textColor = if theme == BlueprintTheme then "rgba(255,255,255,0.9)" else "rgba(0,0,0,0.8)"
-    bgColor = if theme == BlueprintTheme then "rgba(0,0,0,0.2)" else "rgba(255,255,255,0.5)"
+    -- Consistent beige header regardless of scene theme
+    textColor = "#333333"
+    bgColor = "#D4C9A8"
   in HH.div
     [ HP.class_ (HH.ClassName "scene-header-bar")
-    , HP.style $ "height: 32px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; "
+    , HP.style $ "height: 36px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; "
         <> "background: " <> bgColor <> "; color: " <> textColor <> "; "
-        <> "font-size: 12px; backdrop-filter: blur(4px);"
+        <> "font-family: 'Courier New', Courier, monospace; font-size: 11px; "
+        <> "border-bottom: 1px solid #999;"
     ]
-    [ -- Left: Back button + Scene name
+    [ -- Left: Back button + Minard branding + Scene name
       HH.div
         [ HP.style "display: flex; align-items: center; gap: 12px;" ]
-        [ -- Back button (subtle)
+        [ -- Back button
           if canGoBack state.scene
             then HH.button
               [ HE.onClick \_ -> NavigateBack
-              , HP.style $ "background: none; border: none; color: " <> textColor <> "; cursor: pointer; font-size: 14px; opacity: 0.7;"
+              , HP.style $ "background: none; border: none; color: " <> textColor <> "; cursor: pointer; font-size: 14px; padding: 4px 8px;"
               ]
               [ HH.text "←" ]
             else HH.text ""
+        -- Minard branding
+        , HH.span
+            [ HP.style "font-weight: bold; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;" ]
+            [ HH.text "MINARD" ]
         -- Scene label
         , HH.span
-            [ HP.style "font-weight: 600; letter-spacing: 0.5px;" ]
-            [ HH.text $ sceneLabel state.scene ]
+            [ HP.style "font-size: 10px;" ]
+            [ HH.text $ "» " <> sceneLabel state.scene ]
         -- State code (tiny, for debugging)
         , HH.span
-            [ HP.style $ "font-family: monospace; font-size: 10px; opacity: 0.5; color: " <> textColor <> ";" ]
+            [ HP.style "font-size: 9px; opacity: 0.6;" ]
             [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
         ]
 
       -- Center: Count info
     , HH.div
-        [ HP.style "display: flex; align-items: center; gap: 8px; opacity: 0.8;" ]
+        [ HP.style "display: flex; align-items: center; gap: 8px; font-size: 10px;" ]
         [ renderHeaderCounts state ]
 
       -- Right: Forward/detail button + scope indicator
@@ -356,14 +360,14 @@ renderHeaderBar state =
         [ -- Scope indicator (if applicable)
           if state.scene == GalaxyBeeswarm || state.scene == SolarSwarm
             then HH.span
-              [ HP.style "font-size: 10px; opacity: 0.7;" ]
+              [ HP.style "font-size: 9px; text-transform: uppercase;" ]
               [ HH.text $ "scope: " <> scopeName state.scope ]
             else HH.text ""
           -- Forward button
         , if canGoForward state.scene
             then HH.button
               [ HE.onClick \_ -> NavigateForward
-              , HP.style $ "background: none; border: none; color: " <> textColor <> "; cursor: pointer; font-size: 14px; opacity: 0.7;"
+              , HP.style $ "background: none; border: none; color: " <> textColor <> "; cursor: pointer; font-size: 14px; padding: 4px 8px;"
               ]
               [ HH.text "→" ]
             else HH.text ""
@@ -739,10 +743,17 @@ handleAction = case _ of
     -- Clear existing viz containers
     liftEffect clearAllVizContainers
 
+    -- SolarSwarm is the "Project Packages" view - always start with ProjectOnly scope
+    -- to show only workspace packages by default
+    let scopeForScene = case targetScene of
+          SolarSwarm -> ProjectOnly
+          _ -> state.scope  -- Keep current scope for other scenes
+
     H.modify_ _
       { scene = targetScene
       , previousScene = Just state.scene
       , viewMode = PrimaryView  -- Reset view mode on scene change
+      , scope = scopeForScene
       }
 
     H.raise (SceneChanged targetScene)
@@ -758,6 +769,12 @@ handleAction = case _ of
 
       liftEffect clearAllVizContainers
 
+      -- Reset scope to AllPackages when leaving SolarSwarm (going back to GalaxyBeeswarm)
+      -- This ensures the beeswarm shows all packages again
+      let scopeForParent = case state.scene of
+            SolarSwarm -> AllPackages
+            _ -> state.scope
+
       -- Clear transition state and focal package when going back
       -- This prevents stale positions from affecting the re-render
       H.modify_ _
@@ -766,6 +783,7 @@ handleAction = case _ of
         , viewMode = PrimaryView  -- Reset view mode on scene change
         , capturedPositions = Nothing  -- Clear stale positions
         , focalPackage = Nothing  -- Clear focal when leaving SolarSwarm
+        , scope = scopeForParent  -- Reset scope when leaving SolarSwarm
         }
 
       H.raise (SceneChanged parent)
@@ -864,9 +882,10 @@ handleAction = case _ of
   HandleGalaxyBeeswarmOutput output -> case output of
     GalaxyBeeswarmViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] Galaxy package clicked: " <> pkgName
-      -- Open panel with package info, then navigate to package treemap
+      -- Set focal package and navigate to SolarSwarm with that package selected
       handleAction (OpenPackagePanel pkgName)
-      handleAction (NavigateTo (PkgTreemap pkgName))
+      handleAction (SetFocalPackage (Just pkgName))
+      handleAction (NavigateTo SolarSwarm)
     GalaxyBeeswarmViz.PackageHovered mPkgName ->
       H.modify_ _ { hoveredPackage = mPkgName }
 
@@ -1030,6 +1049,7 @@ prepareSceneData state = case state.scene of
             log $ "[SceneCoordinator] SolarSwarm (BubblePack): "
                 <> show model.packageCount <> " packages, "
                 <> show model.moduleCount <> " modules"
+                <> ", scope=" <> show state.scope
           Nothing ->
             log "[SceneCoordinator] No modelData for SolarSwarm"
 

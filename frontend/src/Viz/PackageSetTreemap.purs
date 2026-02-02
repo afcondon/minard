@@ -35,7 +35,7 @@ import Effect (Effect)
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Selection.Types (ElementType(..))
-import Hylograph.Internal.Behavior.Types (HighlightClass(..))
+import Hylograph.Internal.Behavior.Types (HighlightClass(..))  -- Primary, Related, Upstream, Downstream, Dimmed, Neutral
 
 -- Layout
 import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
@@ -281,7 +281,7 @@ toPackageRenderDataWithoutDeps config pp =
     cy = pp.y + pp.height / 2.0
     maxR = (min pp.width pp.height) / 2.0 - 2.0
     kloc = toNumber pp.pkg.totalLoc / 1000.0
-    circleR = min maxR (3.0 + sqrt kloc * 3.0)
+    circleR = min maxR (7.0 + sqrt kloc * 5.0)
   in PackageRenderData
     { name: pp.pkg.name
     , topoLayer: pp.pkg.topoLayer
@@ -306,7 +306,7 @@ toPackageRenderDataWithDeps config dependsOnMap dependedByMap pp =
     cy = pp.y + pp.height / 2.0
     maxR = (min pp.width pp.height) / 2.0 - 2.0
     kloc = toNumber pp.pkg.totalLoc / 1000.0
-    circleR = min maxR (3.0 + sqrt kloc * 3.0)
+    circleR = min maxR (7.0 + sqrt kloc * 5.0)
   in PackageRenderData
     { name: pp.pkg.name
     , topoLayer: pp.pkg.topoLayer
@@ -398,8 +398,10 @@ packageGroupTreeWithHighlighting config (PackageRenderData d) =
         { identify: d.name
         , classify: \hoveredName ->
             if d.name == hoveredName then Primary
-            else if Array.elem hoveredName d.dependsOn then Related    -- I depend on the hovered package
-            else if Array.elem hoveredName d.dependedBy then Related   -- The hovered package depends on me
+            -- I depend on the hovered package → hovered is upstream of me → I highlight as Downstream
+            else if Array.elem hoveredName d.dependsOn then Downstream
+            -- The hovered package depends on me → I am upstream of hovered → I highlight as Upstream
+            else if Array.elem hoveredName d.dependedBy then Upstream
             else Dimmed
         , group: Nothing  -- Global coordination
         }
@@ -526,7 +528,7 @@ computeCellPositions config packages =
       cy = pp.y + pp.height / 2.0
       maxR = (min pp.width pp.height) / 2.0 - 2.0
       kloc = toNumber pp.pkg.totalLoc / 1000.0
-      circleR = min maxR (3.0 + sqrt kloc * 3.0)
+      circleR = min maxR (7.0 + sqrt kloc * 5.0)
     in { name: pp.pkg.name, x: cx, y: cy, r: circleR }
 
 -- | DEPRECATED: Use computeCellPositions instead

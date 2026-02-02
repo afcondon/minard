@@ -274,7 +274,8 @@ startVisualization input = do
       positionCount = fromMaybe 0 (Array.length <$> input.initialPositions)
 
   log $ "[BubblePackBeeswarmViz] Starting with "
-      <> show (Array.length filteredNodes) <> " filtered nodes"
+      <> show (Array.length filteredNodes) <> " filtered nodes (from " <> show (Array.length input.nodes) <> " total)"
+      <> ", scope=" <> show input.scope
       <> ", focal=" <> show input.focalPackage
       <> if hasInitialPositions then ", with " <> show positionCount <> " initial positions" else ""
 

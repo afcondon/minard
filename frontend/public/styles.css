@@ -1875,7 +1875,7 @@ select.project-dropdown:focus {
   stroke-width: 2px !important;
 }
 
-/* Related: Packages with dependency relationships - blue accent */
+/* Related: Packages with dependency relationships - blue accent (generic fallback) */
 .treemap-package.highlight-related rect {
   stroke: #60a5fa !important;
   stroke-width: 1.5px !important;
@@ -1885,6 +1885,38 @@ select.project-dropdown:focus {
   fill: #60a5fa !important;
   stroke: #fff !important;
   stroke-width: 1px !important;
+}
+
+/* Upstream: Dependencies (things the hovered package depends on) - green */
+.treemap-package.highlight-upstream rect {
+  stroke: #22c55e !important;
+  stroke-width: 1.5px !important;
+}
+
+.treemap-package.highlight-upstream circle {
+  fill: #22c55e !important;
+  stroke: #fff !important;
+  stroke-width: 1px !important;
+}
+
+.treemap-package.highlight-upstream text {
+  fill: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Downstream: Dependents (things that depend on hovered package) - orange */
+.treemap-package.highlight-downstream rect {
+  stroke: #f97316 !important;
+  stroke-width: 1.5px !important;
+}
+
+.treemap-package.highlight-downstream circle {
+  fill: #f97316 !important;
+  stroke: #fff !important;
+  stroke-width: 1px !important;
+}
+
+.treemap-package.highlight-downstream text {
+  fill: rgba(255, 255, 255, 0.9) !important;
 }
 
 /* Dimmed: Unrelated packages - faded */
@@ -1902,41 +1934,60 @@ select.project-dropdown:focus {
 
 /* =============================================================================
    Package Set Swarm Highlighting (Beeswarm View)
+   Note: Highlight classes are applied to .package-group (the <g> element),
+   so selectors target .package-group.highlight-* .package-circle
    ============================================================================= */
 
-/* Primary: The hovered package - solid dark fill for visibility */
-.package-set-beeswarm circle.highlight-primary {
-  fill: #333 !important;
-  stroke: #000 !important;
+/* Primary: The hovered package - white stroke for visibility */
+.package-group.highlight-primary .package-circle {
+  stroke: #fff !important;
   stroke-width: 3px !important;
-  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.4));
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
 }
 
-/* Related: Generic related highlight (fallback) - blue highlight */
-.package-set-beeswarm circle.highlight-related {
-  stroke: #2196F3 !important;
+/* Related: Generic related highlight (fallback) - white stroke with blue glow */
+.package-group.highlight-related .package-circle {
+  stroke: #fff !important;
   stroke-width: 2.5px !important;
-  filter: drop-shadow(0 0 4px rgba(33, 150, 243, 0.5));
+  filter: drop-shadow(0 0 6px rgba(33, 150, 243, 0.7));
 }
 
-/* Upstream: Dependencies of hovered (things hovered depends on) - green (leaves on topograph) */
-.package-set-beeswarm circle.highlight-upstream {
-  stroke: #22c55e !important;
+/* Upstream: Dependencies of hovered - white stroke with green glow */
+.package-group.highlight-upstream .package-circle {
+  stroke: #fff !important;
   stroke-width: 2.5px !important;
-  filter: drop-shadow(0 0 4px rgba(34, 197, 94, 0.5));
+  filter: drop-shadow(0 0 6px rgba(34, 197, 94, 0.7));
 }
 
-/* Downstream: Dependents of hovered (things that depend on hovered) - blue (roots on topograph) */
-.package-set-beeswarm circle.highlight-downstream {
-  stroke: #3b82f6 !important;
+/* Downstream: Dependents of hovered - white stroke with blue glow */
+.package-group.highlight-downstream .package-circle {
+  stroke: #fff !important;
   stroke-width: 2.5px !important;
-  filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.5));
+  filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.7));
 }
 
 /* Dimmed: Unrelated packages - reduced opacity */
-.package-set-beeswarm circle.highlight-dimmed {
-  opacity: 0.25 !important;
+.package-group.highlight-dimmed .package-circle {
+  opacity: 0.2 !important;
   filter: none !important;
+}
+
+/* Package labels - hidden by default, shown on highlight */
+.package-group .package-label {
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+}
+
+/* Show label for highlighted packages (primary, upstream, downstream) */
+.package-group.highlight-primary .package-label,
+.package-group.highlight-upstream .package-label,
+.package-group.highlight-downstream .package-label {
+  opacity: 1;
+}
+
+/* Hide label for dimmed packages */
+.package-group.highlight-dimmed .package-label {
+  opacity: 0;
 }
 
 /* =============================================================================

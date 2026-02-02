@@ -257,7 +257,7 @@ prepareNodeAtPosition config dateRange cumulativeX positionMap dependedOnByMap i
     targetX = padding + getLayerX pkg.topoLayer cumulativeX - config.width / 2.0
 
     kloc = toNumber pkg.totalLoc / 1000.0
-    r = 4.0 + sqrt (max 0.1 kloc) * 3.0
+    r = 8.0 + sqrt (max 0.1 kloc) * 5.0
 
     isUsed = Set.member pkg.name config.projectPackages
 
@@ -301,7 +301,7 @@ prepareNode config dateRange cumulativeX dependedOnByMap idx pkg =
     targetX = padding + getLayerX pkg.topoLayer cumulativeX - config.width / 2.0
 
     kloc = toNumber pkg.totalLoc / 1000.0
-    r = 4.0 + sqrt (max 0.1 kloc) * 3.0
+    r = 8.0 + sqrt (max 0.1 kloc) * 5.0
 
     isUsed = Set.member pkg.name config.projectPackages
 
@@ -564,6 +564,19 @@ packageNodeHATS config node =
             , staticStr "opacity" "1.0"
             , staticStr "cursor" "pointer"
             , staticStr "class" "package-circle"  -- For CSS transitions
+            ]
+            []
+        , -- Package name label (shown on highlight via CSS)
+          elem Text
+            [ staticStr "x" "0"
+            , thunkedStr "y" (show (node.r + 12.0))  -- Below the circle
+            , staticStr "text-anchor" "middle"
+            , staticStr "font-size" "9"
+            , staticStr "font-family" "'Courier New', monospace"
+            , staticStr "fill" "#fff"
+            , staticStr "class" "package-label"
+            , staticStr "pointer-events" "none"
+            , thunkedStr "textContent" node.pkg.name
             ]
             []
         ]

@@ -28,6 +28,7 @@ import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Properties as HP
+import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Filter (filterPackagesByScope)
@@ -70,6 +71,7 @@ data Query a
 type State =
   { handle :: Maybe Beeswarm.BeeswarmHandle  -- Internal: simulation handle
   , initialized :: Boolean                    -- Internal: first render done
+  , actionListener :: Maybe (HS.Listener Action)  -- Internal: D3 callbacks -> Halogen
   , lastInput :: Input                        -- For change detection only
   }
 
@@ -78,6 +80,8 @@ data Action
   = Initialize
   | Receive Input
   | Finalize
+  | HandlePackageClick String
+  | HandlePackageHover (Maybe String)
 
 -- =============================================================================
 -- Component
@@ -118,6 +122,7 @@ initialState :: Input -> State
 initialState input =
   { handle: Nothing
   , initialized: false
+  , actionListener: Nothing
   , lastInput: input
   }
 
@@ -158,6 +163,12 @@ handleAction = case _ of
     let input = state.lastInput
     log $ "[GalaxyBeeswarmViz] Initializing, packages=" <> show (Array.length input.packages)
         <> ", hasHandle=" <> show (isJust state.handle)
+
+    -- Set up subscription for D3 callbacks -> Halogen actions
+    { emitter, listener } <- liftEffect HS.create
+    void $ H.subscribe emitter
+    H.modify_ _ { actionListener = Just listener }
+
     when (Array.length input.packages > 0) do
       startVisualization input
 
@@ -201,6 +212,13 @@ handleAction = case _ of
     else
       pure unit
 
+  HandlePackageClick packageName -> do
+    log $ "[GalaxyBeeswarmViz] Package clicked: " <> packageName
+    H.raise (PackageClicked packageName)
+
+  HandlePackageHover mPackageName -> do
+    H.raise (PackageHovered mPackageName)
+
   Finalize -> do
     state <- H.get
     log $ "[GalaxyBeeswarmViz] Finalizing, hadHandle=" <> show (isJust state.handle)
@@ -239,7 +257,8 @@ startVisualization input = do
 
   -- Render beeswarm with filtered packages
   let filteredPkgs = filterPackagesByScope input.scope input.packages
-  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.initialPositions
+      clickHandler = makeClickHandler state.actionListener
+  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.initialPositions clickHandler
 
   -- Store handle (initialPositions consumed from input, not stored in state)
   H.modify_ _ { handle = Just handle, initialized = true }
@@ -281,8 +300,9 @@ renderBeeswarmWithPositions
   -> Array Loader.PackageSetPackage
   -> ColorMode
   -> Maybe (Array InitialPosition)
+  -> Maybe (String -> Effect Unit)  -- Click handler
   -> Effect Beeswarm.BeeswarmHandle
-renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPositions = do
+renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPositions mClickHandler = do
   let maxLayer = Array.foldl (\acc pkg -> max acc pkg.topoLayer) 0 allPackages
       config :: Beeswarm.Config
       config =
@@ -292,7 +312,7 @@ renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPosit
         , projectPackages: Set.fromFoldable projectPackages
         , maxTopoLayer: maxLayer
         , colorMode: colorMode
-        , onPackageClick: Nothing  -- TODO: wire up click handler
+        , onPackageClick: mClickHandler
         , enableHighlighting: true
         }
 
@@ -304,4 +324,11 @@ renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPosit
     Nothing ->
       -- Normal render
       Beeswarm.render config filteredPackages
+
+-- | Build click handler that routes D3 events to Halogen actions via the listener
+makeClickHandler :: Maybe (HS.Listener Action) -> Maybe (String -> Effect Unit)
+makeClickHandler mListener = case mListener of
+  Just listener -> Just $ \packageName ->
+    HS.notify listener (HandlePackageClick packageName)
+  Nothing -> Nothing
 
