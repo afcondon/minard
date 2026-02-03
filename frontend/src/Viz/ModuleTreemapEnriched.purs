@@ -47,7 +47,7 @@ import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
 import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreemapConfig, squarify, phi)
 import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
-import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2FunctionCall)
+import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall)
 
 -- =============================================================================
 -- Types
@@ -71,6 +71,17 @@ type PositionedModule =
   , height :: Number
   }
 
+-- | Child circle (constructor, class member, instance) within a declaration
+type ChildCircle =
+  { name :: String
+  , fullName :: String  -- Module.Parent.name for unique identification
+  , kind :: String      -- "constructor", "class_member", "instance"
+  , typeSignature :: Maybe String
+  , x :: Number         -- Position relative to parent center
+  , y :: Number
+  , r :: Number
+  }
+
 -- | Individual declaration circle packed within a module cell
 type DeclarationCircle =
   { name :: String
@@ -83,6 +94,7 @@ type DeclarationCircle =
   , r :: Number
   , calls :: Array String      -- Declarations this one calls (fullNames)
   , calledBy :: Array String   -- Declarations that call this one (fullNames)
+  , children :: Array ChildCircle  -- Nested child circles (constructors, methods)
   }
 
 -- | Enriched render data with declaration circles
@@ -331,11 +343,29 @@ packDeclarations decls moduleName cellWidth cellHeight callsTo calledByMap =
     let
       targetRadius = min cellWidth cellHeight / 2.0 * 0.8
 
+      -- First pass: create declarations with packed children
       rawCircles = decls <#> \d ->
         let
-          childCount = Array.length d.children
-          baseR = 8.0 + sqrt (toNumber childCount) * 5.0
           fullName = moduleName <> "." <> d.name
+
+          -- Get children: real children for data/class, synthetic for values
+          effectiveChildren = if Array.length d.children > 0
+            then d.children  -- Use real children (constructors, methods)
+            else case d.kind of
+              "value" -> syntheticArityChildren d.typeSignature  -- Parse arity from type sig
+              _ -> []  -- No children for type synonyms, foreign, etc.
+
+          childCount = Array.length effectiveChildren
+
+          -- Pack children first if any exist
+          packedChildren = packChildren effectiveChildren moduleName d.name d.kind
+
+          -- Radius based on children pack or minimum for childless
+          -- Declarations with children are sized to contain their children
+          -- Childless declarations get a small fixed size
+          baseR = if Array.null effectiveChildren
+                  then 6.0  -- Small fixed size for childless
+                  else packedChildren.packRadius + 2.0  -- Padding around children
         in
           { name: d.name
           , fullName
@@ -344,28 +374,130 @@ packDeclarations decls moduleName cellWidth cellHeight callsTo calledByMap =
           , childCount
           , x: 0.0
           , y: 0.0
-          , r: min baseR 40.0
+          , r: max 6.0 (min baseR 50.0)  -- Clamp between 6 and 50
           , calls: fromMaybe [] $ Map.lookup fullName callsTo
           , calledBy: fromMaybe [] $ Map.lookup fullName calledByMap
+          , children: packedChildren.children
           }
 
+      -- Second pass: pack all declarations together
       packed = packSiblingsMap (rawCircles <#> \c -> { x: 0.0, y: 0.0, r: c.r })
 
       scaleFactor = if packed.radius > 0.0
                     then targetRadius / packed.radius
                     else 1.0
 
+      -- Apply scale to declarations and their children
       declarations = Array.zipWith
         (\decl circle -> decl
           { x = circle.x * scaleFactor
           , y = circle.y * scaleFactor
           , r = decl.r * scaleFactor
+          , children = decl.children <#> \child -> child
+              { x = child.x * scaleFactor
+              , y = child.y * scaleFactor
+              , r = child.r * scaleFactor
+              }
           })
         rawCircles
         packed.circles
     in
       { declarations
       , packRadius: packed.radius * scaleFactor
+      }
+
+-- | Generate synthetic child declarations based on function arity from type signature
+-- | Parses "a -> b -> c -> d" to extract argument count (3 in this case)
+syntheticArityChildren :: Maybe String -> Array V2ChildDeclaration
+syntheticArityChildren mTypeSig = case mTypeSig of
+  Nothing -> []
+  Just typeSig ->
+    let
+      -- Count arrows that represent function arguments
+      -- Simplified: count " -> " occurrences, but be careful about nested types
+      arity = countFunctionArity typeSig
+    in
+      if arity <= 1 then []  -- Don't show for simple values or single-arg functions
+      else Array.range 1 arity <#> \i ->
+        { id: 0  -- Synthetic, no real ID
+        , name: "arg" <> show i
+        , kind: "argument"  -- Synthetic kind for function arguments
+        , typeSignature: Nothing  -- Could extract individual arg types later
+        , comments: Nothing
+        }
+
+-- | Count function arity from type signature
+-- | Handles basic cases like "Int -> String -> Effect Unit"
+-- | Tries to avoid counting arrows inside type constructors
+countFunctionArity :: String -> Int
+countFunctionArity typeSig =
+  let
+    -- Simple heuristic: count " -> " at depth 0 (not inside parens/brackets)
+    go :: Int -> Int -> Int -> Int
+    go idx depth count =
+      if idx >= String.length typeSig then count
+      else
+        let
+          c = String.take 1 (String.drop idx typeSig)
+          rest = String.drop (idx + 1) typeSig
+        in case c of
+          "(" -> go (idx + 1) (depth + 1) count
+          ")" -> go (idx + 1) (max 0 (depth - 1)) count
+          "[" -> go (idx + 1) (depth + 1) count
+          "]" -> go (idx + 1) (max 0 (depth - 1)) count
+          "{" -> go (idx + 1) (depth + 1) count
+          "}" -> go (idx + 1) (max 0 (depth - 1)) count
+          "-" ->
+            -- Check for " -> " at depth 0
+            if depth == 0 && String.take 2 rest == "> "
+            then go (idx + 3) depth (count + 1)  -- Skip "-> "
+            else go (idx + 1) depth count
+          _ -> go (idx + 1) depth count
+  in
+    go 0 0 0
+
+-- | Pack children (constructors, methods, instances, or synthetic arguments) within a declaration
+packChildren
+  :: Array V2ChildDeclaration
+  -> String  -- module name
+  -> String  -- parent declaration name
+  -> String  -- parent kind (for color inheritance)
+  -> { children :: Array ChildCircle, packRadius :: Number }
+packChildren children moduleName parentName _parentKind =
+  if Array.null children then
+    { children: [], packRadius: 0.0 }
+  else
+    let
+      -- Create raw child circles with small fixed radius
+      -- All children are roughly equal size (slightly varied by name length for visual interest)
+      rawChildren = children <#> \c ->
+        let
+          baseR = 3.0 + min 2.0 (toNumber (String.length c.name) / 10.0)
+          fullName = moduleName <> "." <> parentName <> "." <> c.name
+        in
+          { name: c.name
+          , fullName
+          , kind: c.kind
+          , typeSignature: c.typeSignature
+          , x: 0.0
+          , y: 0.0
+          , r: baseR
+          }
+
+      -- Pack children together
+      packed = packSiblingsMap (rawChildren <#> \c -> { x: 0.0, y: 0.0, r: c.r })
+
+      -- Position children according to pack layout
+      positionedChildren = Array.zipWith
+        (\child circle -> child
+          { x = circle.x
+          , y = circle.y
+          })
+        rawChildren
+        packed.circles
+    in
+      { children: positionedChildren
+      , packRadius: packed.radius
       }
 
 -- =============================================================================
@@ -590,6 +722,7 @@ enrichedModuleCell config m =
       ]
 
 -- | Render an individual declaration circle with dependency highlighting
+-- | If the declaration has children, renders them as nested circles inside
 declarationCircleElem :: DeclarationCircle -> Tree
 declarationCircleElem decl =
   withBehaviors
@@ -603,24 +736,94 @@ declarationCircleElem decl =
         , group: Just "declarations"  -- Declaration-level highlighting group
         }
     ]
-  $ elem Circle
-      [ thunkedNum "cx" decl.x
-      , thunkedNum "cy" decl.y
-      , thunkedNum "r" decl.r
-      , thunkedStr "fill" (kindColor decl.kind)
-      , staticStr "fill-opacity" "0.85"
-      , staticStr "stroke" "white"
-      , staticStr "stroke-width" "0.5"
-      , staticStr "pointer-events" "all"
-      , staticStr "cursor" "pointer"
-      , thunkedStr "data-name" decl.name
-      , thunkedStr "data-fullname" decl.fullName
-      , thunkedStr "data-kind" decl.kind
-      , thunkedStr "data-calls" (show (Array.length decl.calls))
-      , thunkedStr "data-calledby" (show (Array.length decl.calledBy))
-      , staticStr "class" "declaration-circle"
-      ]
-      []
+  $ if Array.null decl.children
+    then
+      -- Simple circle for childless declarations
+      elem Circle
+        [ thunkedNum "cx" decl.x
+        , thunkedNum "cy" decl.y
+        , thunkedNum "r" decl.r
+        , thunkedStr "fill" (kindColor decl.kind)
+        , staticStr "fill-opacity" "0.85"
+        , staticStr "stroke" "white"
+        , staticStr "stroke-width" "0.5"
+        , staticStr "pointer-events" "all"
+        , staticStr "cursor" "pointer"
+        , thunkedStr "data-name" decl.name
+        , thunkedStr "data-fullname" decl.fullName
+        , thunkedStr "data-kind" decl.kind
+        , thunkedStr "data-calls" (show (Array.length decl.calls))
+        , thunkedStr "data-calledby" (show (Array.length decl.calledBy))
+        , staticStr "class" "declaration-circle"
+        ]
+        []
+    else
+      -- Group with outer ring and nested child circles
+      elem Group
+        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
+        , staticStr "class" "declaration-with-children"
+        , staticStr "cursor" "pointer"
+        , thunkedStr "data-name" decl.name
+        , thunkedStr "data-fullname" decl.fullName
+        , thunkedStr "data-kind" decl.kind
+        , thunkedStr "data-child-count" (show decl.childCount)
+        ]
+        [ -- Outer circle (background/container)
+          elem Circle
+            [ staticStr "cx" "0"
+            , staticStr "cy" "0"
+            , thunkedNum "r" decl.r
+            , thunkedStr "fill" (kindColor decl.kind)
+            , staticStr "fill-opacity" "0.3"  -- Lighter fill for container
+            , thunkedStr "stroke" (kindColor decl.kind)
+            , staticStr "stroke-width" "1.5"
+            , staticStr "stroke-opacity" "0.8"
+            , staticStr "pointer-events" "all"
+            , staticStr "class" "declaration-outer"
+            ]
+            []
+        -- Nested child circles
+        , elem Group
+            [ staticStr "class" "declaration-children" ]
+            (map (childCircleElem decl.kind) decl.children)
+        ]
+
+-- | Render a child circle (constructor, method, instance) inside a declaration
+childCircleElem :: String -> ChildCircle -> Tree
+childCircleElem parentKind child =
+  elem Circle
+    [ thunkedNum "cx" child.x
+    , thunkedNum "cy" child.y
+    , thunkedNum "r" child.r
+    , thunkedStr "fill" (childKindColor parentKind child.kind)
+    , staticStr "fill-opacity" "0.9"
+    , staticStr "stroke" "white"
+    , staticStr "stroke-width" "0.3"
+    , staticStr "pointer-events" "all"
+    , staticStr "cursor" "pointer"
+    , thunkedStr "data-name" child.name
+    , thunkedStr "data-fullname" child.fullName
+    , thunkedStr "data-kind" child.kind
+    , staticStr "class" "child-circle"
+    ]
+    []
+
+-- | Color for child circles - slightly varied from parent
+childKindColor :: String -> String -> String
+childKindColor parentKind childKind = case childKind of
+  "constructor"  -> darkenColor (kindColor parentKind)  -- Darker variant of parent
+  "class_member" -> "#ff9f43"  -- Lighter orange for methods
+  "instance"     -> "#ffeaa7"  -- Very light yellow for instances
+  "argument"     -> "#6a9fcf"  -- Lighter blue for function arguments
+  _              -> kindColor parentKind  -- Fallback to parent color
+
+-- | Darken a hex color slightly for visual distinction
+darkenColor :: String -> String
+darkenColor color = case color of
+  "#59a14f" -> "#3d7a36"  -- Darker green for data constructors
+  "#76b7b2" -> "#5a9994"  -- Darker teal for newtype constructors
+  "#f28e2b" -> "#d97706"  -- Darker orange for class members
+  _         -> color      -- No change for others
 
 -- =============================================================================
 -- Utility Functions

@@ -25,7 +25,7 @@ import Data.Either (Either(..))
 import Data.Foldable (foldl)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, isNothing)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.Tuple (Tuple(..))
@@ -51,7 +51,7 @@ import CE2.Component.SlideOutPanel as SlideOutPanel
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Scene (Scene(..), parentScene, sceneLabel)
+import CE2.Scene (Scene(..), parentScene, sceneLabel, sceneToString, sceneFromString)
 import CE2.Viz.PackageSetTreemap as PackageSetTreemap
 import CE2.Viz.ModuleTreemap as ModuleTreemap
 import CE2.Viz.ModuleBeeswarm as ModuleBeeswarm
@@ -61,6 +61,11 @@ import CE2.Viz.DependencyChord as DependencyChord
 import CE2.Viz.TypeClassGrid as TypeClassGrid
 import CE2.Viz.DependencyAdjacency as DependencyAdjacency
 import CE2.Types (projectPackages, CellContents(..), ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors)
+
+-- FFI declarations for browser history integration
+foreign import pushHistoryState :: String -> Effect Unit
+foreign import replaceHistoryState :: String -> Effect Unit
+foreign import setupPopstateListener :: (String -> Effect Unit) -> Effect (Effect Unit)
 
 -- =============================================================================
 -- Types
@@ -197,6 +202,9 @@ type State =
 
     -- Type class stats (lazy loaded for TypeClassGrid scene)
   , typeClassStats :: Maybe Loader.TypeClassStats
+
+    -- Browser history integration
+  , historyCleanup :: Maybe (Effect Unit)  -- Cleanup function for popstate listener
   }
 
 -- | Actions - streamlined
@@ -206,6 +214,7 @@ data Action
   | NavigateTo Scene
   | NavigateBack
   | NavigateForward                   -- "+" button for next level of detail
+  | HandlePopstate Scene              -- Browser back/forward button pressed
   | HandleBubblePackBeeswarmOutput BubblePackBeeswarmViz.Output
   | HandleGalaxyBeeswarmOutput GalaxyBeeswarmViz.Output
   | HandleModuleTreemapOutput ModuleTreemapEnrichedViz.Output
@@ -259,6 +268,7 @@ initialState input =
   , hoveredModule: Nothing
   , galaxyTreemapListener: Nothing
   , typeClassStats: Nothing
+  , historyCleanup: Nothing
   }
 
 -- =============================================================================
@@ -789,7 +799,25 @@ handleAction = case _ of
     void $ H.subscribe emitter
     H.modify_ _ { galaxyTreemapListener = Just listener }
 
+    -- Set up browser history integration
     state <- H.get
+
+    -- Replace current history state with initial scene (so back works from start)
+    liftEffect $ replaceHistoryState (sceneToString state.scene)
+
+    -- Set up popstate listener for back/forward navigation
+    { emitter: historyEmitter, listener: historyListener } <- liftEffect HS.create
+    void $ H.subscribe historyEmitter
+
+    cleanup <- liftEffect $ setupPopstateListener \sceneStr -> do
+      case sceneFromString sceneStr of
+        Just scene -> HS.notify historyListener (HandlePopstate scene)
+        Nothing -> pure unit
+
+    H.modify_ _ { historyCleanup = Just cleanup }
+
+    log "[SceneCoordinator] Browser history integration enabled"
+
     prepareSceneData state
 
   Receive input -> do
@@ -838,6 +866,9 @@ handleAction = case _ of
       , scope = scopeForScene
       }
 
+    -- Push to browser history (enables back/forward buttons)
+    liftEffect $ pushHistoryState (sceneToString targetScene)
+
     H.raise (SceneChanged targetScene)
     newState <- H.get
     prepareSceneData newState
@@ -867,6 +898,9 @@ handleAction = case _ of
         , focalPackage = Nothing  -- Clear focal when leaving SolarSwarm
         , scope = scopeForParent  -- Reset scope when leaving SolarSwarm
         }
+
+      -- Push to browser history (enables forward button after clicking ←)
+      liftEffect $ pushHistoryState (sceneToString parent)
 
       H.raise (SceneChanged parent)
       newState <- H.get
@@ -942,6 +976,35 @@ handleAction = case _ of
         handleAction (NavigateTo (PkgModuleBeeswarm pkg))
 
       _ -> pure unit
+
+  -- Browser back/forward button navigation
+  -- Navigate to the scene without pushing to history (it's already there)
+  HandlePopstate targetScene -> do
+    state <- H.get
+    log $ "[SceneCoordinator] Popstate navigation to: " <> show targetScene
+
+    -- Skip if already at this scene
+    when (state.scene /= targetScene) do
+      -- Clear existing viz containers
+      liftEffect clearAllVizContainers
+
+      -- Determine appropriate scope for the scene
+      let scopeForScene = case targetScene of
+            SolarSwarm -> ProjectOnly
+            _ -> state.scope
+
+      H.modify_ _
+        { scene = targetScene
+        , previousScene = Just state.scene
+        , viewMode = PrimaryView
+        , scope = scopeForScene
+        , capturedPositions = Nothing  -- Clear stale positions
+        , focalPackage = Nothing  -- Clear focal when navigating via history
+        }
+
+      H.raise (SceneChanged targetScene)
+      newState <- H.get
+      prepareSceneData newState
 
   HandleBubblePackBeeswarmOutput output -> case output of
     BubblePackBeeswarmViz.PackageClicked pkgName -> do

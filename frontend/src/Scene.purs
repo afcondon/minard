@@ -14,9 +14,14 @@ module CE2.Scene
   , isSolarScene
   , isPackageScene
   , isModuleScene
+  , sceneToString
+  , sceneFromString
   ) where
 
 import Prelude
+
+import Data.Maybe (Maybe(..))
+import Data.String as String
 
 -- | Scene type representing distinct visualization states
 -- |
@@ -94,3 +99,26 @@ isPackageScene _ = false
 isModuleScene :: Scene -> Boolean
 isModuleScene (PkgModuleBeeswarm _) = true
 isModuleScene _ = false
+
+-- | Serialize scene to string for browser history state
+sceneToString :: Scene -> String
+sceneToString = show  -- Use the Show instance
+
+-- | Parse scene from string (browser history state)
+-- | Returns the parsed scene or Nothing if invalid
+sceneFromString :: String -> Maybe Scene
+sceneFromString str
+  | str == "GalaxyTreemap" = Just GalaxyTreemap
+  | str == "GalaxyBeeswarm" = Just GalaxyBeeswarm
+  | str == "SolarSwarm" = Just SolarSwarm
+  | str == "OverlayChordMatrix" = Just OverlayChordMatrix
+  | str == "TypeClassGrid" = Just TypeClassGrid
+  | String.take 11 str == "PkgTreemap(" =
+      let inner = String.drop 11 str
+          pkg = String.take (String.length inner - 1) inner  -- Remove trailing ")"
+      in Just (PkgTreemap pkg)
+  | String.take 18 str == "PkgModuleBeeswarm(" =
+      let inner = String.drop 18 str
+          pkg = String.take (String.length inner - 1) inner
+      in Just (PkgModuleBeeswarm pkg)
+  | otherwise = Nothing
