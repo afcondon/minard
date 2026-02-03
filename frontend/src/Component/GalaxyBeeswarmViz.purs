@@ -256,15 +256,18 @@ startVisualization input = do
   log $ "[GalaxyBeeswarmViz] Starting with " <> show (Array.length input.packages) <> " packages"
       <> if hasInitialPositions then ", with " <> show positionCount <> " initial positions (hero mode)" else ""
 
-  -- Render treemap background
+  -- Build click handlers using action listener
+  let rectClickHandler = makeClickHandler state.actionListener HandlePackageLabelClick  -- Rect → treemap view
+      circleClickHandler = makeClickHandler state.actionListener HandlePackageClick     -- Circle → neighborhood
+      labelClickHandler = makeClickHandler state.actionListener HandlePackageLabelClick -- Label → treemap view
+
+  -- Render treemap background with rect click handler
   -- During hero transition: render with CellEmpty (rectangles only, circles leave)
   -- Normal mode: render with CellCircle (full treemap)
-  liftEffect $ renderTreemap input.theme input.packages hasInitialPositions
+  liftEffect $ renderTreemap input.theme input.packages hasInitialPositions rectClickHandler
 
   -- Render beeswarm with filtered packages
   let filteredPkgs = filterPackagesByScope input.scope input.packages
-      circleClickHandler = makeClickHandler state.actionListener HandlePackageClick
-      labelClickHandler = makeClickHandler state.actionListener HandlePackageLabelClick
   handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.initialPositions circleClickHandler labelClickHandler
 
   -- Store handle (initialPositions consumed from input, not stored in state)
@@ -286,8 +289,9 @@ startVisualization input = do
 -- | Render the treemap background for GalaxyBeeswarm scene
 -- | Always uses CellText (text labels only) because circles live in the beeswarm layer
 -- | The treemap is just a reference background showing package boundaries
-renderTreemap :: ViewTheme -> Array Loader.PackageSetPackage -> Boolean -> Effect Unit
-renderTreemap theme packages _heroMode = do
+-- | Rect clicks navigate to package treemap view
+renderTreemap :: ViewTheme -> Array Loader.PackageSetPackage -> Boolean -> Maybe (String -> Effect Unit) -> Effect Unit
+renderTreemap theme packages _heroMode onRectClick = do
   let config :: Treemap.Config
       config =
         { containerSelector: C.galaxyBeeswarmTreemapContainer
@@ -297,6 +301,8 @@ renderTreemap theme packages _heroMode = do
         , cellContents: CellText  -- Always text-only; circles are in beeswarm layer
         , projectPackages: Set.fromFoldable projectPackages
         , transitivePackages: Set.empty
+        , onRectClick: onRectClick
+        , onCircleClick: Nothing  -- No circles in this layer (they're in beeswarm layer)
         }
   Treemap.render config packages
 

@@ -32,7 +32,7 @@ import Data.Tuple (Tuple(..))
 import Effect (Effect)
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight)
+import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Selection.Types (ElementType(..))
 import Hylograph.Internal.Behavior.Types (HighlightClass(..))  -- Primary, Related, Upstream, Downstream, Dimmed, Neutral
@@ -57,6 +57,8 @@ type Config =
   , transitivePackages :: Set String -- Transitive dependencies
   , theme :: ViewTheme               -- Visual theme (Blueprint/Paperwhite/Beige)
   , cellContents :: CellContents     -- What to render in cells (Circle/Text/Empty)
+  , onRectClick :: Maybe (String -> Effect Unit)    -- Click handler for rect → package treemap
+  , onCircleClick :: Maybe (String -> Effect Unit)  -- Click handler for circle → neighborhood/SolarSwarm
   }
 
 -- | Package with computed treemap position
@@ -359,25 +361,31 @@ packageGroupTree config (PackageRenderData d) =
     strokeColor = case config.theme of
       BlueprintTheme -> "rgba(255, 255, 255, 0.6)"  -- Brighter white for blueprint
       _ -> colors.stroke
+
+    -- Rectangle element - may have click handler for navigating to package treemap
+    rectElem = elem Rect
+      [ thunkedNum "x" d.x
+      , thunkedNum "y" d.y
+      , thunkedNum "width" d.width
+      , thunkedNum "height" d.height
+      , staticStr "fill" rectFill
+      , staticStr "stroke" strokeColor
+      , staticStr "stroke-width" "1"
+      , staticStr "class" "package-rect"
+      ]
+      []
+
+    rectWithClick = case config.onRectClick of
+      Just handler -> withBehaviors [ onClick (handler d.name) ] rectElem
+      Nothing -> rectElem
   in
   elem Group
     [ staticStr "class" $ "treemap-package" <> if d.inProject then " project-package" else ""
     , staticStr "data-name" d.name
     , staticStr "data-layer" (show d.topoLayer)
     ]
-    [ -- Rectangle with data-dependent attributes
-      elem Rect
-        [ thunkedNum "x" d.x
-        , thunkedNum "y" d.y
-        , thunkedNum "width" d.width
-        , thunkedNum "height" d.height
-        , staticStr "fill" rectFill
-        , staticStr "stroke" strokeColor
-        , staticStr "stroke-width" "1"
-        , staticStr "class" "package-rect"
-        ]
-        []
-    , -- Cell contents based on config
+    [ rectWithClick
+    , -- Cell contents (circle, text) - circle may have its own click handler
       renderCellContent config colors (PackageRenderData d)
     ]
 
@@ -392,9 +400,9 @@ packageGroupTreeWithHighlighting config (PackageRenderData d) =
     strokeColor = case config.theme of
       BlueprintTheme -> "rgba(255, 255, 255, 0.6)"  -- Brighter white for blueprint
       _ -> colors.stroke
-  in
-  withBehaviors
-    [ onCoordinatedHighlight
+
+    -- Highlighting behavior for the group
+    highlightBehavior = onCoordinatedHighlight
         { identify: d.name
         , classify: \hoveredName ->
             if d.name == hoveredName then Primary
@@ -405,104 +413,100 @@ packageGroupTreeWithHighlighting config (PackageRenderData d) =
             else Dimmed
         , group: Nothing  -- Global coordination
         }
-    ]
+
+    -- Rectangle element - may have click handler for navigating to package treemap
+    rectElem = elem Rect
+      [ thunkedNum "x" d.x
+      , thunkedNum "y" d.y
+      , thunkedNum "width" d.width
+      , thunkedNum "height" d.height
+      , staticStr "fill" rectFill
+      , staticStr "stroke" strokeColor
+      , staticStr "stroke-width" "1"
+      , staticStr "class" "package-rect"
+      ]
+      []
+
+    rectWithClick = case config.onRectClick of
+      Just handler -> withBehaviors [ onClick (handler d.name) ] rectElem
+      Nothing -> rectElem
+  in
+  withBehaviors [ highlightBehavior ]
   $ elem Group
       [ staticStr "class" $ "treemap-package" <> if d.inProject then " project-package" else ""
       , staticStr "data-name" d.name
       , staticStr "data-layer" (show d.topoLayer)
       ]
-      [ -- Rectangle with data-dependent attributes
-        elem Rect
-          [ thunkedNum "x" d.x
-          , thunkedNum "y" d.y
-          , thunkedNum "width" d.width
-          , thunkedNum "height" d.height
-          , staticStr "fill" rectFill
-          , staticStr "stroke" strokeColor
-          , staticStr "stroke-width" "1"
-          , staticStr "class" "package-rect"
-          ]
-          []
-      , -- Cell contents based on config
+      [ rectWithClick
+      , -- Cell contents (circle, text) - circle may have its own click handler
         renderCellContent config colors (PackageRenderData d)
       ]
 
 -- | Render cell content based on cellContents config
+-- | Circles may have click handlers for navigating to SolarSwarm/neighborhood view
 renderCellContent :: Config -> { background :: String, stroke :: String, text :: String, textMuted :: String } -> PackageRenderData -> Tree
-renderCellContent config colors (PackageRenderData d) = case config.cellContents of
-  CellEmpty ->
-    elem Group [] []
-
-  CellText ->
-    if d.width > 30.0 && d.height > 20.0
-    then elem Text
-      [ thunkedNum "x" d.cx
-      , thunkedNum "y" d.cy
-      , staticStr "text-anchor" "middle"
-      , staticStr "dominant-baseline" "middle"
-      , thunkedStr "font-size" (if d.width > 80.0 then "9" else "7")
-      , staticStr "fill" colors.text
-      , staticStr "font-family" "'Courier New', Courier, monospace"
-      , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)
-      ]
-      []
-    else elem Group [] []
-
-  CellCircle ->
-    if d.width > 8.0 && d.height > 8.0
-    then elem Group []
-        [ elem Circle
+renderCellContent config colors (PackageRenderData d) =
+  let
+    -- Circle element with optional click handler
+    makeCircle =
+      let circleElem = elem Circle
             [ thunkedNum "cx" d.cx
             , thunkedNum "cy" d.cy
             , thunkedNum "r" d.circleR
             , staticStr "fill" colors.stroke  -- Initial fill
             , staticStr "stroke" colors.text
             , staticStr "stroke-width" "0.5"
+            , staticStr "class" "package-circle"
             ]
             []
-        , -- Label below circle
-          if d.width > 50.0 && d.height > 30.0
-          then elem Text
-            [ thunkedNum "x" d.cx
-            , thunkedNum "y" (d.cy + d.circleR + 12.0)
-            , staticStr "text-anchor" "middle"
-            , thunkedStr "font-size" (if d.width > 80.0 then "9" else "7")
-            , staticStr "fill" colors.textMuted
-            , staticStr "font-family" "'Courier New', Courier, monospace"
-            , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)
-            ]
-            []
-          else elem Group [] []
-        ]
-    else elem Group [] []
+      in case config.onCircleClick of
+        Just handler -> withBehaviors [ onClick (handler d.name) ] circleElem
+        Nothing -> circleElem
 
-  -- ModuleCircles and BubblePack fall back to Circle for package set view
-  _ ->
-    if d.width > 8.0 && d.height > 8.0
-    then elem Group []
-        [ elem Circle
-            [ thunkedNum "cx" d.cx
-            , thunkedNum "cy" d.cy
-            , thunkedNum "r" d.circleR
-            , staticStr "fill" colors.stroke
-            , staticStr "stroke" colors.text
-            , staticStr "stroke-width" "0.5"
-            ]
-            []
-        , if d.width > 50.0 && d.height > 30.0
-          then elem Text
-            [ thunkedNum "x" d.cx
-            , thunkedNum "y" (d.cy + d.circleR + 12.0)
-            , staticStr "text-anchor" "middle"
-            , thunkedStr "font-size" (if d.width > 80.0 then "9" else "7")
-            , staticStr "fill" colors.textMuted
-            , staticStr "font-family" "'Courier New', Courier, monospace"
-            , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)
-            ]
-            []
-          else elem Group [] []
+    -- Label below circle
+    makeLabel =
+      if d.width > 50.0 && d.height > 30.0
+      then elem Text
+        [ thunkedNum "x" d.cx
+        , thunkedNum "y" (d.cy + d.circleR + 12.0)
+        , staticStr "text-anchor" "middle"
+        , thunkedStr "font-size" (if d.width > 80.0 then "9" else "7")
+        , staticStr "fill" colors.textMuted
+        , staticStr "font-family" "'Courier New', Courier, monospace"
+        , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)
         ]
-    else elem Group [] []
+        []
+      else elem Group [] []
+  in
+  case config.cellContents of
+    CellEmpty ->
+      elem Group [] []
+
+    CellText ->
+      if d.width > 30.0 && d.height > 20.0
+      then elem Text
+        [ thunkedNum "x" d.cx
+        , thunkedNum "y" d.cy
+        , staticStr "text-anchor" "middle"
+        , staticStr "dominant-baseline" "middle"
+        , thunkedStr "font-size" (if d.width > 80.0 then "9" else "7")
+        , staticStr "fill" colors.text
+        , staticStr "font-family" "'Courier New', Courier, monospace"
+        , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)
+        ]
+        []
+      else elem Group [] []
+
+    CellCircle ->
+      if d.width > 8.0 && d.height > 8.0
+      then elem Group [] [ makeCircle, makeLabel ]
+      else elem Group [] []
+
+    -- ModuleCircles and BubblePack fall back to Circle for package set view
+    _ ->
+      if d.width > 8.0 && d.height > 8.0
+      then elem Group [] [ makeCircle, makeLabel ]
+      else elem Group [] []
 
 -- | Truncate name to fit
 truncateName :: Int -> String -> String

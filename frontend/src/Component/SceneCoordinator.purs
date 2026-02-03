@@ -37,6 +37,7 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
+import Halogen.Subscription as HS
 import Type.Proxy (Proxy(..))
 
 -- PSD3 Imports
@@ -182,6 +183,9 @@ type State =
     -- Coordinated hover state
   , hoveredPackage :: Maybe String    -- Package name currently being hovered
   , hoveredModule :: Maybe { packageName :: String, moduleName :: String }  -- Module being hovered
+
+    -- Action listener for D3 callbacks → Halogen actions (GalaxyTreemap clicks)
+  , galaxyTreemapListener :: Maybe (HS.Listener Action)
   }
 
 -- | Actions - streamlined
@@ -201,6 +205,8 @@ data Action
   | OpenModulePanel String String         -- packageName, moduleName
   | OpenPackagePanel String               -- packageName - opens panel with first module
   | TreemapCellClicked String             -- Package name clicked in treemap
+  | GalaxyTreemapCircleClicked String     -- Circle click in GalaxyTreemap → SolarSwarm
+  | GalaxyTreemapRectClicked String       -- Rect click in GalaxyTreemap → PkgTreemap
 
 -- =============================================================================
 -- Component
@@ -237,6 +243,7 @@ initialState input =
   , panelContent: SlideOutPanel.NoContent
   , hoveredPackage: Nothing
   , hoveredModule: Nothing
+  , galaxyTreemapListener: Nothing
   }
 
 -- =============================================================================
@@ -707,6 +714,12 @@ handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action Slots 
 handleAction = case _ of
   Initialize -> do
     log "[SceneCoordinator] Initializing..."
+
+    -- Set up subscription for D3 callbacks → Halogen actions (for GalaxyTreemap clicks)
+    { emitter, listener } <- liftEffect HS.create
+    void $ H.subscribe emitter
+    H.modify_ _ { galaxyTreemapListener = Just listener }
+
     state <- H.get
     prepareSceneData state
 
@@ -808,6 +821,8 @@ handleAction = case _ of
                   , transitivePackages: computeTransitivePackages psData.packages
                   , theme: theme
                   , cellContents: CellCircle
+                  , onRectClick: Nothing   -- Position capture only, no click handling
+                  , onCircleClick: Nothing
                   }
                 positions = PackageSetTreemap.computeCellPositions config psData.packages
             log $ "[SceneCoordinator] Captured " <> show (Array.length positions) <> " positions"
@@ -930,6 +945,18 @@ handleAction = case _ of
     log $ "[SceneCoordinator] Treemap cell clicked: " <> pkgName
     -- In GalaxyTreemap, clicking a package navigates to beeswarm
     handleAction (NavigateTo GalaxyBeeswarm)
+
+  GalaxyTreemapCircleClicked pkgName -> do
+    log $ "[SceneCoordinator] GalaxyTreemap circle clicked: " <> pkgName
+    -- Circle click → neighborhood view (SolarSwarm with focal package)
+    handleAction (OpenPackagePanel pkgName)
+    handleAction (SetFocalPackage (Just pkgName))
+    handleAction (NavigateTo SolarSwarm)
+
+  GalaxyTreemapRectClicked pkgName -> do
+    log $ "[SceneCoordinator] GalaxyTreemap rect clicked: " <> pkgName
+    -- Rect click → package treemap (module-level detail)
+    handleAction (NavigateTo (PkgTreemap pkgName))
 
   HandleSlideOutPanelOutput output -> case output of
     SlideOutPanel.PanelClosed -> do
@@ -1280,9 +1307,24 @@ clearAllVizContainers = void $ runD3 do
 
 -- | Render the full registry treemap with config from state
 -- | Uses renderWithHighlighting for hover-based dependency highlighting
+-- | Click handlers route D3 events through Halogen subscription:
+-- |   Circle click → SolarSwarm (neighborhood view)
+-- |   Rect click → PkgTreemap (package module detail)
 renderGalaxyTreemapWithConfig :: State -> Loader.PackageSetData -> Effect Unit
 renderGalaxyTreemapWithConfig state psData = do
   let theme = themeForScene state.scene
+
+      -- Build click handlers from the action listener
+      onCircleClick = case state.galaxyTreemapListener of
+        Just listener -> Just $ \pkgName ->
+          HS.notify listener (GalaxyTreemapCircleClicked pkgName)
+        Nothing -> Nothing
+
+      onRectClick = case state.galaxyTreemapListener of
+        Just listener -> Just $ \pkgName ->
+          HS.notify listener (GalaxyTreemapRectClicked pkgName)
+        Nothing -> Nothing
+
       config :: PackageSetTreemap.Config
       config =
         { containerSelector: C.galaxyTreemapContainer
@@ -1292,6 +1334,8 @@ renderGalaxyTreemapWithConfig state psData = do
         , transitivePackages: computeTransitivePackages psData.packages
         , theme: theme
         , cellContents: CellCircle  -- Always use circles in treemap
+        , onRectClick: onRectClick
+        , onCircleClick: onCircleClick
         }
 
   PackageSetTreemap.renderWithHighlighting config psData.packages
