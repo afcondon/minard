@@ -6,19 +6,83 @@
 
 ## Executive Summary
 
-Analysis of 1,381 modules across 159 packages reveals key structural patterns that should inform visualization design decisions.
+Analysis of the PureScript ecosystem as captured in the Minard database: **38,461 declarations** across **1,381 modules** in **159 packages**. This report provides the actual dimensions and distributions to inform visualization design.
 
-## Key Findings
-
-### Scale
+## Scale at a Glance
 
 | Metric | Count |
 |--------|-------|
-| Total packages | 159 |
-| Total modules | 1,381 |
-| Total declarations (est.) | ~15,000 |
-| Total function calls | 19,210 |
-| Total child declarations | ~2,000 |
+| Packages | 159 |
+| Modules | 1,381 |
+| **Declarations** | **38,461** |
+| Function calls | 19,210 |
+| Child declarations | 14,852 |
+
+---
+
+## Declarations by Kind
+
+| Kind | Count | % | Description |
+|------|-------|---|-------------|
+| **value** | 28,049 | 73% | Functions and values |
+| **type_synonym** | 5,357 | 14% | Type aliases |
+| **data** | 3,093 | 8% | Algebraic data types |
+| **alias** | 736 | 2% | Operator aliases (`+.`, `>:`, etc.) |
+| **type_class** | 686 | 2% | Type classes |
+| **unknown** | 540 | 1% | Primitives (Function, Array, Number, etc.) |
+
+**Key insight**: Functions dominate (73%), but the type system is substantial: **8,450 type definitions** (data + synonyms) and **686 type classes**.
+
+---
+
+## Type System Deep Dive
+
+### Type Definitions
+
+| Category | Count |
+|----------|-------|
+| Data types (ADTs) | 3,093 |
+| Type synonyms | 5,357 |
+| **Total types** | **8,450** |
+
+### Type Classes
+
+| Metric | Value |
+|--------|-------|
+| Type classes | 686 |
+| Total instances | 4,691 |
+| Total class members (methods) | 2,762 |
+| **Avg instances per class** | **6.8** |
+| **Avg methods per class** | **4.0** |
+
+**Implication**: 686 type classes is surprisingly large - an order of magnitude more than casual intuition suggests. This is a graphable number. A grid view showing all type classes with their method/instance counts would be revealing.
+
+### Constructors
+
+| Metric | Value |
+|--------|-------|
+| Total constructors | 7,399 |
+| Data types | 3,093 |
+| **Avg constructors per type** | **2.4** |
+
+Most data types are small (1-3 constructors). Large sum types exist but are exceptional.
+
+---
+
+## Child Declarations
+
+Children are constructors, instances, and class members attached to parent declarations.
+
+| Kind | Count | Attached to |
+|------|-------|-------------|
+| **constructor** | 7,399 | data types |
+| **instance** | 4,691 | type classes |
+| **class_member** | 2,762 | type classes |
+| **Total** | **14,852** | |
+
+---
+
+## Module Structure
 
 ### Modules per Package
 
@@ -33,10 +97,7 @@ Analysis of 1,381 modules across 159 packages reveals key structural patterns th
 - 43 packages (27%) have exactly 1 module
 - 59 packages (37%) have 2-5 modules
 - 33 packages (21%) have 6-10 modules
-- 14 packages (9%) have 11-20 modules
-- 10 packages (6%) have 21+ modules
-
-**Implication**: Most packages are small. A few large packages (web-html, hylograph-selection, prelude) dominate. Visualizations should handle 1-10 modules gracefully while scaling to 200.
+- 24 packages (15%) have 11+ modules
 
 ### Declarations per Module
 
@@ -51,42 +112,7 @@ Analysis of 1,381 modules across 159 packages reveals key structural patterns th
 - 629 modules (46%) have 1-5 declarations
 - 285 modules (21%) have 6-10 declarations
 - 234 modules (17%) have 11-20 declarations
-- 198 modules (14%) have 21-50 declarations
-- 35 modules (3%) have 51+ declarations
-
-**Implication**: Most modules are small (median 6 declarations). Circle packing works well. Large modules (50+ decls) need different treatment - perhaps aggregation or hierarchical nesting.
-
-### Declarations by Kind
-
-From sampled data (50 modules):
-
-| Kind | Count | % |
-|------|-------|---|
-| value | 394 | 77% |
-| type_synonym | 76 | 15% |
-| data | 39 | 8% |
-| newtype | rare | <1% |
-| type_class | rare | <1% |
-| foreign | rare | <1% |
-
-**Implication**: Values (functions) dominate. Type definitions are ~20% of declarations. The current color scheme appropriately emphasizes the distinction but values will visually dominate.
-
-### Children per Declaration (Constructors/Methods)
-
-| Statistic | Value |
-|-----------|-------|
-| Declarations with children | 39 (of ~500 sampled) = ~8% |
-| Total children | 202 |
-| Average children (when present) | 5 |
-| Max children | 54 (Action sum type) |
-
-**Distribution** (of declarations that have children):
-- 16 decls have 1-2 children
-- 14 decls have 3-5 children
-- 6 decls have 6-10 children
-- 3 decls have 11+ children
-
-**Implication**: Most data types have few constructors (1-5). Large sum types (20+ constructors) are rare but exist. Nested circle packing could work - parent circle contains child circles.
+- 233 modules (17%) have 21+ declarations
 
 ### LOC per Module
 
@@ -101,77 +127,136 @@ From sampled data (50 modules):
 - 515 modules (37%) have 1-50 LOC
 - 314 modules (23%) have 51-100 LOC
 - 277 modules (20%) have 101-200 LOC
-- 215 modules (16%) have 201-500 LOC
-- 60 modules (4%) have 500+ LOC
+- 275 modules (20%) have 201+ LOC
 
-**Implication**: LOC and declaration count are correlated but not perfectly. A module with 10 declarations might have 50 LOC or 500 LOC depending on complexity. LOC remains a good sizing metric for treemaps.
+---
 
-### Module Naming Hierarchy
+## Module Naming Hierarchy
 
-**Depth distribution**:
-- Depth 1 (e.g., "Prelude"): 33 modules (2%)
-- Depth 2 (e.g., "Data.Array"): 348 modules (25%)
-- Depth 3 (e.g., "Data.Array.ST"): 647 modules (47%)
-- Depth 4 (e.g., "Web.HTML.HTMLElement.Attributes"): 295 modules (21%)
-- Depth 5+: 58 modules (4%)
+### Depth Distribution
 
-**Top namespaces**:
-1. Web: 294 modules
-2. Data: 275 modules
-3. Hylograph: 119 modules (workspace)
-4. Test: 101 modules
-5. Control: 73 modules
+| Depth | Example | Count | % |
+|-------|---------|-------|---|
+| 1 | `Prelude` | 33 | 2% |
+| 2 | `Data.Array` | 348 | 25% |
+| 3 | `Data.Array.ST` | 647 | 47% |
+| 4 | `Web.HTML.HTMLElement` | 295 | 21% |
+| 5+ | `Web.HTML.HTMLElement.Attributes` | 58 | 4% |
 
-**Implication**: Module hierarchy is meaningful and could be visualized independently of package structure. Data.* and Control.* span multiple packages. A namespace-based treemap would show different patterns than package-based.
+### Top-Level Namespaces
 
-### Function Calls (Dependencies)
+| Namespace | Modules |
+|-----------|---------|
+| Web | 294 |
+| Data | 275 |
+| Hylograph | 119 |
+| Test | 101 |
+| Control | 73 |
+| Halogen | 52 |
+| Node | 43 |
+| CSS | 38 |
+| Tidal | 37 |
+| DOM | 32 |
+
+**Implication**: Namespaces span packages. `Data.*` includes modules from prelude, arrays, maybe, either, and many more. A namespace-based view would reveal cross-package structure.
+
+---
+
+## Function Calls (Dependencies)
 
 | Statistic | Value |
 |-----------|-------|
-| Modules with outgoing calls | 330 (24%) |
+| Modules with recorded calls | 330 (24%) |
 | Total call edges | 19,210 |
 | Average calls per module | 13 |
 | Max calls from one module | 353 |
 
-**Implication**: The call graph is sparse - only 24% of modules have recorded outgoing calls (likely limited to workspace packages). When present, dependency links are meaningful but not overwhelming (~13 per module average).
+**Note**: Call data is primarily from workspace packages. Registry packages have sparser call information.
 
-## Visualization Design Implications
+---
 
-### What's Typical vs. Exceptional
+## What's Typical vs. Exceptional
 
-| Aspect | Typical | Exceptional |
-|--------|---------|-------------|
+| Dimension | Typical | Exceptional |
+|-----------|---------|-------------|
 | Package size | 1-10 modules | 50+ modules |
 | Module size | 5-20 declarations | 100+ declarations |
-| Data type size | 1-5 constructors | 20+ constructors |
+| Data type | 1-3 constructors | 20+ constructors |
+| Type class | 2-5 methods | 15+ methods |
+| Instance count | 3-10 per class | 50+ per class |
 | Module LOC | 50-200 | 1000+ |
 | Module depth | 2-3 levels | 5+ levels |
 
-### Recommended Visual Encodings
+---
 
-1. **Package overview (current)**: Treemap works well. Median package (3 modules) and max (197) both render acceptably.
+## Visualization Opportunities
 
-2. **Module detail (current)**: Circle packing for declarations works. Median (6) and max (265) both manageable.
+### Already Built
+- Package treemap (sized by LOC)
+- Module circle packing (colored by kind)
+- Dependency links between declarations
 
-3. **Constructor nesting (proposed)**: Feasible. Most data types have 1-5 constructors. Nested circles or petals would work.
+### Proposed Views
 
-4. **Namespace view (proposed)**: Worth building. Data.* (275 modules) and Control.* (73 modules) would show cross-package patterns.
+1. **Type Class Grid**
+   - 686 type classes in a grid
+   - Donut chart per class: arcs = methods
+   - Center number: instance count
+   - Sort by instance count to reveal most-implemented classes
 
-5. **Function signature visualization**: Lower priority - values dominate but signatures vary widely in complexity.
+2. **ADT Sunburst**
+   - Visual signature for each data type
+   - Center = type name
+   - Rays = constructors
+   - Could be used as glyphs in treemap
 
-### Views to Consider
+3. **Namespace Treemap**
+   - Group by Data.*, Control.*, Web.* instead of package
+   - Shows cross-package structure
+   - Reveals which namespaces are "owned" by one package vs. distributed
 
-1. **Namespace treemap**: Group by Data.*, Control.*, etc. instead of package
-2. **Declaration graph**: Focus on a single module, show its declarations and their call relationships
-3. **Type family view**: Show data types with their constructors as nested structure
-4. **Complexity outliers**: Highlight modules/declarations that exceed typical dimensions
-5. **Cross-package namespace**: Show how Data.Array in prelude relates to Data.Array.ST in arrays package
+4. **Export/Internal Split**
+   - Two-column view per module
+   - Left: exported declarations
+   - Right: internal declarations
+   - Colored dots by kind
 
-## Raw Data
+5. **Outlier Badges**
+   - Flag modules/packages exceeding typical dimensions
+   - Large module badge (50+ decls)
+   - Complex type badge (10+ constructors)
+   - Heavy dependency badge
 
-The following data was used for this analysis:
-- `/api/v2/modules` - 1,381 modules with LOC, declaration counts
-- `/api/v2/module-declarations/:id` - Declaration details with children
-- `/api/v2/all-calls` - 19,210 function call relationships
+6. **Linting Views**
+   - Exported FFI (potential security/maintenance concern)
+   - Orphan instances (instances defined away from type and class)
+   - Dead code detection
 
-Queries executed 2026-02-03 against the minard database via API.
+---
+
+## Key Ratios (Quick Reference)
+
+| Ratio | Value |
+|-------|-------|
+| Declarations per module | 28 avg, 6 median |
+| Modules per package | 8 avg, 3 median |
+| Constructors per data type | 2.4 avg |
+| Instances per type class | 6.8 avg |
+| Methods per type class | 4.0 avg |
+| Functions : Types : Classes | 73% : 25% : 2% |
+
+---
+
+## Data Sources
+
+Queried directly from DuckDB (`ce-unified.duckdb`) on 2026-02-03:
+
+```sql
+SELECT kind, COUNT(*) FROM declarations GROUP BY kind;
+SELECT kind, COUNT(*) FROM child_declarations GROUP BY kind;
+```
+
+API endpoints used for module/package structure:
+- `/api/v2/modules`
+- `/api/v2/packages`
+- `/api/v2/all-calls`
