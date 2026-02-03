@@ -53,6 +53,9 @@ module CE2.Data.Loader
   , TypeClassInfo
   , TypeClassSummary
   , fetchTypeClassStats
+    -- Git Status
+  , GitStatusData
+  , fetchGitStatus
   ) where
 
 import Prelude
@@ -1918,4 +1921,26 @@ type TypeClassStats =
 fetchTypeClassStats :: Aff (Either String TypeClassStats)
 fetchTypeClassStats = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/type-class-stats")
+  pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- =============================================================================
+-- Git Status (live query)
+-- =============================================================================
+
+-- | Git working tree status
+-- | modified: modules with unstaged changes
+-- | staged: modules with staged changes
+-- | untracked: new untracked modules
+type GitStatusData =
+  { modified :: Array String    -- Module names (e.g., "CE2.Component.SceneCoordinator")
+  , staged :: Array String
+  , untracked :: Array String
+  , timestamp :: Number         -- When the status was fetched
+  }
+
+-- | Fetch current git status
+-- | This is a live query - always fetches fresh data
+fetchGitStatus :: Aff (Either String GitStatusData)
+fetchGitStatus = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/git/status")
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError

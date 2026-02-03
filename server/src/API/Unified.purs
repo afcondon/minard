@@ -29,13 +29,17 @@ module API.Unified
   , getPolyglotSummary
   -- Type system analysis
   , getTypeClassStats
+  -- Git
+  , getGitStatus
   ) where
 
 import Prelude
 
 import Data.Maybe (Maybe(..))
 import Database.DuckDB (Database, queryAll, queryAllParams, firstRow)
+import Effect (Effect)
 import Effect.Aff (Aff)
+import Effect.Class (liftEffect)
 import Foreign (Foreign, unsafeToForeign)
 import HTTPurple (Response, ok', notFound)
 import HTTPurple.Headers (ResponseHeaders, headers)
@@ -609,3 +613,17 @@ getTypeClassStats db = do
   ok' jsonHeaders json
 
 foreign import buildTypeClassStatsJson :: Array Foreign -> String
+
+-- =============================================================================
+-- GET /api/v2/git/status
+-- =============================================================================
+
+-- | Get current git working tree status
+-- | Returns: { modified: [moduleName], staged: [moduleName], untracked: [moduleName] }
+-- | This is a live query - runs git status and maps paths to module names
+getGitStatus :: Aff Response
+getGitStatus = do
+  json <- liftEffect getGitStatusJson
+  ok' jsonHeaders json
+
+foreign import getGitStatusJson :: Effect String

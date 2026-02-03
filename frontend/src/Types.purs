@@ -328,6 +328,7 @@ data ColorMode
   | FullRegistryTopo    -- Color by topo layer across full registry
   | ProjectScopeTopo    -- Color by topo layer within project scope
   | PublishDate         -- Color by publish date (beeswarm default)
+  | GitStatus           -- Color by git working tree status (modified/staged/clean)
 
 derive instance eqColorMode :: Eq ColorMode
 
@@ -337,6 +338,7 @@ instance showColorMode :: Show ColorMode where
   show FullRegistryTopo = "FullRegistryTopo"
   show ProjectScopeTopo = "ProjectScopeTopo"
   show PublishDate = "PublishDate"
+  show GitStatus = "GitStatus"
 
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String
@@ -369,6 +371,26 @@ topoLayerColor layer maxLayer =
     l = 60.0 - t * 5.0     -- 60% -> 55%
   in
     "hsl(" <> show h <> ", " <> show s <> "%, " <> show l <> "%)"
+
+-- =============================================================================
+-- Git Status Colors
+-- =============================================================================
+
+-- | Git file status for coloring
+data GitFileStatus
+  = GitModified    -- Modified but not staged (working tree changes)
+  | GitStaged      -- Staged for commit
+  | GitUntracked   -- New untracked file
+  | GitClean       -- No changes
+
+derive instance eqGitFileStatus :: Eq GitFileStatus
+
+-- | Color for git status (works on all themes)
+gitStatusColor :: GitFileStatus -> String
+gitStatusColor GitModified = "#e67e22"   -- Orange/amber for modified
+gitStatusColor GitStaged = "#27ae60"     -- Green for staged
+gitStatusColor GitUntracked = "#9b59b6"  -- Purple for new/untracked
+gitStatusColor GitClean = "rgba(128, 128, 128, 0.3)"  -- Dim gray for clean
 
 -- =============================================================================
 -- Beeswarm Scope (package filtering for GUP)

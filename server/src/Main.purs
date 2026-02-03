@@ -41,6 +41,8 @@ data Route
   | V2PolyglotSummary
   -- Type system analysis
   | V2TypeClassStats
+  -- Git
+  | V2GitStatus
   -- Health
   | Health
 
@@ -64,6 +66,7 @@ route = root $ sum
   , "V2SearchDeclarations": path "api/v2/declarations/search" segment
   , "V2PolyglotSummary": path "api/v2/polyglot-summary" noArgs
   , "V2TypeClassStats": path "api/v2/type-class-stats" noArgs
+  , "V2GitStatus": path "api/v2/git/status" noArgs
   , "Health": path "health" noArgs
   }
 
@@ -100,6 +103,7 @@ main = launchAff_ do
     log "  GET /api/v2/declarations/search/:query   - Search declarations"
     log "  GET /api/v2/polyglot-summary             - Polyglot project summary"
     log "  GET /api/v2/type-class-stats            - Type class method/instance counts"
+    log "  GET /api/v2/git/status                   - Live git status (modified/staged)"
     log "  GET /health                              - Health check"
   where
   mkRouter db { route: r } = case r of
@@ -119,4 +123,5 @@ main = launchAff_ do
     V2SearchDeclarations query -> Unified.searchDeclarations db query
     V2PolyglotSummary -> Unified.getPolyglotSummary db
     V2TypeClassStats -> Unified.getTypeClassStats db
+    V2GitStatus -> Unified.getGitStatus
     Health -> ok "OK"

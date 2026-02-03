@@ -203,6 +203,9 @@ type State =
     -- Type class stats (lazy loaded for TypeClassGrid scene)
   , typeClassStats :: Maybe Loader.TypeClassStats
 
+    -- Git status (lazy loaded when Git mode activated)
+  , gitStatus :: Maybe Loader.GitStatusData
+
     -- Browser history integration
   , historyCleanup :: Maybe (Effect Unit)  -- Cleanup function for popstate listener
   }
@@ -227,6 +230,7 @@ data Action
   | TreemapCellClicked String             -- Package name clicked in treemap
   | GalaxyTreemapCircleClicked String     -- Circle click in GalaxyTreemap → SolarSwarm
   | GalaxyTreemapRectClicked String       -- Rect click in GalaxyTreemap → PkgTreemap
+  | ToggleGitMode                         -- Toggle between GitStatus color mode and previous mode
 
 -- =============================================================================
 -- Component
@@ -268,6 +272,7 @@ initialState input =
   , hoveredModule: Nothing
   , galaxyTreemapListener: Nothing
   , typeClassStats: Nothing
+  , gitStatus: Nothing
   , historyCleanup: Nothing
   }
 
@@ -344,6 +349,18 @@ isPackageTreemap _ = false
 -- Header, Tab Strip, and Footer
 -- =============================================================================
 
+-- | Style for Git button (highlighted when Git mode is active)
+gitButtonStyle :: ColorMode -> String -> String
+gitButtonStyle colorMode textColor =
+  let
+    isActive = colorMode == GitStatus
+    activeColor = "#27ae60"  -- Green when active
+  in
+    "background: " <> (if isActive then activeColor else "none") <> "; "
+    <> "border: 1px solid " <> (if isActive then activeColor else textColor) <> "; "
+    <> "color: " <> (if isActive then "#fff" else textColor) <> "; "
+    <> "cursor: pointer; font-size: 9px; padding: 2px 6px; border-radius: 3px; margin-left: 4px;"
+
 -- | Render the header bar (editorial beige style with Courier typography)
 renderHeaderBar :: forall m. State -> H.ComponentHTML Action Slots m
 renderHeaderBar state =
@@ -387,6 +404,12 @@ renderHeaderBar state =
             , HP.style $ "background: none; border: 1px solid " <> textColor <> "; color: " <> textColor <> "; cursor: pointer; font-size: 9px; padding: 2px 6px; border-radius: 3px; margin-left: 8px;"
             ]
             [ HH.text "TC" ]
+        -- Git status button (toggles GitStatus color mode)
+        , HH.button
+            [ HE.onClick \_ -> ToggleGitMode
+            , HP.style $ gitButtonStyle state.colorMode textColor
+            ]
+            [ HH.text "Git" ]
         ]
 
       -- Center: Count info
@@ -1072,6 +1095,31 @@ handleAction = case _ of
     -- Re-render the visualization with new mode
     newState <- H.get
     prepareSceneData newState
+
+  ToggleGitMode -> do
+    state <- H.get
+    if state.colorMode == GitStatus
+      then do
+        -- Toggle OFF: return to default topo coloring
+        log "[SceneCoordinator] Git mode OFF"
+        H.modify_ _ { colorMode = FullRegistryTopo }
+      else do
+        -- Toggle ON: activate git mode and fetch status if needed
+        log "[SceneCoordinator] Git mode ON"
+        H.modify_ _ { colorMode = GitStatus }
+        -- Fetch git status if not already loaded
+        when (state.gitStatus == Nothing) do
+          log "[SceneCoordinator] Fetching git status..."
+          result <- liftAff Loader.fetchGitStatus
+          case result of
+            Right gitData -> do
+              log $ "[SceneCoordinator] Git status: "
+                  <> show (Array.length gitData.modified) <> " modified, "
+                  <> show (Array.length gitData.staged) <> " staged, "
+                  <> show (Array.length gitData.untracked) <> " untracked"
+              H.modify_ _ { gitStatus = Just gitData }
+            Left err ->
+              log $ "[SceneCoordinator] Failed to fetch git status: " <> err
 
   TreemapCellClicked pkgName -> do
     log $ "[SceneCoordinator] Treemap cell clicked: " <> pkgName

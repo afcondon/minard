@@ -429,6 +429,7 @@ getNodeColor colorMode pkg dateRange maxTopoLayer = case colorMode of
   FullRegistryTopo -> getTopoColor pkg.topoLayer maxTopoLayer
   ProjectScopeTopo -> getTopoColor pkg.topoLayer maxTopoLayer
   PublishDate -> getDateColor pkg.publishedAt dateRange
+  GitStatus -> "rgba(128, 128, 128, 0.3)"  -- Default dim, actual coloring done via CSS classes
 
 -- | Get color based on topo layer (green-to-blue gradient)
 getTopoColor :: Int -> Int -> String
