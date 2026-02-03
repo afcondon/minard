@@ -96,7 +96,6 @@ listPackages db = do
     LEFT JOIN modules m ON m.package_version_id = pv.id
     LEFT JOIN declarations d ON d.module_id = m.id
     GROUP BY pv.id, pv.name, pv.version, pv.description, pv.license, pv.repository, pv.source
-    HAVING COUNT(DISTINCT m.id) > 0
     ORDER BY pv.source DESC, pv.name, pv.version
   """
   let json = buildPackagesJson rows
