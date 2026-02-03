@@ -1,0 +1,5 @@
+# Exclude build artifacts and dependencies, but keep public/
+node_modules/
+output/
+.spago/
+src/

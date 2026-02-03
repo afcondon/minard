@@ -503,9 +503,16 @@ renderFooterStats state =
             [ HH.text $ show model.packageCount <> " packages • " <> show model.moduleCount <> " modules" ]
         Nothing -> HH.text ""
 
--- | Selection info (hovered/selected item)
+-- | Selection info (hovered/selected item) - shows legend for PkgTreemap
 renderSelectionInfo :: forall m. State -> H.ComponentHTML Action Slots m
 renderSelectionInfo state =
+  case state.scene of
+    PkgTreemap _ -> renderDeclarationLegend
+    _ -> renderHoverInfo state
+
+-- | Default hover info display
+renderHoverInfo :: forall m. State -> H.ComponentHTML Action Slots m
+renderHoverInfo state =
   case state.hoveredPackage of
     Just pkgName ->
       HH.span
@@ -521,6 +528,28 @@ renderSelectionInfo state =
           HH.span
             [ HP.style "opacity: 0.5; font-style: italic;" ]
             [ HH.text "hover for details" ]
+
+-- | Legend for declaration kinds in enriched treemap
+renderDeclarationLegend :: forall m. H.ComponentHTML Action Slots m
+renderDeclarationLegend =
+  HH.div
+    [ HP.style "display: flex; align-items: center; gap: 12px; font-size: 10px;" ]
+    [ legendItem "#4e79a7" "value"
+    , legendItem "#59a14f" "data"
+    , legendItem "#76b7b2" "newtype"
+    , legendItem "#f28e2b" "class"
+    , legendItem "#edc948" "synonym"
+    , legendItem "#e15759" "foreign"
+    ]
+  where
+    legendItem color label =
+      HH.div
+        [ HP.style "display: flex; align-items: center; gap: 3px;" ]
+        [ HH.span
+            [ HP.style $ "width: 8px; height: 8px; border-radius: 50%; background: " <> color <> ";" ]
+            []
+        , HH.span_ [ HH.text label ]
+        ]
 
 -- | Footer controls (view mode, scope)
 renderFooterControls :: forall m. State -> H.ComponentHTML Action Slots m
