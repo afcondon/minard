@@ -1010,7 +1010,7 @@ handleAction = case _ of
     BubblePackBeeswarmViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] BubblePack package circle clicked: " <> pkgName
       -- Circle click → set focal to filter to neighborhood (stay in SolarSwarm)
-      handleAction (OpenPackagePanel pkgName)
+      -- RETIRED: handleAction (OpenPackagePanel pkgName)  -- Panel retired, info now in tooltips
       handleAction (SetFocalPackage (Just pkgName))
     BubblePackBeeswarmViz.PackageLabelClicked pkgName -> do
       log $ "[SceneCoordinator] BubblePack package label clicked: " <> pkgName
@@ -1020,8 +1020,8 @@ handleAction = case _ of
       H.modify_ _ { hoveredPackage = mPkgName }
     BubblePackBeeswarmViz.ModuleClicked pkgName modName -> do
       log $ "[SceneCoordinator] BubblePack module clicked: " <> pkgName <> "/" <> modName
-      -- Open the slide-out panel with module info (but don't navigate)
-      handleAction (OpenModulePanel pkgName modName)
+      -- RETIRED: handleAction (OpenModulePanel pkgName modName)  -- Panel retired, info now in tooltips
+      pure unit
     BubblePackBeeswarmViz.ModuleHovered pkgName mModName ->
       -- Track hovered module for coordinated highlighting
       case mModName of
@@ -1034,7 +1034,7 @@ handleAction = case _ of
     GalaxyBeeswarmViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] Galaxy package circle clicked: " <> pkgName
       -- Circle click → neighborhood view (SolarSwarm with focal package)
-      handleAction (OpenPackagePanel pkgName)
+      -- RETIRED: handleAction (OpenPackagePanel pkgName)  -- Panel retired, info now in tooltips
       handleAction (SetFocalPackage (Just pkgName))
       handleAction (NavigateTo SolarSwarm)
     GalaxyBeeswarmViz.PackageLabelClicked pkgName -> do
@@ -1047,8 +1047,8 @@ handleAction = case _ of
   HandleModuleTreemapOutput output -> case output of
     ModuleTreemapEnrichedViz.ModuleClicked pkgName modName -> do
       log $ "[SceneCoordinator] Module treemap clicked: " <> pkgName <> "/" <> modName
-      -- Open the slide-out panel with module info
-      handleAction (OpenModulePanel pkgName modName)
+      -- RETIRED: handleAction (OpenModulePanel pkgName modName)  -- Panel retired, info now in tooltips
+      pure unit
     ModuleTreemapEnrichedViz.ModuleHovered _mModName ->
       pure unit  -- Future: coordinated hover
 
@@ -1081,7 +1081,7 @@ handleAction = case _ of
   GalaxyTreemapCircleClicked pkgName -> do
     log $ "[SceneCoordinator] GalaxyTreemap circle clicked: " <> pkgName
     -- Circle click → neighborhood view (SolarSwarm with focal package)
-    handleAction (OpenPackagePanel pkgName)
+    -- RETIRED: handleAction (OpenPackagePanel pkgName)  -- Panel retired, info now in tooltips
     handleAction (SetFocalPackage (Just pkgName))
     handleAction (NavigateTo SolarSwarm)
 

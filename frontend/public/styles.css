@@ -2160,3 +2160,94 @@ select.project-dropdown:focus {
   width: 100%;
   height: 100%;
 }
+
+/* =============================================================================
+   CSS-Based Tooltips (data-tooltip attribute)
+   ============================================================================= */
+
+/* Elements with data-tooltip show tooltip on hover */
+[data-tooltip] {
+  position: relative;
+  cursor: pointer;
+}
+
+/* Tooltip content via ::after pseudo-element */
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 2000;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+
+  /* Match floating panel style */
+  background-color: rgba(212, 201, 168, 0.98);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--color-text-dark);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+
+  /* Typography */
+  font-family: var(--font-mono);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+  white-space: pre-line;
+  text-align: left;
+  max-width: 320px;
+  min-width: 150px;
+
+  /* Initially hidden */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
+}
+
+/* Show tooltip on hover */
+[data-tooltip]:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Arrow pointing down */
+[data-tooltip]::before {
+  content: '';
+  position: absolute;
+  z-index: 2001;
+  left: 50%;
+  bottom: calc(100% + 2px);
+  transform: translateX(-50%);
+
+  border-width: 6px;
+  border-style: solid;
+  border-color: rgba(212, 201, 168, 0.98) transparent transparent transparent;
+
+  /* Initially hidden */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
+}
+
+/* Show arrow on hover */
+[data-tooltip]:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* For SVG elements, tooltip positioned based on element center */
+svg [data-tooltip]::after {
+  left: 50%;
+  bottom: auto;
+  top: -12px;
+  transform: translate(-50%, -100%);
+}
+
+svg [data-tooltip]::before {
+  left: 50%;
+  bottom: auto;
+  top: -6px;
+  transform: translate(-50%, -100%);
+}

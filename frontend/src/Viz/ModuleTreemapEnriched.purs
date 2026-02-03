@@ -36,11 +36,11 @@ import Effect (Effect)
 import Effect.Console (log)
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onClick)
+import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onCoordinatedHighlightWithTooltip, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Selection.Types (ElementType(..))
 -- Note: ElementType includes SVG, Group, Rect, Circle, Text, Path, Line, etc.
-import Hylograph.Internal.Behavior.Types (HighlightClass(..))
+import Hylograph.Internal.Behavior.Types (HighlightClass(..), TooltipTrigger(..))
 
 -- Layout
 import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
@@ -723,10 +723,15 @@ enrichedModuleCell config m =
 
 -- | Render an individual declaration circle with dependency highlighting
 -- | If the declaration has children, renders them as nested circles inside
+-- | Includes data-tooltip for hover information
 declarationCircleElem :: DeclarationCircle -> Tree
 declarationCircleElem decl =
+  let
+    -- Build tooltip text for display on hover
+    tooltipText = buildDeclarationTooltip decl
+  in
   withBehaviors
-    [ onCoordinatedHighlight
+    [ onCoordinatedHighlightWithTooltip
         { identify: decl.fullName
         , classify: \hoveredId ->
             if decl.fullName == hoveredId then Primary
@@ -734,6 +739,7 @@ declarationCircleElem decl =
             else if Array.elem hoveredId decl.calledBy then Related   -- This calls me
             else Dimmed
         , group: Just "declarations"  -- Declaration-level highlighting group
+        , tooltip: Just { content: tooltipText, showWhen: OnHover }
         }
     ]
   $ if Array.null decl.children
@@ -754,6 +760,7 @@ declarationCircleElem decl =
         , thunkedStr "data-kind" decl.kind
         , thunkedStr "data-calls" (show (Array.length decl.calls))
         , thunkedStr "data-calledby" (show (Array.length decl.calledBy))
+        , thunkedStr "data-tooltip" tooltipText  -- Tooltip content
         , staticStr "class" "declaration-circle"
         ]
         []
@@ -767,6 +774,7 @@ declarationCircleElem decl =
         , thunkedStr "data-fullname" decl.fullName
         , thunkedStr "data-kind" decl.kind
         , thunkedStr "data-child-count" (show decl.childCount)
+        , thunkedStr "data-tooltip" tooltipText  -- Tooltip content
         ]
         [ -- Outer circle (background/container)
           elem Circle
@@ -787,6 +795,47 @@ declarationCircleElem decl =
             [ staticStr "class" "declaration-children" ]
             (map (childCircleElem decl.kind) decl.children)
         ]
+
+-- | Build tooltip text for a declaration
+buildDeclarationTooltip :: DeclarationCircle -> String
+buildDeclarationTooltip decl =
+  let
+    kindStr = case decl.kind of
+      "value" -> "value"
+      "data" -> "data"
+      "newtype" -> "newtype"
+      "type_class" -> "class"
+      "type_synonym" -> "type"
+      "foreign" -> "foreign"
+      _ -> decl.kind
+
+    header = decl.name <> " :: " <> kindStr
+
+    typeSig = case decl.typeSignature of
+      Just sig -> "\n" <> sig
+      Nothing -> ""
+
+    childInfo = if decl.childCount > 0
+      then "\n(" <> show decl.childCount <> " " <> childKindName decl.kind <> ")"
+      else ""
+
+    depInfo =
+      let calls = Array.length decl.calls
+          calledBy = Array.length decl.calledBy
+      in if calls > 0 || calledBy > 0
+         then "\n→ " <> show calls <> " calls, ← " <> show calledBy <> " callers"
+         else ""
+  in
+    header <> typeSig <> childInfo <> depInfo
+
+-- | Get the name for children based on parent kind
+childKindName :: String -> String
+childKindName = case _ of
+  "data" -> "constructors"
+  "newtype" -> "constructors"
+  "type_class" -> "members"
+  "value" -> "arguments"
+  _ -> "children"
 
 -- | Render a child circle (constructor, method, instance) inside a declaration
 childCircleElem :: String -> ChildCircle -> Tree
