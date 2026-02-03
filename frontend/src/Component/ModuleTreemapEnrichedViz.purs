@@ -29,6 +29,7 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
+import CE2.Types (ColorMode)
 import CE2.Viz.ModuleTreemapEnriched as ModuleTreemapEnriched
 
 -- =============================================================================
@@ -42,6 +43,8 @@ type Input =
   , imports :: Array Loader.V2ModuleImports
   , declarations :: Map Int (Array Loader.V2Declaration)
   , functionCalls :: Map Int (Array Loader.V2FunctionCall)
+  , gitStatus :: Maybe Loader.GitStatusData  -- For git status coloring
+  , colorMode :: ColorMode                   -- Current color mode
   }
 
 -- | Output to parent
@@ -140,11 +143,13 @@ handleAction = case _ of
         modulesChanged = Array.length input.modules /= Array.length lastInput.modules
         declarationsChanged = Map.size input.declarations /= Map.size lastInput.declarations
         callsChanged = Map.size input.functionCalls /= Map.size lastInput.functionCalls
+        colorModeChanged = input.colorMode /= lastInput.colorMode
+        gitStatusChanged = input.gitStatus /= lastInput.gitStatus
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
-    when (packageChanged || modulesChanged || declarationsChanged || callsChanged) do
+    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged) do
       log $ "[ModuleTreemapEnrichedViz] Input changed, re-rendering"
       renderTreemap input
 
@@ -177,6 +182,8 @@ renderTreemap input = do
     , height: 900.0
     , packageName: input.packageName
     , onModuleClick: Just onModuleClick
+    , colorMode: input.colorMode
+    , gitStatus: input.gitStatus
     }
     pkgModules
     pkgImports

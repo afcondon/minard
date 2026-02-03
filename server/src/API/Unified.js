@@ -554,12 +554,73 @@ export const getGitStatusJson = () => {
       timestamp: Date.now()
     });
   } catch (error) {
-    return JSON.stringify({
-      modified: [],
-      staged: [],
-      untracked: [],
-      error: error.message,
-      timestamp: Date.now()
-    });
+    // Git not available - return mock data for UI development
+    return getMockGitStatus();
   }
 };
+
+/**
+ * Generate mock git status for UI development/testing.
+ * Uses timestamp-based seed to give semi-random but stable results within a time window.
+ * This lets us see different "commits" by refreshing.
+ */
+function getMockGitStatus() {
+  // Pool of realistic module names (minard frontend modules)
+  const allModules = [
+    'CE2.Component.SceneCoordinator',
+    'CE2.Component.AppShell',
+    'CE2.Component.BubblePackBeeswarmViz',
+    'CE2.Component.GalaxyBeeswarmViz',
+    'CE2.Component.ModuleTreemapEnrichedViz',
+    'CE2.Data.Loader',
+    'CE2.Data.Filter',
+    'CE2.Types',
+    'CE2.Scene',
+    'CE2.Viz.PackageSetTreemap',
+    'CE2.Viz.PackageSetBeeswarm',
+    'CE2.Viz.ModuleTreemap',
+    'CE2.Viz.ModuleTreemapEnriched',
+    'CE2.Viz.ModuleBeeswarm',
+    'CE2.Viz.ModuleBubblePack',
+    'CE2.Viz.BubblePackBeeswarm',
+    'CE2.Viz.DependencyMatrix',
+    'CE2.Viz.DependencyChord',
+    'CE2.Viz.DependencyAdjacency',
+    'CE2.Viz.TypeClassGrid',
+    'CE2.Viz.PolyglotSunburst',
+  ];
+
+  // Use minute-based seed so results change every minute (simulates different commits)
+  const seed = Math.floor(Date.now() / 60000);
+  const rng = mulberry32(seed);
+
+  // Shuffle and pick random subsets
+  const shuffled = [...allModules].sort(() => rng() - 0.5);
+
+  // Pick 2-4 modified, 1-3 staged, 0-2 untracked
+  const numModified = 2 + Math.floor(rng() * 3);
+  const numStaged = 1 + Math.floor(rng() * 3);
+  const numUntracked = Math.floor(rng() * 3);
+
+  const modified = shuffled.slice(0, numModified);
+  const staged = shuffled.slice(numModified, numModified + numStaged);
+  const untracked = shuffled.slice(numModified + numStaged, numModified + numStaged + numUntracked);
+
+  return JSON.stringify({
+    modified,
+    staged,
+    untracked,
+    mock: true,  // Flag so UI knows this is mock data
+    timestamp: Date.now()
+  });
+}
+
+// Simple seeded PRNG (mulberry32)
+function mulberry32(seed) {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}

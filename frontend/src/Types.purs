@@ -9,6 +9,7 @@ import Data.Int (toNumber)
 import Data.Map (Map)
 import Data.Maybe (Maybe)
 import Data.Set (Set)
+import Data.Set as Set
 import Hylograph.Kernel.D3.Simulation (SimulationNode, Link)
 import Hylograph.Transition.Tick as Tick
 
@@ -411,3 +412,24 @@ instance showBeeswarmScope :: Show BeeswarmScope where
   show ProjectOnly = "ProjectOnly"
   show ProjectWithDeps = "ProjectWithDeps"
   show ProjectWithTransitive = "ProjectWithTransitive"
+
+-- =============================================================================
+-- Git Status at Package Level (aggregated from module status)
+-- =============================================================================
+
+-- | Package-level git status for coloring
+-- | Contains sets of package names that have modified/staged/untracked modules
+type PackageGitStatus =
+  { packagesWithModified :: Set String    -- Packages containing modified modules
+  , packagesWithStaged :: Set String      -- Packages containing staged modules
+  , packagesWithUntracked :: Set String   -- Packages containing untracked modules
+  }
+
+-- | Get the effective git status for a package
+-- | Priority: modified > staged > untracked > clean
+getPackageGitStatus :: PackageGitStatus -> String -> GitFileStatus
+getPackageGitStatus pgs packageName
+  | Set.member packageName pgs.packagesWithModified = GitModified
+  | Set.member packageName pgs.packagesWithStaged = GitStaged
+  | Set.member packageName pgs.packagesWithUntracked = GitUntracked
+  | otherwise = GitClean

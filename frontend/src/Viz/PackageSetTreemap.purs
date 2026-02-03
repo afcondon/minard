@@ -191,7 +191,7 @@ computeTreemapPositions config packages =
 
         -- Layer group node (uses dummy package data)
         layerData :: PackageSetPackage
-        layerData = { name: "layer-" <> show layer, id: -layer, version: "", topoLayer: layer, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0 }
+        layerData = { name: "layer-" <> show layer, id: -layer, version: "", topoLayer: layer, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0, source: "registry" }
       in
         VNode
           { data_: layerData
@@ -207,7 +207,7 @@ computeTreemapPositions config packages =
 
     -- Create root node containing layer groups
     rootData :: PackageSetPackage
-    rootData = { name: "root", id: 0, version: "", topoLayer: -1, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0 }
+    rootData = { name: "root", id: 0, version: "", topoLayer: -1, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0, source: "registry" }
 
     root :: ValuedNode PackageSetPackage
     root = VNode

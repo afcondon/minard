@@ -33,7 +33,7 @@ import Halogen.Subscription as HS
 import CE2.Containers as C
 import CE2.Data.Filter (filterPackagesByScope)
 import CE2.Data.Loader as Loader
-import CE2.Types (ViewTheme, ColorMode(..), BeeswarmScope(..), CellContents(..), projectPackages)
+import CE2.Types (ViewTheme, ColorMode(..), BeeswarmScope(..), CellContents(..), projectPackages, PackageGitStatus)
 import CE2.Viz.PackageSetBeeswarm as Beeswarm
 import CE2.Viz.PackageSetTreemap as Treemap
 
@@ -50,6 +50,7 @@ type Input =
   , scope :: BeeswarmScope
   , theme :: ViewTheme
   , colorMode :: ColorMode
+  , gitStatus :: Maybe PackageGitStatus  -- Package-level git status for GitStatus color mode
   , initialPositions :: Maybe (Array InitialPosition)  -- For Treemap → Beeswarm transition
   }
 
@@ -183,6 +184,7 @@ handleAction = case _ of
         scopeChanged = input.scope /= lastInput.scope
         themeChanged = input.theme /= lastInput.theme
         colorModeChanged = input.colorMode /= lastInput.colorMode
+        gitStatusChanged = input.gitStatus /= lastInput.gitStatus
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
@@ -206,9 +208,13 @@ handleAction = case _ of
           -- No handle - this shouldn't happen but recover by re-initializing
           log "[GalaxyBeeswarmViz] WARNING: No handle for scope change, re-initializing"
           startVisualization input
-    else if themeChanged || colorModeChanged then do
-      -- Just update colors in place
-      log $ "[GalaxyBeeswarmViz] Theme/color changed, hasHandle=" <> show (isJust state.handle)
+    else if colorModeChanged || gitStatusChanged then do
+      -- Git status mode change requires full re-render (colors baked into nodes)
+      log $ "[GalaxyBeeswarmViz] Color/git status changed, re-rendering"
+      startVisualization input
+    else if themeChanged then do
+      -- Theme change can update colors in place
+      log $ "[GalaxyBeeswarmViz] Theme changed, updating colors"
       liftEffect $ Treemap.updateColors C.galaxyBeeswarmTreemapContainer input.theme input.colorMode
       liftEffect $ Beeswarm.updateColors C.galaxyBeeswarmContainer input.theme input.colorMode
     else
@@ -268,7 +274,7 @@ startVisualization input = do
 
   -- Render beeswarm with filtered packages
   let filteredPkgs = filterPackagesByScope input.scope input.packages
-  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.initialPositions circleClickHandler labelClickHandler
+  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.gitStatus input.initialPositions circleClickHandler labelClickHandler
 
   -- Store handle (initialPositions consumed from input, not stored in state)
   H.modify_ _ { handle = Just handle, initialized = true }
@@ -312,11 +318,12 @@ renderBeeswarmWithPositions
   :: Array Loader.PackageSetPackage
   -> Array Loader.PackageSetPackage
   -> ColorMode
+  -> Maybe PackageGitStatus  -- Package-level git status
   -> Maybe (Array InitialPosition)
   -> Maybe (String -> Effect Unit)  -- Circle click handler (neighborhood view)
   -> Maybe (String -> Effect Unit)  -- Label click handler (treemap view)
   -> Effect Beeswarm.BeeswarmHandle
-renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPositions mCircleClick mLabelClick = do
+renderBeeswarmWithPositions allPackages filteredPackages colorMode gitStatus mInitialPositions mCircleClick mLabelClick = do
   let maxLayer = Array.foldl (\acc pkg -> max acc pkg.topoLayer) 0 allPackages
       config :: Beeswarm.Config
       config =
@@ -326,6 +333,7 @@ renderBeeswarmWithPositions allPackages filteredPackages colorMode mInitialPosit
         , projectPackages: Set.fromFoldable projectPackages
         , maxTopoLayer: maxLayer
         , colorMode: colorMode
+        , gitStatus: gitStatus
         , onPackageClick: mCircleClick           -- Circle → neighborhood
         , onPackageLabelClick: mLabelClick       -- Label → treemap
         , enableHighlighting: true

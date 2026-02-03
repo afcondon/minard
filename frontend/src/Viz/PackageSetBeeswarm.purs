@@ -72,7 +72,7 @@ import Hylograph.ForceEngine.Simulation (SimulationNode)
 import Hylograph.ForceEngine.Setup (withAlphaDecay)
 
 import CE2.Data.Loader (PackageSetPackage)
-import CE2.Types (ViewTheme, ColorMode(..))
+import CE2.Types (ViewTheme, ColorMode(..), PackageGitStatus, GitFileStatus(..), getPackageGitStatus, gitStatusColor)
 
 -- =============================================================================
 -- Types
@@ -86,6 +86,7 @@ type Config =
   , projectPackages :: Set String  -- Packages our project uses
   , maxTopoLayer :: Int
   , colorMode :: ColorMode  -- How to color the packages
+  , gitStatus :: Maybe PackageGitStatus  -- Package-level git status for GitStatus color mode
   , onPackageClick :: Maybe (String -> Effect Unit)  -- Circle click: packageName -> Effect
   , onPackageLabelClick :: Maybe (String -> Effect Unit)  -- Label click: packageName -> Effect
   , enableHighlighting :: Boolean  -- Enable coordinated highlighting on hover
@@ -97,7 +98,10 @@ type PackageNode = SimulationNode
   , targetX :: Number      -- Target x position for forceX
   , r :: Number            -- Circle radius
   , isUsed :: Boolean      -- Is this one of our project's packages?
-  , color :: String        -- Fill color based on publish date
+  , color :: String        -- Fill color based on color mode
+  , strokeColor :: String  -- Stroke color (for git status highlighting)
+  , strokeWidth :: Number  -- Stroke width (thicker for git-affected)
+  , gitStatus :: GitFileStatus  -- Git status for this package
   , dependsOn :: Array String      -- Package names this package depends on
   , dependedOnBy :: Array String   -- Package names that depend on this package
   )
@@ -115,6 +119,9 @@ type PackageNodeRow =
   , r :: Number
   , isUsed :: Boolean
   , color :: String
+  , strokeColor :: String
+  , strokeWidth :: Number
+  , gitStatus :: GitFileStatus
   , dependsOn :: Array String
   , dependedOnBy :: Array String
   )
@@ -264,8 +271,13 @@ prepareNodeAtPosition config dateRange cumulativeX positionMap dependedOnByMap i
 
     isUsed = Set.member pkg.name config.projectPackages
 
-    -- Color based on colorMode
-    color = getNodeColor config.colorMode pkg dateRange config.maxTopoLayer
+    -- Git status for this package
+    gs = case config.gitStatus of
+      Just pgs -> getPackageGitStatus pgs pkg.name
+      Nothing -> GitClean
+
+    -- Color and stroke based on colorMode
+    { color, strokeColor, strokeWidth } = getNodeStyling config.colorMode gs pkg dateRange config.maxTopoLayer
 
     { x, y } = case Map.lookup pkg.name positionMap of
       Just pos ->
@@ -292,6 +304,9 @@ prepareNodeAtPosition config dateRange cumulativeX positionMap dependedOnByMap i
     , r
     , isUsed
     , color
+    , strokeColor
+    , strokeWidth
+    , gitStatus: gs
     , dependsOn
     , dependedOnBy
     }
@@ -310,8 +325,13 @@ prepareNode config dateRange cumulativeX dependedOnByMap idx pkg =
 
     isUsed = Set.member pkg.name config.projectPackages
 
-    -- Color based on colorMode
-    color = getNodeColor config.colorMode pkg dateRange config.maxTopoLayer
+    -- Git status for this package
+    gs = case config.gitStatus of
+      Just pgs -> getPackageGitStatus pgs pkg.name
+      Nothing -> GitClean
+
+    -- Color and stroke based on colorMode
+    { color, strokeColor, strokeWidth } = getNodeStyling config.colorMode gs pkg dateRange config.maxTopoLayer
 
     pseudoRandom = toNumber ((idx * 17 + 31) `mod` 100) / 100.0 - 0.5
     x = targetX
@@ -333,6 +353,9 @@ prepareNode config dateRange cumulativeX dependedOnByMap idx pkg =
     , r
     , isUsed
     , color
+    , strokeColor
+    , strokeWidth
+    , gitStatus: gs
     , dependsOn
     , dependedOnBy
     }
@@ -421,15 +444,54 @@ parseISODate str =
   in
     toNumber days * 86400000.0
 
--- | Get node color based on ColorMode
-getNodeColor :: ColorMode -> PackageSetPackage -> DateRange -> Int -> String
-getNodeColor colorMode pkg dateRange maxTopoLayer = case colorMode of
-  DefaultUniform -> "#4e79a7"  -- Default blue
-  ProjectScope -> "#4e79a7"    -- Blue (highlight handled elsewhere)
-  FullRegistryTopo -> getTopoColor pkg.topoLayer maxTopoLayer
-  ProjectScopeTopo -> getTopoColor pkg.topoLayer maxTopoLayer
-  PublishDate -> getDateColor pkg.publishedAt dateRange
-  GitStatus -> "rgba(128, 128, 128, 0.3)"  -- Default dim, actual coloring done via CSS classes
+-- | Node styling record
+type NodeStyling =
+  { color :: String       -- Fill color
+  , strokeColor :: String -- Stroke color
+  , strokeWidth :: Number -- Stroke width
+  }
+
+-- | Get node styling based on ColorMode
+-- | For GitStatus mode: dim everything except affected packages which get bright colors + thick strokes
+getNodeStyling :: ColorMode -> GitFileStatus -> PackageSetPackage -> DateRange -> Int -> NodeStyling
+getNodeStyling colorMode gitStatus pkg dateRange maxTopoLayer = case colorMode of
+  DefaultUniform ->
+    { color: "#4e79a7", strokeColor: "#333", strokeWidth: 0.5 }
+  ProjectScope ->
+    { color: "#4e79a7", strokeColor: "#333", strokeWidth: 0.5 }
+  FullRegistryTopo ->
+    { color: getTopoColor pkg.topoLayer maxTopoLayer, strokeColor: "#333", strokeWidth: 0.5 }
+  ProjectScopeTopo ->
+    { color: getTopoColor pkg.topoLayer maxTopoLayer, strokeColor: "#333", strokeWidth: 0.5 }
+  PublishDate ->
+    { color: getDateColor pkg.publishedAt dateRange, strokeColor: "#333", strokeWidth: 0.5 }
+  GitStatus ->
+    -- Dramatic styling: dim everything except git-affected packages
+    case gitStatus of
+      GitClean ->
+        -- Clean packages are nearly invisible (dim gray, thin stroke)
+        { color: "rgba(60, 60, 60, 0.15)"
+        , strokeColor: "rgba(100, 100, 100, 0.2)"
+        , strokeWidth: 0.3
+        }
+      GitModified ->
+        -- Modified: bright orange with thick orange stroke
+        { color: "#e67e22"
+        , strokeColor: "#d35400"
+        , strokeWidth: 3.0
+        }
+      GitStaged ->
+        -- Staged: bright green with thick green stroke
+        { color: "#27ae60"
+        , strokeColor: "#1e8449"
+        , strokeWidth: 3.0
+        }
+      GitUntracked ->
+        -- Untracked: bright purple with thick purple stroke
+        { color: "#9b59b6"
+        , strokeColor: "#7d3c98"
+        , strokeWidth: 3.0
+        }
 
 -- | Get color based on topo layer (green-to-blue gradient)
 getTopoColor :: Int -> Int -> String
@@ -573,8 +635,8 @@ packageNodeHATS config node =
               , staticStr "cy" "0"
               , thunkedNum "r" node.r
               , thunkedStr "fill" node.color
-              , staticStr "stroke" "#333"
-              , thunkedStr "stroke-width" (if node.isUsed then "1.5" else "0.5")
+              , thunkedStr "stroke" node.strokeColor
+              , thunkedNum "stroke-width" node.strokeWidth
               , staticStr "opacity" "1.0"
               , staticStr "cursor" "pointer"
               , staticStr "class" "package-circle"  -- For CSS transitions

@@ -60,7 +60,7 @@ import CE2.Viz.DependencyMatrix as DependencyMatrix
 import CE2.Viz.DependencyChord as DependencyChord
 import CE2.Viz.TypeClassGrid as TypeClassGrid
 import CE2.Viz.DependencyAdjacency as DependencyAdjacency
-import CE2.Types (projectPackages, CellContents(..), ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors)
+import CE2.Types (projectPackages, CellContents(..), ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, PackageGitStatus)
 
 -- FFI declarations for browser history integration
 foreign import pushHistoryState :: String -> Effect Unit
@@ -666,6 +666,7 @@ renderScene state =
           , scope: state.scope
           , theme: theme
           , colorMode: state.colorMode  -- Persists through transitions
+          , gitStatus: computePackageGitStatus state.gitStatus state.v2Data
           , initialPositions: state.capturedPositions
           }
           HandleGalaxyBeeswarmOutput
@@ -749,6 +750,8 @@ renderScene state =
                   , imports: v2.imports
                   , declarations: state.packageDeclarations
                   , functionCalls: state.packageCalls
+                  , gitStatus: state.gitStatus
+                  , colorMode: state.colorMode
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1604,6 +1607,25 @@ computeTransitivePackages packages =
           in go unvisited newVisited
   in
     Set.difference (go projectPkgNames Set.empty) projectPkgNames
+
+-- | Compute package-level git status from module-level status
+-- | Maps module names to their containing packages using v2Data
+computePackageGitStatus :: Maybe Loader.GitStatusData -> Maybe V2Data -> Maybe PackageGitStatus
+computePackageGitStatus mGitStatus mV2Data = do
+  gitStatus <- mGitStatus
+  v2 <- mV2Data
+  -- Build module name → package name map
+  let moduleToPackage :: Map String String
+      moduleToPackage = Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.package.name
+      -- Helper to find packages for a list of module names
+      findPackages :: Array String -> Set String
+      findPackages modNames = Set.fromFoldable $ Array.catMaybes $
+        modNames <#> \modName -> Map.lookup modName moduleToPackage
+  pure
+    { packagesWithModified: findPackages gitStatus.modified
+    , packagesWithStaged: findPackages gitStatus.staged
+    , packagesWithUntracked: findPackages gitStatus.untracked
+    }
 
 -- | Get appropriate theme for a scene
 -- | Three "Powers of Ten" levels:

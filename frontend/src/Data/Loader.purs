@@ -979,6 +979,7 @@ type PackageSetPackage =
   , releaseNumber :: Int          -- How many versions this package has had
   , moduleCount :: Int            -- Number of modules (from unified schema, 0 if unknown)
   , totalLoc :: Int               -- Total lines of code (0 if unknown)
+  , source :: String              -- "registry" | "workspace" | "extra"
   }
 
 -- | Full package set data with all packages
@@ -1044,7 +1045,22 @@ fetchPackageSet packageSetId = do
         Left err -> pure $ Left $ "JSON decode error: " <> printJsonDecodeError err
         Right raw -> pure $ Right
           { packageSet: raw.packageSet
-          , packages: raw.packages
+          , packages: raw.packages <#> \pkg ->
+              { id: pkg.id
+              , name: pkg.name
+              , version: pkg.version
+              , description: pkg.description
+              , license: pkg.license
+              , repositoryOwner: pkg.repositoryOwner
+              , repositoryName: pkg.repositoryName
+              , depends: pkg.depends
+              , topoLayer: pkg.topoLayer
+              , publishedAt: pkg.publishedAt
+              , releaseNumber: pkg.releaseNumber
+              , moduleCount: pkg.moduleCount
+              , totalLoc: pkg.totalLoc
+              , source: "registry"  -- Old API doesn't have source, default to registry
+              }
           }
 
 -- | Fetch packages from V2 API and convert to PackageSetData format
@@ -1077,6 +1093,7 @@ v2ToPackageSetData v2Packages =
       , releaseNumber: 0
       , moduleCount: pkg.moduleCount
       , totalLoc: pkg.totalLoc
+      , source: pkg.source  -- "registry" | "workspace" | "extra"
       }
   in
     { packageSet:
@@ -1106,6 +1123,7 @@ v2PackageToPackageSetPackage pkg =
   , releaseNumber: 0
   , moduleCount: pkg.moduleCount
   , totalLoc: pkg.totalLoc  -- Sum of module LOC from v2 API
+  , source: pkg.source  -- "registry" | "workspace" | "extra"
   }
 
 -- =============================================================================

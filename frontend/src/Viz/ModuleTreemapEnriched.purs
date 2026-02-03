@@ -47,7 +47,8 @@ import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
 import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreemapConfig, squarify, phi)
 import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
-import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall)
+import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall, GitStatusData)
+import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor)
 
 -- =============================================================================
 -- Types
@@ -60,6 +61,8 @@ type Config =
   , height :: Number
   , packageName :: String
   , onModuleClick :: Maybe (String -> String -> Effect Unit)  -- packageName -> moduleName -> Effect
+  , colorMode :: ColorMode       -- Current color mode (for git status)
+  , gitStatus :: Maybe GitStatusData  -- Git status for module coloring
   }
 
 -- | Module with computed treemap position
@@ -112,6 +115,58 @@ type EnrichedModuleData =
   , declarations :: Array DeclarationCircle  -- Individual declaration bubbles
   , packRadius :: Number                      -- Enclosing radius of the bubble pack
   }
+
+-- | Get git status for a module by name
+getModuleGitStatus :: Maybe GitStatusData -> String -> GitFileStatus
+getModuleGitStatus mGitStatus moduleName = case mGitStatus of
+  Nothing -> GitClean
+  Just gs
+    | Array.elem moduleName gs.modified -> GitModified
+    | Array.elem moduleName gs.staged -> GitStaged
+    | Array.elem moduleName gs.untracked -> GitUntracked
+    | otherwise -> GitClean
+
+-- | Get module styling based on color mode and git status
+type ModuleStyling =
+  { fillColor :: String
+  , strokeColor :: String
+  , strokeWidth :: String
+  }
+
+getModuleStyling :: ColorMode -> GitFileStatus -> ModuleStyling
+getModuleStyling colorMode gitStatus = case colorMode of
+  GitStatus ->
+    case gitStatus of
+      GitClean ->
+        -- Clean modules are dimmed to nearly invisible
+        { fillColor: "rgba(240, 240, 240, 0.3)"
+        , strokeColor: "rgba(150, 150, 150, 0.2)"
+        , strokeWidth: "0.5"
+        }
+      GitModified ->
+        -- Modified: bright orange background with thick stroke
+        { fillColor: "#ffecd2"  -- Light orange background
+        , strokeColor: "#e67e22"  -- Orange stroke
+        , strokeWidth: "3"
+        }
+      GitStaged ->
+        -- Staged: bright green background with thick stroke
+        { fillColor: "#d5f5e3"  -- Light green background
+        , strokeColor: "#27ae60"  -- Green stroke
+        , strokeWidth: "3"
+        }
+      GitUntracked ->
+        -- Untracked: bright purple background with thick stroke
+        { fillColor: "#ebdef0"  -- Light purple background
+        , strokeColor: "#9b59b6"  -- Purple stroke
+        , strokeWidth: "3"
+        }
+  _ ->
+    -- Default paperwhite styling for non-git modes
+    { fillColor: "#fafafa"
+    , strokeColor: "rgba(0, 0, 0, 0.2)"
+    , strokeWidth: "1"
+    }
 
 -- =============================================================================
 -- Public API
@@ -648,39 +703,44 @@ linkPath from to fromName toName =
 -- | Render a single enriched module cell
 enrichedModuleCell :: Config -> EnrichedModuleData -> Tree
 enrichedModuleCell config m =
-  withBehaviors
-    ( [ onCoordinatedHighlight
-          { identify: m.name
-          , classify: \hoveredId ->
-              if m.name == hoveredId then Primary
-              else if Array.elem hoveredId m.imports then Related
-              else if Array.elem hoveredId m.importedBy then Related
-              else Dimmed
-          , group: Just "modules"  -- Module-level highlighting group
-          }
-      ]
-      <> case config.onModuleClick of
-           Nothing -> []
-           Just onClickHandler -> [ onClick (onClickHandler config.packageName m.name) ]
-    )
-  $ elem Group
-      [ thunkedStr "transform" ("translate(" <> show m.x <> "," <> show m.y <> ")")
-      , staticStr "class" "treemap-module-enriched"
-      , staticStr "cursor" "pointer"
-      ]
-      [ -- Module rectangle (paperwhite background)
-        elem Rect
-          [ staticStr "x" "0"
-          , staticStr "y" "0"
-          , thunkedNum "width" m.width
-          , thunkedNum "height" m.height
-          , staticStr "fill" "#fafafa"
-          , staticStr "stroke" "rgba(0, 0, 0, 0.2)"
-          , staticStr "stroke-width" "1"
-          , staticStr "rx" "2"
-          , staticStr "class" "module-rect"
-          ]
-          []
+  let
+    -- Get git status and styling for this module
+    gitStatus = getModuleGitStatus config.gitStatus m.name
+    styling = getModuleStyling config.colorMode gitStatus
+  in
+    withBehaviors
+      ( [ onCoordinatedHighlight
+            { identify: m.name
+            , classify: \hoveredId ->
+                if m.name == hoveredId then Primary
+                else if Array.elem hoveredId m.imports then Related
+                else if Array.elem hoveredId m.importedBy then Related
+                else Dimmed
+            , group: Just "modules"  -- Module-level highlighting group
+            }
+        ]
+        <> case config.onModuleClick of
+             Nothing -> []
+             Just onClickHandler -> [ onClick (onClickHandler config.packageName m.name) ]
+      )
+    $ elem Group
+        [ thunkedStr "transform" ("translate(" <> show m.x <> "," <> show m.y <> ")")
+        , staticStr "class" "treemap-module-enriched"
+        , staticStr "cursor" "pointer"
+        ]
+        [ -- Module rectangle (background color based on git status)
+          elem Rect
+            [ staticStr "x" "0"
+            , staticStr "y" "0"
+            , thunkedNum "width" m.width
+            , thunkedNum "height" m.height
+            , thunkedStr "fill" styling.fillColor
+            , thunkedStr "stroke" styling.strokeColor
+            , thunkedStr "stroke-width" styling.strokeWidth
+            , staticStr "rx" "2"
+            , staticStr "class" "module-rect"
+            ]
+            []
 
       -- Centered bubble pack of individual declarations
       , elem Group
