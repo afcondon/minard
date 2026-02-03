@@ -42,6 +42,9 @@ module CE2.Containers
     -- PkgTreemap
   , pkgTreemapContainerId
   , pkgTreemapContainer
+    -- PkgTreemapEnriched (with declaration bubbles)
+  , pkgTreemapEnrichedContainerId
+  , pkgTreemapEnrichedContainer
     -- PkgModuleBeeswarm (overlay: treemap + beeswarm)
   , pkgModuleBeeswarmContainerId
   , pkgModuleBeeswarmContainer
@@ -183,6 +186,16 @@ pkgTreemapContainerId = "pkg-treemap-container"
 
 pkgTreemapContainer :: Selector
 pkgTreemapContainer = toSelector pkgTreemapContainerId
+
+-- =============================================================================
+-- PkgTreemapEnriched Scene (treemap with declaration bubble packs)
+-- =============================================================================
+
+pkgTreemapEnrichedContainerId :: ElementId
+pkgTreemapEnrichedContainerId = "pkg-treemap-enriched-container"
+
+pkgTreemapEnrichedContainer :: Selector
+pkgTreemapEnrichedContainer = toSelector pkgTreemapEnrichedContainerId
 
 -- =============================================================================
 -- PkgModuleBeeswarm Scene (overlay: treemap + module beeswarm)

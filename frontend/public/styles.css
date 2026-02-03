@@ -1991,6 +1991,55 @@ select.project-dropdown:focus {
 }
 
 /* =============================================================================
+   Declaration Circle Highlighting (Enriched Module Treemap)
+   ============================================================================= */
+
+/* Base declaration circle styles with transitions */
+.declaration-circle {
+  transition: opacity 0.15s ease-out, stroke 0.15s ease-out, stroke-width 0.15s ease-out, transform 0.15s ease-out;
+}
+
+/* Primary: The hovered declaration */
+.declaration-circle.highlight-primary {
+  stroke: #fbbf24 !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.5));
+}
+
+/* Related: Declarations that call or are called by the hovered one */
+.declaration-circle.highlight-related {
+  stroke: #60a5fa !important;
+  stroke-width: 2px !important;
+  opacity: 1 !important;
+}
+
+/* Dimmed: Unrelated declarations */
+.declaration-circle.highlight-dimmed {
+  opacity: 0.15 !important;
+}
+
+/* -----------------------------------------------------------------------------
+   Dependency Links - Curved paths connecting related declarations
+   ----------------------------------------------------------------------------- */
+
+/* Base dependency link styles */
+.dependency-link {
+  transition: stroke 0.15s ease-out, stroke-width 0.15s ease-out, stroke-opacity 0.15s ease-out;
+}
+
+/* Related: Links connected to the hovered declaration - full brightness */
+.dependency-link.highlight-related {
+  stroke: #f59e0b !important;  /* Amber-500 */
+  stroke-width: 1.5px !important;
+  stroke-opacity: 1 !important;
+}
+
+/* Dimmed: Unrelated links - fade to near invisible */
+.dependency-link.highlight-dimmed {
+  stroke-opacity: 0.03 !important;
+}
+
+/* =============================================================================
    Package Overview Layout (Beeswarm/CirclePack with Auxiliary Panels)
    ============================================================================= */
 

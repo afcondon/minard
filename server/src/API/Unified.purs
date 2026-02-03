@@ -18,6 +18,7 @@ module API.Unified
   , getModuleCalls
   -- Bulk data
   , getAllImports
+  , getAllCalls
   , getModuleDeclarationStats
   -- Namespaces
   , listNamespaces
@@ -449,6 +450,30 @@ getAllImports db = do
   ok' jsonHeaders json
 
 foreign import buildAllImportsJson :: Array Foreign -> String
+
+-- =============================================================================
+-- GET /api/v2/all-calls
+-- =============================================================================
+
+-- | Get all function calls (for building declaration dependency graph)
+-- | Returns: { calls: [{ moduleId, moduleName, calls: [{ callerName, calleeModule, calleeName }] }] }
+getAllCalls :: Database -> Aff Response
+getAllCalls db = do
+  rows <- queryAll db """
+    SELECT
+      m.id as module_id,
+      m.name as module_name,
+      fc.caller_name,
+      fc.callee_module,
+      fc.callee_name
+    FROM modules m
+    LEFT JOIN function_calls fc ON fc.caller_module_id = m.id
+    ORDER BY m.name, fc.caller_name, fc.callee_module, fc.callee_name
+  """
+  let json = buildAllCallsJson rows
+  ok' jsonHeaders json
+
+foreign import buildAllCallsJson :: Array Foreign -> String
 
 -- =============================================================================
 -- GET /api/v2/module-declaration-stats

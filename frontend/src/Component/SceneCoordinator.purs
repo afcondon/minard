@@ -25,7 +25,7 @@ import Data.Either (Either(..))
 import Data.Foldable (foldl)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.Tuple (Tuple(..))
@@ -46,7 +46,7 @@ import Hylograph.Render (runD3, clear)
 -- Child visualization components (streamlined)
 import CE2.Component.BubblePackBeeswarmViz as BubblePackBeeswarmViz
 import CE2.Component.GalaxyBeeswarmViz as GalaxyBeeswarmViz
-import CE2.Component.ModuleTreemapViz as ModuleTreemapViz
+import CE2.Component.ModuleTreemapEnrichedViz as ModuleTreemapEnrichedViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
 
 import CE2.Containers as C
@@ -105,7 +105,7 @@ data Query a
 type Slots =
   ( bubblePackBeeswarmViz :: BubblePackBeeswarmViz.Slot Unit
   , galaxyBeeswarmViz :: GalaxyBeeswarmViz.Slot Unit
-  , moduleTreemapViz :: ModuleTreemapViz.Slot Unit
+  , moduleTreemapViz :: ModuleTreemapEnrichedViz.Slot Unit
   , slideOutPanel :: SlideOutPanel.Slot Unit
   )
 
@@ -176,6 +176,13 @@ type State =
     -- Declaration stats for module bubblepack view (lazy loaded)
   , declarationStats :: Maybe (Map.Map Int Loader.V2ModuleDeclarationStats)
 
+    -- Package declarations for enriched treemap (lazy loaded per package)
+  , packageDeclarations :: Map.Map Int (Array Loader.V2Declaration)
+
+    -- Function calls for declaration-level dependency highlighting (lazy loaded once)
+  , packageCalls :: Map.Map Int (Array Loader.V2FunctionCall)
+  , allCallsLoaded :: Boolean
+
     -- Panel state (tracked by coordinator for visibility)
   , panelOpen :: Boolean
   , panelContent :: SlideOutPanel.PanelContent
@@ -197,7 +204,7 @@ data Action
   | NavigateForward                   -- "+" button for next level of detail
   | HandleBubblePackBeeswarmOutput BubblePackBeeswarmViz.Output
   | HandleGalaxyBeeswarmOutput GalaxyBeeswarmViz.Output
-  | HandleModuleTreemapOutput ModuleTreemapViz.Output
+  | HandleModuleTreemapOutput ModuleTreemapEnrichedViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -239,6 +246,9 @@ initialState input =
   , transition: Nothing
   , capturedPositions: Nothing
   , declarationStats: Nothing    -- Lazy loaded when needed for module bubblepack
+  , packageDeclarations: Map.empty  -- Lazy loaded per package for enriched treemap
+  , packageCalls: Map.empty       -- Lazy loaded once (all calls) for dependency highlighting
+  , allCallsLoaded: false
   , panelOpen: false
   , panelContent: SlideOutPanel.NoContent
   , hoveredPackage: Nothing
@@ -649,13 +659,15 @@ renderScene state =
       ]
       [ case state.viewMode of
           PrimaryView ->
-            -- Use Halogen slot for treemap (enables click-to-panel)
+            -- Use Halogen slot for enriched treemap (treemap + individual declarations)
             case state.v2Data of
               Just v2 ->
-                HH.slot _moduleTreemapViz unit ModuleTreemapViz.component
+                HH.slot _moduleTreemapViz unit ModuleTreemapEnrichedViz.component
                   { packageName: _pkg
                   , modules: v2.modules
                   , imports: v2.imports
+                  , declarations: state.packageDeclarations
+                  , functionCalls: state.packageCalls
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -913,11 +925,11 @@ handleAction = case _ of
       H.modify_ _ { hoveredPackage = mPkgName }
 
   HandleModuleTreemapOutput output -> case output of
-    ModuleTreemapViz.ModuleClicked pkgName modName -> do
+    ModuleTreemapEnrichedViz.ModuleClicked pkgName modName -> do
       log $ "[SceneCoordinator] Module treemap clicked: " <> pkgName <> "/" <> modName
       -- Open the slide-out panel with module info
       handleAction (OpenModulePanel pkgName modName)
-    ModuleTreemapViz.ModuleHovered _mModName ->
+    ModuleTreemapEnrichedViz.ModuleHovered _mModName ->
       pure unit  -- Future: coordinated hover
 
   SetScope targetScope -> do
@@ -1156,9 +1168,39 @@ prepareSceneData state = case state.scene of
             <> pkgName <> " - " <> show (Array.length pkgModules) <> " modules"
 
         case state.viewMode of
-          PrimaryView ->
-            -- Treemap is now rendered by ModuleTreemapViz Halogen component
-            log "[SceneCoordinator] PrimaryView (Treemap): rendering handled by slot"
+          PrimaryView -> do
+            -- Enriched treemap needs full declarations for bubble packs
+            -- Check if we already have declarations for this package's modules
+            let missingDeclModules = Array.filter (\m -> not (Map.member m.id state.packageDeclarations)) pkgModules
+
+            -- Fetch declarations if missing (per-package, parallel)
+            when (Array.length missingDeclModules > 0) do
+              log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " modules"
+              newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
+              let merged = Map.union newDecls state.packageDeclarations
+              H.modify_ _ { packageDeclarations = merged }
+
+            -- Fetch ALL function calls once via bulk endpoint (for declaration-level dependency highlighting)
+            when (not state.allCallsLoaded) do
+              log "[SceneCoordinator] Fetching all function calls (bulk endpoint)"
+              result <- liftAff Loader.fetchV2AllCalls
+              case result of
+                Right allCalls -> do
+                  log $ "[SceneCoordinator] Loaded function calls for " <> show (Array.length allCalls) <> " modules"
+                  -- Convert Array V2ModuleCalls to Map Int (Array V2FunctionCall)
+                  let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
+                        Tuple mc.moduleId (mc.calls <#> \c ->
+                          { callerName: c.callerName
+                          , calleeModule: c.calleeModule
+                          , calleeName: c.calleeName
+                          , isCrossModule: true  -- Cross-module calls (intra-module filtered out by DB)
+                          , callCount: 1         -- Count not tracked in bulk endpoint
+                          })
+                  H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
+                Left err ->
+                  log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
+
+            log "[SceneCoordinator] PrimaryView (Enriched Treemap): rendering handled by slot"
 
           ChordView -> do
             log "[SceneCoordinator] Rendering module chord diagram"

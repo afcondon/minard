@@ -299,6 +299,40 @@ export const buildAllImportsJson = (rows) => {
 };
 
 // =============================================================================
+// All Function Calls (bulk)
+// =============================================================================
+
+export const buildAllCallsJson = (rows) => {
+  // Group calls by module
+  const moduleCalls = new Map();
+
+  for (const row of (rows || [])) {
+    const moduleId = Number(row.module_id);
+    const moduleName = row.module_name;
+
+    if (!moduleCalls.has(moduleId)) {
+      moduleCalls.set(moduleId, {
+        moduleId,
+        moduleName,
+        calls: []
+      });
+    }
+
+    // Add call if not null (LEFT JOIN may produce null)
+    if (row.caller_name && row.callee_name) {
+      moduleCalls.get(moduleId).calls.push({
+        callerName: row.caller_name,
+        calleeModule: row.callee_module,
+        calleeName: row.callee_name
+      });
+    }
+  }
+
+  const calls = Array.from(moduleCalls.values());
+  return JSON.stringify({ calls, count: calls.length });
+};
+
+// =============================================================================
 // Polyglot Summary (for sunburst visualization)
 // =============================================================================
 

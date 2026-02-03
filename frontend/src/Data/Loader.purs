@@ -40,8 +40,13 @@ module CE2.Data.Loader
   , fetchV2Packages
   , fetchV2Modules
   , fetchV2ModuleDeclarations
+  , fetchV2PackageDeclarations
+  , fetchV2ModuleCalls
+  , fetchV2PackageCalls
   , fetchV2ModuleDeclarationStats
   , fetchV2AllImports
+  , fetchV2AllCalls
+  , V2ModuleCalls
   , fetchPolyglotSummary
   ) where
 
@@ -55,6 +60,7 @@ import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Foldable (foldl)
 import Data.Traversable (traverse)
+import Control.Parallel (parTraverse)
 import Data.Int (toNumber)
 import Data.Map (Map)
 import Data.Map as Map
@@ -1338,6 +1344,13 @@ type V2ModuleImports =
   , imports :: Array String  -- Imported module names
   }
 
+-- | Module with all its function calls (from bulk all-calls endpoint)
+type V2ModuleCalls =
+  { moduleId :: Int
+  , moduleName :: String
+  , calls :: Array { callerName :: String, calleeModule :: String, calleeName :: String }
+  }
+
 -- Response wrappers for JSON decoding
 type V2PackagesResponse = { packages :: Array V2Package, count :: Int }
 type V2ModulesResponse = { modules :: Array V2ModuleListItem, count :: Int }
@@ -1347,6 +1360,7 @@ type V2CallsResponse = { calls :: Array V2FunctionCall, count :: Int }
 type V2NamespacesResponse = { namespaces :: Array V2Namespace, count :: Int }
 type V2SearchResponse = { results :: Array V2SearchResult, count :: Int }
 type V2AllImportsResponse = { imports :: Array V2ModuleImports, count :: Int }
+type V2AllCallsResponse = { calls :: Array V2ModuleCalls, count :: Int }
 
 -- | Fetch database statistics
 fetchV2Stats :: Aff (Either String V2Stats)
@@ -1393,6 +1407,22 @@ fetchV2ModuleDeclarations moduleId = do
     response :: V2DeclarationsResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right response.declarations
 
+-- | Fetch declarations for all modules in a package (parallel requests)
+-- | Returns Map from moduleId to Array of declarations
+fetchV2PackageDeclarations :: Array V2ModuleListItem -> Aff (Map Int (Array V2Declaration))
+fetchV2PackageDeclarations modules = do
+  -- Fetch declarations for each module in parallel
+  results <- parTraverse fetchModuleDecls modules
+  -- Build map from successful results
+  pure $ Map.fromFoldable $ Array.catMaybes results
+  where
+  fetchModuleDecls :: V2ModuleListItem -> Aff (Maybe (Tuple Int (Array V2Declaration)))
+  fetchModuleDecls m = do
+    result <- fetchV2ModuleDeclarations m.id
+    pure $ case result of
+      Right decls -> Just (Tuple m.id decls)
+      Left _ -> Nothing  -- Silently skip failed fetches
+
 -- | Fetch imports for a module
 fetchV2ModuleImports :: Int -> Aff (Either String (Array V2Import))
 fetchV2ModuleImports moduleId = do
@@ -1410,6 +1440,20 @@ fetchV2ModuleCalls moduleId = do
     json <- result
     response :: V2CallsResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right response.calls
+
+-- | Fetch function calls for all modules in a package (parallel requests)
+-- | Returns Map from moduleId to Array of function calls originating from that module
+fetchV2PackageCalls :: Array V2ModuleListItem -> Aff (Map Int (Array V2FunctionCall))
+fetchV2PackageCalls modules = do
+  results <- parTraverse fetchModuleCalls modules
+  pure $ Map.fromFoldable $ Array.catMaybes results
+  where
+  fetchModuleCalls :: V2ModuleListItem -> Aff (Maybe (Tuple Int (Array V2FunctionCall)))
+  fetchModuleCalls m = do
+    result <- fetchV2ModuleCalls m.id
+    pure $ case result of
+      Right calls -> Just (Tuple m.id calls)
+      Left _ -> Nothing  -- Silently skip failed fetches
 
 -- | Fetch top-level namespaces
 fetchV2Namespaces :: Aff (Either String (Array V2Namespace))
@@ -1447,6 +1491,16 @@ fetchV2AllImports = do
     json <- result
     response :: V2AllImportsResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right response.imports
+
+-- | Fetch all function calls (bulk endpoint - single request)
+-- | Returns Array of V2ModuleCalls which can be converted to Map as needed
+fetchV2AllCalls :: Aff (Either String (Array V2ModuleCalls))
+fetchV2AllCalls = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/all-calls")
+  pure $ do
+    json <- result
+    response :: V2AllCallsResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.calls
 
 -- =============================================================================
 -- Unified Model Loader (V2 API)

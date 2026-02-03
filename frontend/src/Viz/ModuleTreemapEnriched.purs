@@ -1,0 +1,651 @@
+-- | Module Treemap Enriched - Treemap with individual declaration circles
+-- |
+-- | Combines treemap layout with circle-packed individual declarations.
+-- |
+-- | Key features:
+-- | - Treemap rectangles sized by LOC (squarify tiling)
+-- | - Individual declarations as circles (not aggregates), colored by kind
+-- | - Hover on declaration shows dependencies (what it calls, what calls it)
+-- | - Hover on module shows import relationships
+-- | - Bubbles allowed to overflow cell boundaries (no clipping)
+-- | - Click anywhere in cell = click module
+-- |
+-- | Two levels of CoordinatedHighlight:
+-- | - Module level: hover module highlights imported/importing modules
+-- | - Declaration level: hover declaration highlights its dependencies
+module CE2.Viz.ModuleTreemapEnriched
+  ( Config
+  , render
+  , cleanup
+  ) where
+
+import Prelude
+
+import Data.Array as Array
+import Data.Foldable (foldl)
+import Data.Int (toNumber, floor)
+import Data.Map (Map)
+import Data.Map as Map
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Number (sqrt)
+import Data.Set (Set)
+import Data.Set as Set
+import Data.String as String
+import Data.Tuple (Tuple(..))
+import Effect (Effect)
+import Effect.Console (log)
+
+-- PSD3 HATS Imports
+import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onClick)
+import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
+import Hylograph.Internal.Selection.Types (ElementType(..))
+-- Note: ElementType includes SVG, Group, Rect, Circle, Text, Path, Line, etc.
+import Hylograph.Internal.Behavior.Types (HighlightClass(..))
+
+-- Layout
+import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
+import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreemapConfig, squarify, phi)
+import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
+
+import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2FunctionCall)
+
+-- =============================================================================
+-- Types
+-- =============================================================================
+
+-- | Configuration for enriched module treemap
+type Config =
+  { containerSelector :: String
+  , width :: Number
+  , height :: Number
+  , packageName :: String
+  , onModuleClick :: Maybe (String -> String -> Effect Unit)  -- packageName -> moduleName -> Effect
+  }
+
+-- | Module with computed treemap position
+type PositionedModule =
+  { mod :: V2ModuleListItem
+  , x :: Number
+  , y :: Number
+  , width :: Number
+  , height :: Number
+  }
+
+-- | Individual declaration circle packed within a module cell
+type DeclarationCircle =
+  { name :: String
+  , fullName :: String  -- Module.name for unique identification
+  , kind :: String  -- "value", "data", "newtype", "type_class", "type_synonym", "foreign"
+  , typeSignature :: Maybe String
+  , childCount :: Int  -- Number of constructors/members
+  , x :: Number     -- Position relative to cell center
+  , y :: Number
+  , r :: Number
+  , calls :: Array String      -- Declarations this one calls (fullNames)
+  , calledBy :: Array String   -- Declarations that call this one (fullNames)
+  }
+
+-- | Enriched render data with declaration circles
+type EnrichedModuleData =
+  { name :: String
+  , shortName :: String
+  , loc :: Int
+  , declarationCount :: Int
+  , x :: Number
+  , y :: Number
+  , width :: Number
+  , height :: Number
+  , imports :: Array String
+  , importedBy :: Array String
+  , declarations :: Array DeclarationCircle  -- Individual declaration bubbles
+  , packRadius :: Number                      -- Enclosing radius of the bubble pack
+  }
+
+-- =============================================================================
+-- Public API
+-- =============================================================================
+
+-- | Render the enriched module treemap
+-- | Takes modules, their imports, declarations, and function calls
+render
+  :: Config
+  -> Array V2ModuleListItem
+  -> Array V2ModuleImports
+  -> Map Int (Array V2Declaration)
+  -> Map Int (Array V2FunctionCall)
+  -> Effect Unit
+render config modules imports declarationsMap callsMap = do
+  -- Clear existing content
+  clearContainer config.containerSelector
+
+  -- Filter modules to the package
+  let pkgModules = Array.filter (\m -> m.package.name == config.packageName) modules
+      pkgModuleNames = Set.fromFoldable $ map _.name pkgModules
+
+  -- Build module-level import maps for highlighting
+  let importMap = buildImportMap imports pkgModuleNames
+      importedByMap = buildImportedByMap imports pkgModuleNames
+
+  -- Build declaration-level dependency maps
+  let { callsTo, calledByMap } = buildDeclarationDependencyMaps pkgModules callsMap pkgModuleNames
+
+  -- Debug: log dependency map sizes
+  log $ "[ModuleTreemapEnriched] Package: " <> config.packageName
+      <> ", callsMap size: " <> show (Map.size callsMap)
+      <> ", callsTo size: " <> show (Map.size callsTo)
+      <> ", calledByMap size: " <> show (Map.size calledByMap)
+
+  -- Compute treemap layout
+  let positioned = computeModulePositions config pkgModules
+
+  -- Enrich with declaration circles (including dependency info)
+  let enriched = positioned <#> \pm ->
+        enrichModuleData pm importMap importedByMap declarationsMap callsTo calledByMap
+
+  -- Debug: count declarations with dependencies
+  let declsWithCalls = Array.concatMap _.declarations enriched
+                       # Array.filter (\d -> Array.length d.calls > 0 || Array.length d.calledBy > 0)
+                       # Array.length
+      totalDecls = Array.concatMap _.declarations enriched # Array.length
+  log $ "[ModuleTreemapEnriched] Total declarations: " <> show totalDecls
+      <> ", with dependencies: " <> show declsWithCalls
+
+  -- Render
+  renderEnrichedTreemapSVG config enriched
+
+-- | Clean up
+cleanup :: String -> Effect Unit
+cleanup selector = clearContainer selector
+
+-- =============================================================================
+-- Treemap Layout
+-- =============================================================================
+
+computeModulePositions :: Config -> Array V2ModuleListItem -> Array PositionedModule
+computeModulePositions config modules =
+  let
+    moduleLeaves :: Array (ValuedNode V2ModuleListItem)
+    moduleLeaves = modules <#> \m ->
+      VNode
+        { data_: m
+        , depth: 1
+        , height: 0
+        , value: toNumber $ max 1 $ fromMaybe m.declarationCount m.loc
+        , children: []
+        , parent: Nothing
+        }
+
+    totalValue = foldl (\acc (VNode n) -> acc + n.value) 0.0 moduleLeaves
+
+    rootData :: V2ModuleListItem
+    rootData =
+      { id: 0
+      , name: config.packageName
+      , path: Nothing
+      , loc: Nothing
+      , package: { id: 0, name: config.packageName, version: "", source: "workspace" }
+      , namespacePath: Nothing
+      , declarationCount: 0
+      }
+
+    root :: ValuedNode V2ModuleListItem
+    root = VNode
+      { data_: rootData
+      , depth: 0
+      , height: 1
+      , value: totalValue
+      , children: moduleLeaves
+      , parent: Nothing
+      }
+
+    treemapConfig = defaultTreemapConfig
+      { size = { width: config.width, height: config.height }
+      , paddingInner = 4.0
+      , paddingOuter = 2.0
+      , tile = squarify phi
+      }
+
+    TNode layoutRoot = treemap treemapConfig root
+  in
+    layoutRoot.children <#> \(TNode child) ->
+      { mod: child.data_
+      , x: child.x0
+      , y: child.y0
+      , width: child.x1 - child.x0
+      , height: child.y1 - child.y0
+      }
+
+-- =============================================================================
+-- Module Import Maps (for module-level highlighting)
+-- =============================================================================
+
+buildImportMap :: Array V2ModuleImports -> Set String -> Map String (Array String)
+buildImportMap imports pkgModuleNames =
+  Map.fromFoldable $ imports
+    # Array.filter (\imp -> Set.member imp.moduleName pkgModuleNames)
+    <#> \imp -> Tuple imp.moduleName (Array.filter (\i -> Set.member i pkgModuleNames) imp.imports)
+
+buildImportedByMap :: Array V2ModuleImports -> Set String -> Map String (Array String)
+buildImportedByMap imports pkgModuleNames =
+  let
+    pairs :: Array (Tuple String String)
+    pairs = imports
+      # Array.filter (\imp -> Set.member imp.moduleName pkgModuleNames)
+      # Array.concatMap (\imp ->
+          imp.imports
+            # Array.filter (\i -> Set.member i pkgModuleNames)
+            <#> \imported -> Tuple imported imp.moduleName
+        )
+  in foldl (\acc (Tuple imported importer) ->
+      Map.alter (Just <<< Array.cons importer <<< fromMaybe []) imported acc
+    ) Map.empty pairs
+
+-- =============================================================================
+-- Declaration Dependency Maps (for declaration-level highlighting)
+-- =============================================================================
+
+-- | Build maps of what each declaration calls and what calls it
+-- | Key is "Module.declarationName", value is array of "Module.declarationName"
+buildDeclarationDependencyMaps
+  :: Array V2ModuleListItem
+  -> Map Int (Array V2FunctionCall)
+  -> Set String
+  -> { callsTo :: Map String (Array String), calledByMap :: Map String (Array String) }
+buildDeclarationDependencyMaps modules callsMap pkgModuleNames =
+  let
+    -- Collect all call relationships within the package
+    allCalls :: Array { caller :: String, callee :: String }
+    allCalls = Array.concatMap processModuleCalls modules
+
+    processModuleCalls :: V2ModuleListItem -> Array { caller :: String, callee :: String }
+    processModuleCalls m =
+      let
+        moduleCalls = fromMaybe [] $ Map.lookup m.id callsMap
+        callerModule = m.name
+      in
+        moduleCalls
+          # Array.filter (\c -> Set.member c.calleeModule pkgModuleNames)  -- Only within package
+          <#> \c ->
+            { caller: callerModule <> "." <> c.callerName
+            , callee: c.calleeModule <> "." <> c.calleeName
+            }
+
+    -- Build callsTo map: caller -> [callees]
+    callsTo = foldl (\acc { caller, callee } ->
+        Map.alter (Just <<< Array.cons callee <<< fromMaybe []) caller acc
+      ) Map.empty allCalls
+
+    -- Build calledBy map: callee -> [callers]
+    calledByMap = foldl (\acc { caller, callee } ->
+        Map.alter (Just <<< Array.cons caller <<< fromMaybe []) callee acc
+      ) Map.empty allCalls
+  in
+    { callsTo, calledByMap }
+
+-- =============================================================================
+-- Declaration Circle Packing
+-- =============================================================================
+
+enrichModuleData
+  :: PositionedModule
+  -> Map String (Array String)
+  -> Map String (Array String)
+  -> Map Int (Array V2Declaration)
+  -> Map String (Array String)  -- callsTo
+  -> Map String (Array String)  -- calledBy
+  -> EnrichedModuleData
+enrichModuleData pm importMap importedByMap declarationsMap callsTo calledByMap =
+  let
+    moduleDecls = fromMaybe [] $ Map.lookup pm.mod.id declarationsMap
+    moduleName = pm.mod.name
+
+    -- Create and pack declaration circles with dependency info
+    { declarations, packRadius } = packDeclarations moduleDecls moduleName pm.width pm.height callsTo calledByMap
+  in
+    { name: pm.mod.name
+    , shortName: shortModuleName pm.mod.name
+    , loc: fromMaybe pm.mod.declarationCount pm.mod.loc
+    , declarationCount: Array.length moduleDecls
+    , x: pm.x
+    , y: pm.y
+    , width: pm.width
+    , height: pm.height
+    , imports: fromMaybe [] $ Map.lookup pm.mod.name importMap
+    , importedBy: fromMaybe [] $ Map.lookup pm.mod.name importedByMap
+    , declarations
+    , packRadius
+    }
+
+packDeclarations
+  :: Array V2Declaration
+  -> String  -- module name
+  -> Number
+  -> Number
+  -> Map String (Array String)  -- callsTo
+  -> Map String (Array String)  -- calledBy
+  -> { declarations :: Array DeclarationCircle, packRadius :: Number }
+packDeclarations decls moduleName cellWidth cellHeight callsTo calledByMap =
+  if Array.null decls then
+    { declarations: [], packRadius: 0.0 }
+  else
+    let
+      targetRadius = min cellWidth cellHeight / 2.0 * 0.8
+
+      rawCircles = decls <#> \d ->
+        let
+          childCount = Array.length d.children
+          baseR = 8.0 + sqrt (toNumber childCount) * 5.0
+          fullName = moduleName <> "." <> d.name
+        in
+          { name: d.name
+          , fullName
+          , kind: d.kind
+          , typeSignature: d.typeSignature
+          , childCount
+          , x: 0.0
+          , y: 0.0
+          , r: min baseR 40.0
+          , calls: fromMaybe [] $ Map.lookup fullName callsTo
+          , calledBy: fromMaybe [] $ Map.lookup fullName calledByMap
+          }
+
+      packed = packSiblingsMap (rawCircles <#> \c -> { x: 0.0, y: 0.0, r: c.r })
+
+      scaleFactor = if packed.radius > 0.0
+                    then targetRadius / packed.radius
+                    else 1.0
+
+      declarations = Array.zipWith
+        (\decl circle -> decl
+          { x = circle.x * scaleFactor
+          , y = circle.y * scaleFactor
+          , r = decl.r * scaleFactor
+          })
+        rawCircles
+        packed.circles
+    in
+      { declarations
+      , packRadius: packed.radius * scaleFactor
+      }
+
+-- =============================================================================
+-- SVG Rendering (HATS)
+-- =============================================================================
+
+renderEnrichedTreemapSVG :: Config -> Array EnrichedModuleData -> Effect Unit
+renderEnrichedTreemapSVG config enriched = do
+  -- Debug: count links that would be drawn
+  let allCalls = Array.concatMap (\m -> Array.concatMap _.calls m.declarations) enriched
+      posMap = buildPositionMap enriched
+      matchedCalls = allCalls # Array.filter (\callee -> Map.member callee posMap)
+  log $ "[ModuleTreemapEnriched] Link debug: "
+      <> show (Array.length allCalls) <> " total outgoing calls, "
+      <> show (Array.length matchedCalls) <> " match positions in posMap, "
+      <> show (Map.size posMap) <> " declarations in posMap"
+  -- Show a few unmatched for debugging
+  let unmatched = Array.take 5 $ Array.filter (\callee -> not (Map.member callee posMap)) allCalls
+  when (Array.length unmatched > 0) do
+    log $ "[ModuleTreemapEnriched] Sample unmatched callees: " <> show unmatched
+
+  let svgTree = buildEnrichedTreemapTree config enriched
+  _ <- rerender config.containerSelector svgTree
+  pure unit
+
+buildEnrichedTreemapTree :: Config -> Array EnrichedModuleData -> Tree
+buildEnrichedTreemapTree config enriched =
+  let
+    -- Build position map for all declarations
+    posMap = buildPositionMap enriched
+  in
+    elem SVG
+      [ staticStr "id" "module-treemap-enriched"
+      , staticStr "viewBox" $ "0 0 " <> show config.width <> " " <> show config.height
+      , staticStr "width" "100%"
+      , staticStr "height" "100%"
+      , staticStr "preserveAspectRatio" "xMidYMid meet"
+      , staticStr "style" "background: #fafafa; display: block; border-radius: 8px;"
+      ]
+      [ -- Module cells with declarations (rendered first = behind)
+        forEach "modules" Group enriched _.name (enrichedModuleCell config)
+        -- Dependency links layer (rendered last = on top, but pointer-events: none)
+      , renderDependencyLinks posMap enriched
+      ]
+
+-- =============================================================================
+-- Dependency Links Layer
+-- =============================================================================
+
+-- | Absolute position of a declaration in the SVG coordinate space
+type AbsolutePosition = { x :: Number, y :: Number, r :: Number }
+
+-- | Build map of declaration fullName to absolute position
+buildPositionMap :: Array EnrichedModuleData -> Map String AbsolutePosition
+buildPositionMap enriched =
+  Map.fromFoldable $ Array.concatMap moduleDeclarationPositions enriched
+  where
+    moduleDeclarationPositions m =
+      m.declarations <#> \decl ->
+        Tuple decl.fullName
+          { x: m.x + m.width / 2.0 + decl.x
+          , y: m.y + m.height / 2.0 + decl.y
+          , r: decl.r
+          }
+
+-- | Render all dependency links as curved paths
+renderDependencyLinks :: Map String AbsolutePosition -> Array EnrichedModuleData -> Tree
+renderDependencyLinks posMap enriched =
+  let links = Array.concatMap (moduleDependencyLinks posMap) enriched
+  in elem Group
+    [ staticStr "class" "dependency-links"
+    , staticStr "pointer-events" "none"
+    , thunkedStr "data-link-count" (show (Array.length links))
+    ]
+    links
+
+-- | Generate links for all declarations in a module
+moduleDependencyLinks :: Map String AbsolutePosition -> EnrichedModuleData -> Array Tree
+moduleDependencyLinks posMap m =
+  Array.concatMap (declarationOutgoingLinks posMap m) m.declarations
+
+-- | Generate outgoing links from a single declaration to its callees
+declarationOutgoingLinks :: Map String AbsolutePosition -> EnrichedModuleData -> DeclarationCircle -> Array Tree
+declarationOutgoingLinks posMap m decl =
+  let
+    fromPos = { x: m.x + m.width / 2.0 + decl.x
+              , y: m.y + m.height / 2.0 + decl.y
+              , r: decl.r
+              }
+    fromName = decl.fullName
+  in
+    decl.calls # Array.mapMaybe \calleeName ->
+      Map.lookup calleeName posMap <#> \toPos ->
+        linkPath fromPos toPos fromName calleeName
+
+-- | Render a curved link between two declaration positions
+-- | Uses a quadratic Bezier curve with control point offset perpendicular to the line
+-- | Participates in CoordinatedHighlight - glows when either endpoint is hovered
+linkPath :: AbsolutePosition -> AbsolutePosition -> String -> String -> Tree
+linkPath from to fromName toName =
+  let
+    -- Distance between points
+    dx = to.x - from.x
+    dy = to.y - from.y
+    dist = sqrt (dx * dx + dy * dy)
+
+    -- Control point: perpendicular offset, scaled by distance
+    -- Curve bows outward proportional to distance
+    curvature = min 0.3 (dist / 500.0) * 40.0
+    -- Perpendicular direction (90 degrees rotated)
+    perpX = if dist > 0.0 then -dy / dist * curvature else 0.0
+    perpY = if dist > 0.0 then dx / dist * curvature else 0.0
+    -- Midpoint
+    midX = (from.x + to.x) / 2.0
+    midY = (from.y + to.y) / 2.0
+    -- Control point
+    cx = midX + perpX
+    cy = midY + perpY
+
+    -- SVG quadratic Bezier path
+    pathD = "M " <> show from.x <> " " <> show from.y
+         <> " Q " <> show cx <> " " <> show cy
+         <> " " <> show to.x <> " " <> show to.y
+
+    -- Unique link ID for highlight system
+    linkId = fromName <> "→" <> toName
+  in
+    withBehaviors
+      [ onCoordinatedHighlight
+          { identify: linkId
+          , classify: \hoveredId ->
+              -- Highlight if either endpoint is hovered
+              if hoveredId == fromName || hoveredId == toName then Related
+              else Dimmed
+          , group: Just "declarations"  -- Same group as declaration circles
+          }
+      ]
+    $ elem Path
+        [ thunkedStr "d" pathD
+        , staticStr "fill" "none"
+        , staticStr "stroke" "#f59e0b"  -- Amber-500, warm orange
+        , staticStr "stroke-width" "0.75"
+        , staticStr "stroke-opacity" "0.25"
+        , staticStr "class" "dependency-link"
+        ]
+        []
+
+-- | Render a single enriched module cell
+enrichedModuleCell :: Config -> EnrichedModuleData -> Tree
+enrichedModuleCell config m =
+  withBehaviors
+    ( [ onCoordinatedHighlight
+          { identify: m.name
+          , classify: \hoveredId ->
+              if m.name == hoveredId then Primary
+              else if Array.elem hoveredId m.imports then Related
+              else if Array.elem hoveredId m.importedBy then Related
+              else Dimmed
+          , group: Just "modules"  -- Module-level highlighting group
+          }
+      ]
+      <> case config.onModuleClick of
+           Nothing -> []
+           Just onClickHandler -> [ onClick (onClickHandler config.packageName m.name) ]
+    )
+  $ elem Group
+      [ thunkedStr "transform" ("translate(" <> show m.x <> "," <> show m.y <> ")")
+      , staticStr "class" "treemap-module-enriched"
+      , staticStr "cursor" "pointer"
+      ]
+      [ -- Module rectangle (paperwhite background)
+        elem Rect
+          [ staticStr "x" "0"
+          , staticStr "y" "0"
+          , thunkedNum "width" m.width
+          , thunkedNum "height" m.height
+          , staticStr "fill" "#fafafa"
+          , staticStr "stroke" "rgba(0, 0, 0, 0.2)"
+          , staticStr "stroke-width" "1"
+          , staticStr "rx" "2"
+          , staticStr "class" "module-rect"
+          ]
+          []
+
+      -- Centered bubble pack of individual declarations
+      , elem Group
+          [ thunkedStr "transform"
+              ("translate(" <> show (m.width / 2.0) <> "," <> show (m.height / 2.0) <> ")")
+          , staticStr "class" "declaration-bubbles"
+          ]
+          (map declarationCircleElem m.declarations)
+
+      -- Module name at bottom
+      , elem Text
+          [ thunkedNum "x" (m.width / 2.0)
+          , thunkedNum "y" (m.height - 6.0)
+          , staticStr "text-anchor" "middle"
+          , staticStr "dominant-baseline" "auto"
+          , thunkedStr "font-size" (if m.width > 60.0 then "9" else "7")
+          , staticStr "fill" "#555"
+          , staticStr "font-family" "system-ui, sans-serif"
+          , staticStr "font-weight" "500"
+          , thunkedStr "textContent" (truncateName (m.width / 7.0) m.shortName)
+          , thunkedStr "opacity" (if m.width > 30.0 && m.height > 25.0 then "1" else "0")
+          ]
+          []
+
+      -- Declaration count in top-right corner
+      , elem Text
+          [ thunkedNum "x" (m.width - 3.0)
+          , staticStr "y" "10"
+          , staticStr "text-anchor" "end"
+          , staticStr "font-size" "7"
+          , staticStr "fill" "#999"
+          , staticStr "font-family" "system-ui, sans-serif"
+          , thunkedStr "textContent"
+              (if m.width > 35.0 && m.height > 25.0 && m.declarationCount > 0
+               then show m.declarationCount
+               else "")
+          ]
+          []
+      ]
+
+-- | Render an individual declaration circle with dependency highlighting
+declarationCircleElem :: DeclarationCircle -> Tree
+declarationCircleElem decl =
+  withBehaviors
+    [ onCoordinatedHighlight
+        { identify: decl.fullName
+        , classify: \hoveredId ->
+            if decl.fullName == hoveredId then Primary
+            else if Array.elem hoveredId decl.calls then Related      -- I call this
+            else if Array.elem hoveredId decl.calledBy then Related   -- This calls me
+            else Dimmed
+        , group: Just "declarations"  -- Declaration-level highlighting group
+        }
+    ]
+  $ elem Circle
+      [ thunkedNum "cx" decl.x
+      , thunkedNum "cy" decl.y
+      , thunkedNum "r" decl.r
+      , thunkedStr "fill" (kindColor decl.kind)
+      , staticStr "fill-opacity" "0.85"
+      , staticStr "stroke" "white"
+      , staticStr "stroke-width" "0.5"
+      , staticStr "pointer-events" "all"
+      , staticStr "cursor" "pointer"
+      , thunkedStr "data-name" decl.name
+      , thunkedStr "data-fullname" decl.fullName
+      , thunkedStr "data-kind" decl.kind
+      , thunkedStr "data-calls" (show (Array.length decl.calls))
+      , thunkedStr "data-calledby" (show (Array.length decl.calledBy))
+      , staticStr "class" "declaration-circle"
+      ]
+      []
+
+-- =============================================================================
+-- Utility Functions
+-- =============================================================================
+
+shortModuleName :: String -> String
+shortModuleName name =
+  case Array.last (String.split (String.Pattern ".") name) of
+    Just short -> short
+    Nothing -> name
+
+truncateName :: Number -> String -> String
+truncateName maxChars name =
+  let maxLen = max 3 (floor maxChars)
+  in if String.length name > maxLen
+     then String.take maxLen name <> "…"
+     else name
+
+kindColor :: String -> String
+kindColor = case _ of
+  "value"        -> "#4e79a7"  -- Blue - functions/values
+  "data"         -> "#59a14f"  -- Green - data types
+  "newtype"      -> "#76b7b2"  -- Teal - newtypes
+  "type_class"   -> "#f28e2b"  -- Orange - type classes
+  "type_synonym" -> "#edc948"  -- Yellow - type synonyms
+  "foreign"      -> "#e15759"  -- Red - FFI
+  "alias"        -> "#b07aa1"  -- Purple - aliases
+  _              -> "#bab0ac"  -- Gray - unknown

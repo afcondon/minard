@@ -30,6 +30,7 @@ data Route
   | V2GetModuleImports Int
   | V2GetModuleCalls Int
   | V2GetAllImports
+  | V2GetAllCalls
   | V2GetModuleDeclarationStats
   -- Namespaces
   | V2ListNamespaces
@@ -54,6 +55,7 @@ route = root $ sum
   , "V2GetModuleImports": path "api/v2/module-imports" (int segment)
   , "V2GetModuleCalls": path "api/v2/module-calls" (int segment)
   , "V2GetAllImports": path "api/v2/all-imports" noArgs
+  , "V2GetAllCalls": path "api/v2/all-calls" noArgs
   , "V2GetModuleDeclarationStats": path "api/v2/module-declaration-stats" noArgs
   , "V2ListNamespaces": path "api/v2/namespaces" noArgs
   , "V2GetNamespace": path "api/v2/namespaces" segment
@@ -88,6 +90,7 @@ main = launchAff_ do
     log "  GET /api/v2/module-imports/:id           - Get module imports"
     log "  GET /api/v2/module-calls/:id             - Get function calls"
     log "  GET /api/v2/all-imports                  - Get all module imports (bulk)"
+    log "  GET /api/v2/all-calls                    - Get all function calls (bulk)"
     log "  GET /api/v2/module-declaration-stats     - Declaration stats by module"
     log "  GET /api/v2/namespaces                   - List top-level namespaces"
     log "  GET /api/v2/namespaces/:path             - Get namespace with children"
@@ -105,6 +108,7 @@ main = launchAff_ do
     V2GetModuleImports modId -> Unified.getModuleImports db modId
     V2GetModuleCalls modId -> Unified.getModuleCalls db modId
     V2GetAllImports -> Unified.getAllImports db
+    V2GetAllCalls -> Unified.getAllCalls db
     V2GetModuleDeclarationStats -> Unified.getModuleDeclarationStats db
     V2ListNamespaces -> Unified.listNamespaces db
     V2GetNamespace nsPath -> Unified.getNamespace db nsPath
