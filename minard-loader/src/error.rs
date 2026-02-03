@@ -13,6 +13,9 @@ pub enum LoaderError {
         source: serde_json::Error,
     },
 
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("Database error: {0}")]
     Database(#[from] duckdb::Error),
 

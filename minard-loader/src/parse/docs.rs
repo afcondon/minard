@@ -151,19 +151,26 @@ impl DocsJson {
         })
     }
 
-    /// Check if this module belongs to THIS package (from src/) vs a dependency
-    /// Returns true only if the module's source path starts with "src/" or "test/"
-    /// (not "../" for workspace deps or ".spago/" for registry deps)
+    /// Check if this module belongs to THIS package vs a dependency
+    /// Returns true if the module's source path is NOT a dependency path.
+    ///
+    /// Dependency paths are:
+    /// - ".spago/p/prelude-6.0.1/src/..." (registry deps)
+    /// - "../purescript-hylograph-selection/src/..." (workspace deps)
+    ///
+    /// Local paths include:
+    /// - "src/Main.purs" (standard)
+    /// - "frontend/src/Main.purs" (monorepo subdir)
+    /// - "test/Spec.purs" (tests)
     pub fn is_local_module(&self) -> bool {
         // Check the first declaration's source_span to determine if this is a local module
         if let Some(decl) = self.declarations.first() {
             if let Some(ref span) = decl.source_span {
                 if let Some(ref name) = span.name {
-                    // Only count as local if path starts with src/ or test/
-                    // Exclude:
-                    // - ".spago/p/prelude-6.0.1/src/..." (registry deps)
-                    // - "../purescript-hylograph-selection/src/..." (workspace deps)
-                    return name.starts_with("src/") || name.starts_with("test/");
+                    // Exclude dependency paths - everything else is local
+                    let is_registry_dep = name.starts_with(".spago/") || name.starts_with("./.spago/");
+                    let is_workspace_dep = name.starts_with("../");
+                    return !is_registry_dep && !is_workspace_dep;
                 }
             }
         }

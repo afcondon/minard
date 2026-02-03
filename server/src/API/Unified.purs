@@ -73,7 +73,8 @@ foreign import buildStatsJson :: Array Foreign -> String
 -- =============================================================================
 
 -- | List all package versions with module counts, LOC, and dependencies
--- | Filters out stub packages (those with 0 modules, e.g. unloaded git deps)
+-- | Only returns packages in the transitive closure (those with topo_layer data)
+-- | This excludes packages loaded from tarball cache that aren't used by any project
 listPackages :: Database -> Aff Response
 listPackages db = do
   rows <- queryAll db """
@@ -91,10 +92,11 @@ listPackages db = do
       (SELECT STRING_AGG(pd.dependency_name, ',')
        FROM package_dependencies pd
        WHERE pd.dependent_id = pv.id) as depends,
-      0 as topo_layer  -- topo_layer not available in ce-unified schema
+      (SELECT MAX(sp.topo_layer) FROM snapshot_packages sp WHERE sp.package_version_id = pv.id) as topo_layer
     FROM package_versions pv
     LEFT JOIN modules m ON m.package_version_id = pv.id
     LEFT JOIN declarations d ON d.module_id = m.id
+    WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
     GROUP BY pv.id, pv.name, pv.version, pv.description, pv.license, pv.repository, pv.source
     ORDER BY pv.source DESC, pv.name, pv.version
   """

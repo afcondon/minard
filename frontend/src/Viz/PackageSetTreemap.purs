@@ -170,13 +170,19 @@ computeTreemapPositions config packages =
           # Array.sortBy (\a b -> compare a.name b.name)
 
         -- Create leaf nodes for packages
+        -- For unparsed packages (registry), use default size so they're visible
+        -- Workspace packages use actual LOC; registry gets 500 LOC equivalent
+        defaultLocForUnparsed = 500.0
         pkgLeaves :: Array (ValuedNode PackageSetPackage)
         pkgLeaves = layerPkgs <#> \pkg ->
-          VNode
+          let pkgValue = if pkg.totalLoc > 0
+                         then toNumber pkg.totalLoc
+                         else defaultLocForUnparsed
+          in VNode
             { data_: pkg
             , depth: 2
             , height: 0
-            , value: toNumber (max 1 pkg.totalLoc)
+            , value: pkgValue
             , children: []
             , parent: Nothing
             }

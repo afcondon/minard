@@ -5,7 +5,8 @@ use std::fs;
 use std::time::Instant;
 
 use minard_loader::{
-    db::{drop_all_tables, get_stats, init_schema},
+    cache::{load_cache_packages, parse_package_set},
+    db::{drop_all_tables, get_stats, init_schema, IdGenerator},
     loader::{discovery::discover_all, LoadPipeline, ProjectDiscovery},
     model::ScanStats,
     progress::ProgressReporter,
@@ -106,6 +107,61 @@ fn main() -> anyhow::Result<()> {
 
             let stats = get_stats(&conn)?;
             println!("{}", stats.report());
+        }
+
+        Commands::LoadCache {
+            cache_path,
+            database,
+            package_set,
+            verbose,
+            quiet,
+        } => {
+            if !database.exists() {
+                anyhow::bail!("Database not found: {}. Run 'load' first to create it.", database.display());
+            }
+
+            if !cache_path.exists() {
+                anyhow::bail!("Cache directory not found: {}", cache_path.display());
+            }
+
+            let conn = Connection::open(&database)
+                .with_context(|| format!("Failed to open database: {}", database.display()))?;
+
+            // Parse package set if provided
+            let ps_info = if let Some(ref ps_path) = package_set {
+                if !quiet {
+                    println!("Loading package set from {}", ps_path.display());
+                }
+                Some(parse_package_set(ps_path)?)
+            } else {
+                None
+            };
+
+            // Initialize ID generator from database
+            let id_gen = IdGenerator::new();
+            let max_ids = minard_loader::db::get_max_ids(&conn)?;
+            id_gen.init_from_db(&max_ids);
+
+            let progress = ProgressReporter::new(quiet);
+
+            if !quiet {
+                println!("Loading packages from cache: {}", cache_path.display());
+            }
+
+            let stats = load_cache_packages(
+                &conn,
+                &cache_path,
+                ps_info.as_ref(),
+                &id_gen,
+                &progress,
+                verbose,
+            )?;
+
+            progress.finish();
+
+            if !quiet {
+                println!("\n{}", stats.report());
+            }
         }
     }
 

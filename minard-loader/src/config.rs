@@ -59,4 +59,26 @@ pub enum Commands {
         #[arg(short, long, default_value = "minard.duckdb")]
         database: PathBuf,
     },
+
+    /// Load packages from a package cache directory (extracted tarballs)
+    LoadCache {
+        /// Path to the package cache directory (e.g., .package-cache/)
+        cache_path: PathBuf,
+
+        /// Path to database file
+        #[arg(short, long, default_value = "minard.duckdb")]
+        database: PathBuf,
+
+        /// Path to package set JSON file (for version info)
+        #[arg(long)]
+        package_set: Option<PathBuf>,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Quiet mode (no progress output)
+        #[arg(short, long)]
+        quiet: bool,
+    },
 }
