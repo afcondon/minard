@@ -58,6 +58,7 @@ import CE2.Viz.ModuleBeeswarm as ModuleBeeswarm
 import CE2.Viz.ModuleBubblePack as ModuleBubblePack
 import CE2.Viz.DependencyMatrix as DependencyMatrix
 import CE2.Viz.DependencyChord as DependencyChord
+import CE2.Viz.TypeClassGrid as TypeClassGrid
 import CE2.Viz.DependencyAdjacency as DependencyAdjacency
 import CE2.Types (projectPackages, CellContents(..), ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors)
 
@@ -193,6 +194,9 @@ type State =
 
     -- Action listener for D3 callbacks → Halogen actions (GalaxyTreemap clicks)
   , galaxyTreemapListener :: Maybe (HS.Listener Action)
+
+    -- Type class stats (lazy loaded for TypeClassGrid scene)
+  , typeClassStats :: Maybe Loader.TypeClassStats
   }
 
 -- | Actions - streamlined
@@ -254,6 +258,7 @@ initialState input =
   , hoveredPackage: Nothing
   , hoveredModule: Nothing
   , galaxyTreemapListener: Nothing
+  , typeClassStats: Nothing
   }
 
 -- =============================================================================
@@ -303,6 +308,7 @@ sceneDepthLevel = case _ of
   PkgTreemap _ -> 2
   PkgModuleBeeswarm _ -> 2
   OverlayChordMatrix -> 1
+  TypeClassGrid -> 0  -- Type class view is at galaxy level
 
 -- | Check if we can navigate back (not at root)
 canGoBack :: Scene -> Boolean
@@ -317,6 +323,7 @@ canGoForward SolarSwarm = true         -- → PkgTreemap (if focal set)
 canGoForward (PkgTreemap _) = true     -- → PkgModuleBeeswarm
 canGoForward (PkgModuleBeeswarm _) = false  -- End of path
 canGoForward OverlayChordMatrix = false
+canGoForward TypeClassGrid = false     -- Standalone view, no forward navigation
 
 -- | Check if scene is a package treemap
 isPackageTreemap :: Scene -> Boolean
@@ -364,6 +371,12 @@ renderHeaderBar state =
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
             [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
+        -- Type Classes button
+        , HH.button
+            [ HE.onClick \_ -> NavigateTo TypeClassGrid
+            , HP.style $ "background: none; border: 1px solid " <> textColor <> "; color: " <> textColor <> "; cursor: pointer; font-size: 9px; padding: 2px 6px; border-radius: 3px; margin-left: 8px;"
+            ]
+            [ HH.text "TC" ]
         ]
 
       -- Center: Count info
@@ -488,6 +501,12 @@ renderHeaderCounts state = case state.scene of
 
   OverlayChordMatrix ->
     HH.span_ [ HH.text "Dependency overlay" ]
+
+  TypeClassGrid ->
+    case state.typeClassStats of
+      Just stats -> HH.span_
+        [ HH.text $ show stats.count <> " type classes" ]
+      Nothing -> HH.text "Loading..."
 
 -- | Footer stats (total counts)
 renderFooterStats :: forall m. State -> H.ComponentHTML Action Slots m
@@ -746,6 +765,15 @@ renderScene state =
     HH.div
       [ HP.class_ (HH.ClassName "overlay-placeholder") ]
       [ HH.text "Dependency matrix overlay - Coming soon" ]
+
+  TypeClassGrid ->
+    -- Type class grid visualization
+    HH.div
+      [ HP.id "type-class-grid-container"
+      , HP.class_ (HH.ClassName "type-class-grid")
+      , HP.style "position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+      ]
+      []
 
 -- =============================================================================
 -- Action Handlers
@@ -1351,6 +1379,35 @@ prepareSceneData state = case state.scene of
   OverlayChordMatrix ->
     log "[SceneCoordinator] OverlayChordMatrix"
 
+  TypeClassGrid -> do
+    log "[SceneCoordinator] TypeClassGrid"
+    case state.typeClassStats of
+      Just stats -> do
+        log $ "[SceneCoordinator] Rendering TypeClassGrid with " <> show stats.count <> " classes"
+        liftEffect $ TypeClassGrid.render
+          { containerSelector: "#type-class-grid-container"
+          , width: 1650.0
+          , height: 900.0
+          , theme: themeForScene TypeClassGrid
+          }
+          stats
+      Nothing -> do
+        log "[SceneCoordinator] Loading type class stats..."
+        result <- liftAff Loader.fetchTypeClassStats
+        case result of
+          Right stats -> do
+            log $ "[SceneCoordinator] Loaded " <> show stats.count <> " type classes"
+            H.modify_ _ { typeClassStats = Just stats }
+            liftEffect $ TypeClassGrid.render
+              { containerSelector: "#type-class-grid-container"
+              , width: 1650.0
+              , height: 900.0
+              , theme: themeForScene TypeClassGrid
+              }
+              stats
+          Left err ->
+            log $ "[SceneCoordinator] Failed to load type class stats: " <> err
+
 -- =============================================================================
 -- Query Handlers
 -- =============================================================================
@@ -1450,6 +1507,7 @@ themeForScene = case _ of
   PkgTreemap _ -> PaperwhiteTheme       -- Module level = paperwhite
   PkgModuleBeeswarm _ -> PaperwhiteTheme -- Module level with flow overlay
   OverlayChordMatrix -> BeigeTheme
+  TypeClassGrid -> BlueprintTheme         -- Type classes use blueprint theme
 
 -- | Canonical state code for precise communication
 -- | See docs/kb/reference/ce2-state-machine-analysis.md for full naming system
@@ -1478,6 +1536,8 @@ canonicalStateCode state = case state.scene of
   PkgModuleBeeswarm pkg -> "F(" <> pkg <> ")"
 
   OverlayChordMatrix -> "O"  -- Overlay state
+
+  TypeClassGrid -> "T"       -- Type class grid view
 
   where
   scopeDigit :: BeeswarmScope -> String

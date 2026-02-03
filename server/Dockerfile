@@ -27,7 +27,7 @@ COPY output/ ./output/
 COPY server/run.js ./server/
 
 # Copy database (using unified schema for v2 API)
-COPY database/code-explorer.db ./database/
+COPY database/ce-unified.duckdb ./database/
 
 WORKDIR /app/server
 

@@ -39,6 +39,8 @@ data Route
   | V2SearchDeclarations String
   -- Polyglot
   | V2PolyglotSummary
+  -- Type system analysis
+  | V2TypeClassStats
   -- Health
   | Health
 
@@ -61,6 +63,7 @@ route = root $ sum
   , "V2GetNamespace": path "api/v2/namespaces" segment
   , "V2SearchDeclarations": path "api/v2/declarations/search" segment
   , "V2PolyglotSummary": path "api/v2/polyglot-summary" noArgs
+  , "V2TypeClassStats": path "api/v2/type-class-stats" noArgs
   , "Health": path "health" noArgs
   }
 
@@ -69,7 +72,7 @@ route = root $ sum
 -- =============================================================================
 
 dbPath :: String
-dbPath = "./database/code-explorer.db"
+dbPath = "./database/ce-unified.duckdb"
 
 main :: Effect Unit
 main = launchAff_ do
@@ -96,6 +99,7 @@ main = launchAff_ do
     log "  GET /api/v2/namespaces/:path             - Get namespace with children"
     log "  GET /api/v2/declarations/search/:query   - Search declarations"
     log "  GET /api/v2/polyglot-summary             - Polyglot project summary"
+    log "  GET /api/v2/type-class-stats            - Type class method/instance counts"
     log "  GET /health                              - Health check"
   where
   mkRouter db { route: r } = case r of
@@ -114,4 +118,5 @@ main = launchAff_ do
     V2GetNamespace nsPath -> Unified.getNamespace db nsPath
     V2SearchDeclarations query -> Unified.searchDeclarations db query
     V2PolyglotSummary -> Unified.getPolyglotSummary db
+    V2TypeClassStats -> Unified.getTypeClassStats db
     Health -> ok "OK"

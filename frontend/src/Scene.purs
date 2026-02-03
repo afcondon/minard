@@ -29,6 +29,7 @@ data Scene
   | PkgTreemap String               -- Paperwhite module treemap
   | PkgModuleBeeswarm String        -- Module beeswarm overlay on treemap
   | OverlayChordMatrix              -- Optional chord/matrix overlay (toggled)
+  | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
 
 derive instance eqScene :: Eq Scene
 
@@ -39,6 +40,7 @@ instance showScene :: Show Scene where
   show (PkgTreemap pkg) = "PkgTreemap(" <> pkg <> ")"
   show (PkgModuleBeeswarm pkg) = "PkgModuleBeeswarm(" <> pkg <> ")"
   show OverlayChordMatrix = "OverlayChordMatrix"
+  show TypeClassGrid = "TypeClassGrid"
 
 -- | Get the parent scene for back navigation
 -- |
@@ -57,6 +59,7 @@ parentScene = case _ of
   PkgTreemap _pkg -> SolarSwarm            -- Back to SolarSwarm (may have focal set)
   PkgModuleBeeswarm pkg -> PkgTreemap pkg  -- Back to same package's treemap
   OverlayChordMatrix -> SolarSwarm         -- Overlay closes back to SolarSwarm
+  TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
 
 -- | Human-readable label for display in navigation UI
 sceneLabel :: Scene -> String
@@ -67,6 +70,7 @@ sceneLabel = case _ of
   PkgTreemap pkg -> pkg <> " Modules"
   PkgModuleBeeswarm pkg -> pkg <> " Module Flow"
   OverlayChordMatrix -> "Dependency Matrix"
+  TypeClassGrid -> "Type Classes"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
 isGalaxyScene :: Scene -> Boolean

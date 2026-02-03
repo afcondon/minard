@@ -48,6 +48,11 @@ module CE2.Data.Loader
   , fetchV2AllCalls
   , V2ModuleCalls
   , fetchPolyglotSummary
+    -- Type Class Stats
+  , TypeClassStats
+  , TypeClassInfo
+  , TypeClassSummary
+  , fetchTypeClassStats
   ) where
 
 import Prelude
@@ -1878,4 +1883,39 @@ type PolyglotSummary =
 fetchPolyglotSummary :: Aff (Either String PolyglotSummary)
 fetchPolyglotSummary = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/polyglot-summary")
+  pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- =============================================================================
+-- Type Class Stats (V2)
+-- =============================================================================
+
+-- | Summary statistics for type classes
+type TypeClassSummary =
+  { totalMethods :: Int
+  , totalInstances :: Int
+  , avgMethodsPerClass :: String
+  , avgInstancesPerClass :: String
+  }
+
+-- | Information about a single type class
+type TypeClassInfo =
+  { id :: Int
+  , name :: String
+  , moduleName :: String
+  , packageName :: String
+  , methodCount :: Int
+  , instanceCount :: Int
+  }
+
+-- | Full type class stats response
+type TypeClassStats =
+  { typeClasses :: Array TypeClassInfo
+  , count :: Int
+  , summary :: TypeClassSummary
+  }
+
+-- | Fetch type class statistics
+fetchTypeClassStats :: Aff (Either String TypeClassStats)
+fetchTypeClassStats = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/type-class-stats")
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError

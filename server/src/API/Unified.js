@@ -452,3 +452,33 @@ function getBackendDisplayName(backend) {
   };
   return names[backend] || backend;
 }
+
+// =============================================================================
+// Type Class Stats
+// =============================================================================
+
+export const buildTypeClassStatsJson = (rows) => {
+  const typeClasses = (rows || []).map(row => ({
+    id: Number(row.id),
+    name: row.name,
+    moduleName: row.module_name,
+    packageName: row.package_name,
+    methodCount: Number(row.method_count) || 0,
+    instanceCount: Number(row.instance_count) || 0
+  }));
+
+  // Compute summary stats
+  const totalMethods = typeClasses.reduce((sum, tc) => sum + tc.methodCount, 0);
+  const totalInstances = typeClasses.reduce((sum, tc) => sum + tc.instanceCount, 0);
+
+  return JSON.stringify({
+    typeClasses,
+    count: typeClasses.length,
+    summary: {
+      totalMethods,
+      totalInstances,
+      avgMethodsPerClass: typeClasses.length > 0 ? (totalMethods / typeClasses.length).toFixed(1) : 0,
+      avgInstancesPerClass: typeClasses.length > 0 ? (totalInstances / typeClasses.length).toFixed(1) : 0
+    }
+  });
+};

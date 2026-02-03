@@ -27,6 +27,8 @@ module API.Unified
   , searchDeclarations
   -- Polyglot
   , getPolyglotSummary
+  -- Type system analysis
+  , getTypeClassStats
   ) where
 
 import Prelude
@@ -89,7 +91,7 @@ listPackages db = do
       (SELECT STRING_AGG(pd.dependency_name, ',')
        FROM package_dependencies pd
        WHERE pd.dependent_id = pv.id) as depends,
-      (SELECT MAX(sp.topo_layer) FROM snapshot_packages sp WHERE sp.package_version_id = pv.id) as topo_layer
+      0 as topo_layer  -- topo_layer not available in ce-unified schema
     FROM package_versions pv
     LEFT JOIN modules m ON m.package_version_id = pv.id
     LEFT JOIN declarations d ON d.module_id = m.id
@@ -553,3 +555,56 @@ getPolyglotSummary db = do
   ok' jsonHeaders json
 
 foreign import buildPolyglotSummaryJson :: Array Foreign -> Array Foreign -> String
+
+-- =============================================================================
+-- GET /api/v2/type-class-stats
+-- =============================================================================
+
+-- | Get all type classes with their method and instance counts
+-- | Returns: { typeClasses: [{ id, name, moduleName, packageName, methodCount, instanceCount }], count: N }
+getTypeClassStats :: Database -> Aff Response
+getTypeClassStats db = do
+  -- Get unique type classes (deduplicated by module path + class name)
+  -- Note: workspace packages are duplicated across snapshots, so we pick one
+  -- instance per unique (module_name, class_name) combination
+  rows <- queryAll db """
+    WITH unique_classes AS (
+      SELECT
+        MIN(d.id) as id,
+        d.name,
+        m.name as module_name,
+        MIN(pv.name) as package_name
+      FROM declarations d
+      JOIN modules m ON d.module_id = m.id
+      JOIN package_versions pv ON m.package_version_id = pv.id
+      WHERE d.kind = 'type_class'
+      GROUP BY m.name, d.name
+    ),
+    method_counts AS (
+      SELECT d.id, COUNT(*) as method_count
+      FROM declarations d
+      JOIN child_declarations cd ON cd.declaration_id = d.id
+      WHERE cd.kind = 'class_member'
+      GROUP BY d.id
+    ),
+    instance_counts AS (
+      SELECT SPLIT_PART(instance_type, ' ', 1) as class_name, COUNT(*) as instance_count
+      FROM type_class_instances
+      GROUP BY SPLIT_PART(instance_type, ' ', 1)
+    )
+    SELECT
+      uc.id,
+      uc.name,
+      uc.module_name,
+      uc.package_name,
+      COALESCE(mc.method_count, 0) as method_count,
+      COALESCE(ic.instance_count, 0) as instance_count
+    FROM unique_classes uc
+    LEFT JOIN method_counts mc ON mc.id = uc.id
+    LEFT JOIN instance_counts ic ON ic.class_name = uc.name
+    ORDER BY instance_count DESC, method_count DESC, uc.name
+  """
+  let json = buildTypeClassStatsJson rows
+  ok' jsonHeaders json
+
+foreign import buildTypeClassStatsJson :: Array Foreign -> String
