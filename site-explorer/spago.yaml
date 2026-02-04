@@ -1,6 +1,6 @@
 workspace:
   packageSet:
-    registry: 67.0.1
+    registry: 72.0.1
   extraPackages:
     hylograph-selection:
       path: "../../../visualisation libraries/purescript-hylograph-selection"
