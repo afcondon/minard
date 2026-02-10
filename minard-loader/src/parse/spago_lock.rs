@@ -1,5 +1,7 @@
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
@@ -28,8 +30,54 @@ pub struct WorkspacePackage {
 
 #[derive(Debug, Deserialize)]
 pub struct BuildConfig {
+    /// Dependencies can be either plain strings ["aff", "effect"]
+    /// or objects [{"aff": ">=8.0.0 <9.0.0"}, {"effect": ">=4.0.0 <5.0.0"}]
+    #[serde(deserialize_with = "deserialize_flexible_deps")]
     pub dependencies: Vec<String>,
+    #[serde(default)]
     pub build_plan: Vec<String>,
+}
+
+/// Deserialize dependencies that can be either strings or single-key objects
+fn deserialize_flexible_deps<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct FlexibleDepsVisitor;
+
+    impl<'de> Visitor<'de> for FlexibleDepsVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a list of strings or single-key objects")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Vec<String>, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut deps = Vec::new();
+            while let Some(item) = seq.next_element::<serde_json::Value>()? {
+                match item {
+                    serde_json::Value::String(s) => deps.push(s),
+                    serde_json::Value::Object(map) => {
+                        for key in map.keys() {
+                            deps.push(key.clone());
+                        }
+                    }
+                    other => {
+                        return Err(de::Error::custom(format!(
+                            "expected string or object in dependencies, got {:?}",
+                            other
+                        )));
+                    }
+                }
+            }
+            Ok(deps)
+        }
+    }
+
+    deserializer.deserialize_seq(FlexibleDepsVisitor)
 }
 
 #[derive(Debug, Deserialize)]
