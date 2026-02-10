@@ -127,6 +127,7 @@ pub struct Declaration {
     pub synonym_type: Option<Value>,
     pub comments: Option<String>,
     pub source_span: Option<Value>,
+    pub source_code: Option<String>,
 }
 
 /// A child declaration (constructor, instance, class member)

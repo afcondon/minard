@@ -296,6 +296,7 @@ pub fn load_registry_modules_from_output(
                             "name": s.name
                         })
                     }),
+                    source_code: None,
                 });
 
                 // Process child declarations

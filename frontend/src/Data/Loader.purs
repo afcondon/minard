@@ -91,8 +91,8 @@ import CE2.Types (SimNode, SimLink, NodeType(..), LinkType(..), Package)
 -- | API base URL for ce-server
 -- | TODO: Make this configurable via environment or runtime config
 apiBaseUrl :: String
-apiBaseUrl = "/code"  -- Routes through edge layer to ce-backend (production)
--- apiBaseUrl = "http://localhost:3000"  -- Direct to ce-server (local dev)
+-- apiBaseUrl = "/code"  -- Routes through edge layer to ce-backend (production)
+apiBaseUrl = "http://localhost:3000"  -- Direct to ce-server (local dev)
 
 -- =============================================================================
 -- Types
@@ -1282,6 +1282,7 @@ type V2Declaration =
   , comments :: Maybe String
   , dataDeclType :: Maybe String
   , sourceSpan :: Maybe { start :: Array Int, end :: Array Int, name :: String }
+  , sourceCode :: Maybe String
   , children :: Array V2ChildDeclaration
   }
 

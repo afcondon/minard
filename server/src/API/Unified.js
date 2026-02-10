@@ -141,6 +141,7 @@ export const buildDeclarationsJson = (declarations) => (children) => {
       comments: d.comments || null,
       dataDeclType: d.data_decl_type || null,
       sourceSpan: d.source_span ? JSON.parse(d.source_span) : null,
+      sourceCode: d.source_code || null,
       children: childrenByDecl[declId] || []
     };
   });

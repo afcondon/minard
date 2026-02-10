@@ -334,8 +334,8 @@ pub fn insert_declarations(conn: &Connection, decls: &[Declaration]) -> Result<(
         "INSERT OR IGNORE INTO declarations
          (id, module_id, name, kind, type_signature, type_ast,
           data_decl_type, type_arguments, roles, superclasses, fundeps,
-          synonym_type, comments, source_span)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          synonym_type, comments, source_span, source_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )?;
 
     for decl in decls {
@@ -362,6 +362,7 @@ pub fn insert_declarations(conn: &Connection, decls: &[Declaration]) -> Result<(
             synonym_json,
             decl.comments,
             source_span_json,
+            decl.source_code,
         ])?;
     }
 

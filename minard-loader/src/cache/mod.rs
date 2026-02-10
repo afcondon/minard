@@ -382,6 +382,7 @@ fn extract_declarations(content: &str, module_id: i64, id_gen: &IdGenerator) -> 
                     synonym_type: None,
                     comments: None,
                     source_span: None,
+                    source_code: None,
                 });
             }
         }
@@ -410,6 +411,7 @@ fn extract_declarations(content: &str, module_id: i64, id_gen: &IdGenerator) -> 
                     synonym_type: None,
                     comments: None,
                     source_span: None,
+                    source_code: None,
                 });
             }
         }
@@ -438,6 +440,7 @@ fn extract_declarations(content: &str, module_id: i64, id_gen: &IdGenerator) -> 
                     synonym_type: None,
                     comments: None,
                     source_span: None,
+                    source_code: None,
                 });
             }
         }
@@ -466,6 +469,7 @@ fn extract_declarations(content: &str, module_id: i64, id_gen: &IdGenerator) -> 
                     synonym_type: None,
                     comments: None,
                     source_span: None,
+                    source_code: None,
                 });
             }
         }
@@ -496,6 +500,7 @@ fn extract_declarations(content: &str, module_id: i64, id_gen: &IdGenerator) -> 
                     synonym_type: None,
                     comments: None,
                     source_span: None,
+                    source_code: None,
                 });
             }
         }
@@ -522,6 +527,7 @@ fn extract_declarations(content: &str, module_id: i64, id_gen: &IdGenerator) -> 
                         synonym_type: None,
                         comments: None,
                         source_span: None,
+                        source_code: None,
                     });
                 }
             }

@@ -238,7 +238,8 @@ getModuleDeclarations db moduleId = do
       d.type_signature,
       d.comments,
       d.data_decl_type,
-      d.source_span
+      d.source_span,
+      d.source_code
     FROM declarations d
     WHERE d.module_id = ?
     ORDER BY
