@@ -15,8 +15,13 @@
 -- | - Declaration level: hover declaration highlights its dependencies
 module CE2.Viz.ModuleTreemapEnriched
   ( Config
+  , DeclarationCircle
+  , ChildCircle
   , render
   , cleanup
+  , kindColor
+  , packDeclarations
+  , shortModuleName
   ) where
 
 import Prelude
@@ -61,6 +66,7 @@ type Config =
   , height :: Number
   , packageName :: String
   , onModuleClick :: Maybe (String -> String -> Effect Unit)  -- packageName -> moduleName -> Effect
+  , onDeclarationClick :: Maybe (String -> String -> String -> Effect Unit)  -- pkg -> mod -> decl -> Effect
   , colorMode :: ColorMode       -- Current color mode (for git status)
   , gitStatus :: Maybe GitStatusData  -- Git status for module coloring
   }
@@ -748,7 +754,7 @@ enrichedModuleCell config m =
               ("translate(" <> show (m.width / 2.0) <> "," <> show (m.height / 2.0) <> ")")
           , staticStr "class" "declaration-bubbles"
           ]
-          (map declarationCircleElem m.declarations)
+          (map (declarationCircleElem config m.name) m.declarations)
 
       -- Module name at bottom
       , elem Text
@@ -784,24 +790,28 @@ enrichedModuleCell config m =
 -- | Render an individual declaration circle with dependency highlighting
 -- | If the declaration has children, renders them as nested circles inside
 -- | Includes data-tooltip for hover information
-declarationCircleElem :: DeclarationCircle -> Tree
-declarationCircleElem decl =
+declarationCircleElem :: Config -> String -> DeclarationCircle -> Tree
+declarationCircleElem config moduleName decl =
   let
     -- Build tooltip text for display on hover
     tooltipText = buildDeclarationTooltip decl
+    declClickBehavior = case config.onDeclarationClick of
+      Nothing -> []
+      Just handler -> [ onClick (handler config.packageName moduleName decl.name) ]
   in
   withBehaviors
-    [ onCoordinatedHighlightWithTooltip
-        { identify: decl.fullName
-        , classify: \hoveredId ->
-            if decl.fullName == hoveredId then Primary
-            else if Array.elem hoveredId decl.calls then Related      -- I call this
-            else if Array.elem hoveredId decl.calledBy then Related   -- This calls me
-            else Dimmed
-        , group: Just "declarations"  -- Declaration-level highlighting group
-        , tooltip: Just { content: tooltipText, showWhen: OnHover }
-        }
-    ]
+    ( [ onCoordinatedHighlightWithTooltip
+          { identify: decl.fullName
+          , classify: \hoveredId ->
+              if decl.fullName == hoveredId then Primary
+              else if Array.elem hoveredId decl.calls then Related      -- I call this
+              else if Array.elem hoveredId decl.calledBy then Related   -- This calls me
+              else Dimmed
+          , group: Just "declarations"  -- Declaration-level highlighting group
+          , tooltip: Just { content: tooltipText, showWhen: OnHover }
+          }
+      ] <> declClickBehavior
+    )
   $ if Array.null decl.children
     then
       -- Simple circle for childless declarations

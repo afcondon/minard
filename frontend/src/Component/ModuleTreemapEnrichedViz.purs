@@ -51,6 +51,7 @@ type Input =
 data Output
   = ModuleClicked String String  -- packageName, moduleName
   | ModuleHovered (Maybe String) -- moduleName (for future coordinated hover)
+  | DeclarationClicked String String String  -- packageName, moduleName, declarationName
 
 -- | Slot type for parent component
 type Slot = H.Slot Query Output
@@ -70,6 +71,7 @@ data Action
   = Initialize
   | Receive Input
   | HandleModuleClick String String  -- packageName, moduleName
+  | HandleDeclarationClick String String String  -- packageName, moduleName, declarationName
 
 -- =============================================================================
 -- Component
@@ -157,6 +159,10 @@ handleAction = case _ of
     log $ "[ModuleTreemapEnrichedViz] Module clicked: " <> pkgName <> "/" <> modName
     H.raise (ModuleClicked pkgName modName)
 
+  HandleDeclarationClick pkgName modName declName -> do
+    log $ "[ModuleTreemapEnrichedViz] Declaration clicked: " <> pkgName <> "/" <> modName <> "/" <> declName
+    H.raise (DeclarationClicked pkgName modName declName)
+
 -- | Render the enriched treemap visualization
 renderTreemap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
 renderTreemap input = do
@@ -172,8 +178,9 @@ renderTreemap input = do
       <> ", " <> show (Map.size input.declarations) <> " declaration sets"
       <> ", " <> show (Map.size input.functionCalls) <> " call sets"
 
-  -- Create click callback
+  -- Create click callbacks
   let onModuleClick = makeClickCallback input.packageName state.actionListener
+      onDeclarationClick = makeDeclarationClickCallback state.actionListener
 
   -- Render enriched treemap
   liftEffect $ ModuleTreemapEnriched.render
@@ -182,6 +189,7 @@ renderTreemap input = do
     , height: 900.0
     , packageName: input.packageName
     , onModuleClick: Just onModuleClick
+    , onDeclarationClick: Just onDeclarationClick
     , colorMode: input.colorMode
     , gitStatus: input.gitStatus
     }
@@ -197,3 +205,9 @@ makeClickCallback :: String -> Maybe (HS.Listener Action) -> String -> String ->
 makeClickCallback _defaultPkg mListener pkgName modName = case mListener of
   Just listener -> HS.notify listener (HandleModuleClick pkgName modName)
   Nothing -> log $ "[ModuleTreemapEnrichedViz] No listener for click: " <> pkgName <> "/" <> modName
+
+-- | Create a declaration click callback that notifies the Halogen listener
+makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit
+makeDeclarationClickCallback mListener pkgName modName declName = case mListener of
+  Just listener -> HS.notify listener (HandleDeclarationClick pkgName modName declName)
+  Nothing -> log $ "[ModuleTreemapEnrichedViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName

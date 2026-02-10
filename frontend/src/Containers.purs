@@ -79,6 +79,12 @@ module CE2.Containers
     -- Package Adjacency (project package dependencies)
   , packageAdjacencyContainerId
   , packageAdjacencyContainer
+    -- ModuleOverview (bubble pack panel)
+  , moduleOverviewBubbleContainerId
+  , moduleOverviewBubbleContainer
+    -- DeclarationDetail (bubble pack panel)
+  , declarationDetailBubbleContainerId
+  , declarationDetailBubbleContainer
   ) where
 
 import Prelude
@@ -308,3 +314,23 @@ packageAdjacencyContainerId = "package-adjacency-container"
 
 packageAdjacencyContainer :: Selector
 packageAdjacencyContainer = toSelector packageAdjacencyContainerId
+
+-- =============================================================================
+-- ModuleOverview Scene (bubble pack + declaration listing)
+-- =============================================================================
+
+moduleOverviewBubbleContainerId :: ElementId
+moduleOverviewBubbleContainerId = "module-overview-bubble-container"
+
+moduleOverviewBubbleContainer :: Selector
+moduleOverviewBubbleContainer = toSelector moduleOverviewBubbleContainerId
+
+-- =============================================================================
+-- DeclarationDetail Scene (focused declaration with bubble pack)
+-- =============================================================================
+
+declarationDetailBubbleContainerId :: ElementId
+declarationDetailBubbleContainerId = "declaration-detail-bubble-container"
+
+declarationDetailBubbleContainer :: Selector
+declarationDetailBubbleContainer = toSelector declarationDetailBubbleContainerId

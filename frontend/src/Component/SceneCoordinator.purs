@@ -47,6 +47,8 @@ import Hylograph.Render (runD3, clear)
 import CE2.Component.BubblePackBeeswarmViz as BubblePackBeeswarmViz
 import CE2.Component.GalaxyBeeswarmViz as GalaxyBeeswarmViz
 import CE2.Component.ModuleTreemapEnrichedViz as ModuleTreemapEnrichedViz
+import CE2.Component.ModuleOverviewViz as ModuleOverviewViz
+import CE2.Component.DeclarationDetailViz as DeclarationDetailViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
 
 import CE2.Containers as C
@@ -112,6 +114,8 @@ type Slots =
   ( bubblePackBeeswarmViz :: BubblePackBeeswarmViz.Slot Unit
   , galaxyBeeswarmViz :: GalaxyBeeswarmViz.Slot Unit
   , moduleTreemapViz :: ModuleTreemapEnrichedViz.Slot Unit
+  , moduleOverviewViz :: ModuleOverviewViz.Slot Unit
+  , declarationDetailViz :: DeclarationDetailViz.Slot Unit
   , slideOutPanel :: SlideOutPanel.Slot Unit
   )
 
@@ -123,6 +127,12 @@ _galaxyBeeswarmViz = Proxy
 
 _moduleTreemapViz :: Proxy "moduleTreemapViz"
 _moduleTreemapViz = Proxy
+
+_moduleOverviewViz :: Proxy "moduleOverviewViz"
+_moduleOverviewViz = Proxy
+
+_declarationDetailViz :: Proxy "declarationDetailViz"
+_declarationDetailViz = Proxy
 
 _slideOutPanel :: Proxy "slideOutPanel"
 _slideOutPanel = Proxy
@@ -221,6 +231,8 @@ data Action
   | HandleBubblePackBeeswarmOutput BubblePackBeeswarmViz.Output
   | HandleGalaxyBeeswarmOutput GalaxyBeeswarmViz.Output
   | HandleModuleTreemapOutput ModuleTreemapEnrichedViz.Output
+  | HandleModuleOverviewOutput ModuleOverviewViz.Output
+  | HandleDeclarationDetailOutput DeclarationDetailViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -322,6 +334,8 @@ sceneDepthLevel = case _ of
   SolarSwarm -> 1
   PkgTreemap _ -> 2
   PkgModuleBeeswarm _ -> 2
+  ModuleOverview _ _ -> 3
+  DeclarationDetail _ _ _ -> 3
   OverlayChordMatrix -> 1
   TypeClassGrid -> 0  -- Type class view is at galaxy level
 
@@ -337,6 +351,8 @@ canGoForward GalaxyBeeswarm = true     -- → SolarSwarm
 canGoForward SolarSwarm = true         -- → PkgTreemap (if focal set)
 canGoForward (PkgTreemap _) = true     -- → PkgModuleBeeswarm
 canGoForward (PkgModuleBeeswarm _) = false  -- End of path
+canGoForward (ModuleOverview _ _) = false
+canGoForward (DeclarationDetail _ _ _) = false
 canGoForward OverlayChordMatrix = false
 canGoForward TypeClassGrid = false     -- Standalone view, no forward navigation
 
@@ -444,8 +460,10 @@ renderColorTabStrip :: forall m. State -> H.ComponentHTML Action Slots m
 renderColorTabStrip state =
   let
     currentLevel = sceneDepthLevel state.scene
+    -- Map depth 3 (declaration detail) to depth 2 (module) for tab display
+    tabLevel = min currentLevel 2
     -- Heights: current level slightly taller to create "tab" effect
-    segmentHeight level = if level == currentLevel then "5px" else "3px"
+    segmentHeight level = if level == tabLevel then "5px" else "3px"
   in HH.div
     [ HP.class_ (HH.ClassName "color-tab-strip")
     , HP.style "display: flex; width: 100%;"
@@ -532,6 +550,15 @@ renderHeaderCounts state = case state.scene of
           [ HH.text $ pkg <> " • " <> show moduleCount <> " modules (flow)" ]
       Nothing -> HH.text "Loading..."
 
+  ModuleOverview pkg modName ->
+    let declCount = findModuleDeclCount state pkg modName
+    in HH.span_
+      [ HH.text $ modName <> " • " <> show declCount <> " declarations" ]
+
+  DeclarationDetail _ modName declName ->
+    HH.span_
+      [ HH.text $ modName <> " » " <> declName ]
+
   OverlayChordMatrix ->
     HH.span_ [ HH.text "Dependency overlay" ]
 
@@ -560,6 +587,8 @@ renderSelectionInfo :: forall m. State -> H.ComponentHTML Action Slots m
 renderSelectionInfo state =
   case state.scene of
     PkgTreemap _ -> renderDeclarationLegend
+    ModuleOverview _ _ -> renderDeclarationLegend
+    DeclarationDetail _ _ _ -> renderDeclarationLegend
     _ -> renderHoverInfo state
 
 -- | Default hover info display
@@ -795,6 +824,39 @@ renderScene state =
           ]
           []
       ]
+
+  ModuleOverview pkgName modName ->
+    -- Module overview: bubble pack + declaration listing
+    case lookupModuleDeclarations state pkgName modName of
+      Just decls ->
+        HH.slot _moduleOverviewViz unit ModuleOverviewViz.component
+          { packageName: pkgName
+          , moduleName: modName
+          , declarations: decls
+          , functionCalls: state.packageCalls
+          }
+          HandleModuleOverviewOutput
+      Nothing ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading module declarations..." ]
+
+  DeclarationDetail pkgName modName declName ->
+    -- Declaration detail: focused bubble pack + expanded info
+    case lookupModuleDeclarations state pkgName modName of
+      Just decls ->
+        HH.slot _declarationDetailViz unit DeclarationDetailViz.component
+          { packageName: pkgName
+          , moduleName: modName
+          , declarationName: declName
+          , declarations: decls
+          , functionCalls: state.packageCalls
+          }
+          HandleDeclarationDetailOutput
+      Nothing ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading declaration data..." ]
 
   OverlayChordMatrix ->
     -- Chord/Matrix overlay (toggle during SolarSwarm)
@@ -1073,10 +1135,26 @@ handleAction = case _ of
   HandleModuleTreemapOutput output -> case output of
     ModuleTreemapEnrichedViz.ModuleClicked pkgName modName -> do
       log $ "[SceneCoordinator] Module treemap clicked: " <> pkgName <> "/" <> modName
-      -- RETIRED: handleAction (OpenModulePanel pkgName modName)  -- Panel retired, info now in tooltips
-      pure unit
+      handleAction (NavigateTo (ModuleOverview pkgName modName))
     ModuleTreemapEnrichedViz.ModuleHovered _mModName ->
       pure unit  -- Future: coordinated hover
+    ModuleTreemapEnrichedViz.DeclarationClicked pkgName modName declName -> do
+      log $ "[SceneCoordinator] Declaration clicked in treemap: " <> pkgName <> "/" <> modName <> "/" <> declName
+      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+
+  HandleModuleOverviewOutput output -> case output of
+    ModuleOverviewViz.DeclarationClicked pkgName modName declName -> do
+      log $ "[SceneCoordinator] Declaration clicked in overview: " <> declName
+      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+    ModuleOverviewViz.DeclarationHovered _ ->
+      pure unit
+
+  HandleDeclarationDetailOutput output -> case output of
+    DeclarationDetailViz.BackToModuleOverview ->
+      handleAction NavigateBack
+    DeclarationDetailViz.DeclarationClicked pkgName modName declName -> do
+      log $ "[SceneCoordinator] Declaration clicked in detail: " <> declName
+      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
 
   SetScope targetScope -> do
     log $ "[SceneCoordinator] Setting scope: " <> show targetScope
@@ -1422,6 +1500,16 @@ prepareSceneData state = case state.scene of
       Nothing ->
         log "[SceneCoordinator] No v2Data for PkgTreemap"
 
+  ModuleOverview pkgName _modName -> do
+    -- Ensure declarations are loaded for this package
+    ensurePackageDeclarationsLoaded state pkgName
+    log "[SceneCoordinator] ModuleOverview: rendering handled by slot"
+
+  DeclarationDetail pkgName _modName _declName -> do
+    -- Ensure declarations are loaded for this package
+    ensurePackageDeclarationsLoaded state pkgName
+    log "[SceneCoordinator] DeclarationDetail: rendering handled by slot"
+
   PkgModuleBeeswarm pkgName -> do
     case state.v2Data of
       Just v2 -> do
@@ -1639,6 +1727,8 @@ themeForScene = case _ of
   SolarSwarm -> BeigeTheme              -- Solar system level = warm beige
   PkgTreemap _ -> PaperwhiteTheme       -- Module level = paperwhite
   PkgModuleBeeswarm _ -> PaperwhiteTheme -- Module level with flow overlay
+  ModuleOverview _ _ -> PaperwhiteTheme  -- Module detail = paperwhite
+  DeclarationDetail _ _ _ -> PaperwhiteTheme  -- Declaration detail = paperwhite
   OverlayChordMatrix -> BeigeTheme
   TypeClassGrid -> BlueprintTheme         -- Type classes use blueprint theme
 
@@ -1667,6 +1757,10 @@ canonicalStateCode state = case state.scene of
   PkgTreemap pkg -> "E(" <> pkg <> ")" <> viewSuffix state.viewMode
 
   PkgModuleBeeswarm pkg -> "F(" <> pkg <> ")"
+
+  ModuleOverview pkg mod -> "G(" <> pkg <> "," <> mod <> ")"
+
+  DeclarationDetail pkg mod decl -> "H(" <> pkg <> "," <> mod <> "," <> decl <> ")"
 
   OverlayChordMatrix -> "O"  -- Overlay state
 
@@ -1701,6 +1795,60 @@ countVisiblePackages scope packages = case scope of
   -- Check if package is a direct dependency of any project package
   isDirectDep name = Array.any (\p ->
     Set.member p.name projectSet && Array.elem name p.depends) packages
+
+-- =============================================================================
+-- Module/Declaration Lookup Helpers
+-- =============================================================================
+
+-- | Look up declarations for a module within a package
+lookupModuleDeclarations :: State -> String -> String -> Maybe (Array Loader.V2Declaration)
+lookupModuleDeclarations state pkgName modName = do
+  v2 <- state.v2Data
+  mod <- Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
+  Map.lookup mod.id state.packageDeclarations
+
+-- | Count declarations for a module (for header display)
+findModuleDeclCount :: State -> String -> String -> Int
+findModuleDeclCount state pkgName modName =
+  case lookupModuleDeclarations state pkgName modName of
+    Just decls -> Array.length decls
+    Nothing -> 0
+
+-- | Ensure declarations are loaded for a package's modules
+ensurePackageDeclarationsLoaded :: forall m. MonadAff m => State -> String -> H.HalogenM State Action Slots Output m Unit
+ensurePackageDeclarationsLoaded state pkgName =
+  case state.v2Data of
+    Just v2 -> do
+      let pkgModules = Array.filter (\m -> m.package.name == pkgName) v2.modules
+          missingDeclModules = Array.filter (\m -> not (Map.member m.id state.packageDeclarations)) pkgModules
+
+      when (Array.length missingDeclModules > 0) do
+        log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " modules in " <> pkgName
+        newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
+        currentState <- H.get
+        let merged = Map.union newDecls currentState.packageDeclarations
+        H.modify_ _ { packageDeclarations = merged }
+
+      -- Also ensure function calls are loaded
+      when (not state.allCallsLoaded) do
+        log "[SceneCoordinator] Fetching all function calls (bulk endpoint)"
+        result <- liftAff Loader.fetchV2AllCalls
+        case result of
+          Right allCalls -> do
+            log $ "[SceneCoordinator] Loaded function calls for " <> show (Array.length allCalls) <> " modules"
+            let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
+                  Tuple mc.moduleId (mc.calls <#> \c ->
+                    { callerName: c.callerName
+                    , calleeModule: c.calleeModule
+                    , calleeName: c.calleeName
+                    , isCrossModule: true
+                    , callCount: 1
+                    })
+            H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
+          Left err ->
+            log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
+    Nothing ->
+      log "[SceneCoordinator] No v2Data available for declaration loading"
 
 -- =============================================================================
 -- Module Import Maps (for coordinated hover highlighting)
