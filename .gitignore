@@ -17,7 +17,8 @@ database/.package-cache/
 # IDE
 .claude/
 
-# Bundles are generated
+# Generated artifacts
+cst-spans.json
 frontend/public/bundle.js
 # Ignore test files
 frontend/test-*.js
