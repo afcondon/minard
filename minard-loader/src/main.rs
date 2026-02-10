@@ -65,7 +65,29 @@ fn main() -> anyhow::Result<()> {
                 .with_context(|| format!("Failed to open database: {}", database.display()))?;
 
             let progress = ProgressReporter::new(quiet);
-            let pipeline = LoadPipeline::new(verbose);
+            let mut pipeline = LoadPipeline::new(verbose);
+
+            // Auto-detect CST spans file for accurate declaration source extraction
+            let cst_spans_path = project_path.join("cst-spans.json");
+            if cst_spans_path.exists() {
+                match minard_loader::parse::CstSpanIndex::from_path(&cst_spans_path) {
+                    Ok(index) => {
+                        if !quiet {
+                            println!(
+                                "Loading CST spans from {} ({} declarations)",
+                                cst_spans_path.display(),
+                                index.len()
+                            );
+                        }
+                        pipeline.set_cst_index(index);
+                    }
+                    Err(e) => {
+                        if verbose {
+                            eprintln!("Warning: Failed to load CST spans: {}", e);
+                        }
+                    }
+                }
+            }
 
             // Initialize ID generator from database
             pipeline.init_ids(&conn)?;

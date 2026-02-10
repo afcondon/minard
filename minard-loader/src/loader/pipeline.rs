@@ -21,7 +21,7 @@ use crate::model::{
     ChildDeclaration, Declaration, LoadStats, Module, PackageDependency, PackageVersion,
     ParsedModule, Snapshot, SnapshotPackage,
 };
-use crate::parse::{render_type, DocsJson, SpagoLock};
+use crate::parse::{render_type, CstSpanIndex, DocsJson, SpagoLock};
 use crate::progress::ProgressReporter;
 use crate::registry::{
     get_registry_packages_to_load, load_registry_modules_from_output,
@@ -34,6 +34,7 @@ use super::discovery::ProjectDiscovery;
 pub struct LoadPipeline {
     id_gen: IdGenerator,
     verbose: bool,
+    cst_index: CstSpanIndex,
 }
 
 impl LoadPipeline {
@@ -41,7 +42,13 @@ impl LoadPipeline {
         Self {
             id_gen: IdGenerator::new(),
             verbose,
+            cst_index: CstSpanIndex::empty(),
         }
+    }
+
+    /// Set the CST span index for accurate declaration source extraction.
+    pub fn set_cst_index(&mut self, index: CstSpanIndex) {
+        self.cst_index = index;
     }
 
     /// Initialize ID generator from database
@@ -460,6 +467,7 @@ impl LoadPipeline {
         package_id: i64,
     ) -> Result<ParsedModule> {
         use crate::parse::CoreFn;
+        use std::fs;
 
         let module_id = self.id_gen.next_module_id();
 
@@ -488,6 +496,48 @@ impl LoadPipeline {
             loc,
         };
 
+        // Read the source file for extracting declaration source code.
+        // The source_span.name field is a path relative to the project root.
+        // Project root = output dir's parent (docs_path is output/ModuleName/docs.json)
+        let source_name: Option<String> = docs
+            .declarations
+            .first()
+            .and_then(|d| d.source_span.as_ref())
+            .and_then(|s| s.name.clone());
+
+        let source_lines: Option<Vec<String>> = source_name
+            .as_ref()
+            .and_then(|sn| {
+                // output/ModuleName/docs.json → output/ModuleName → output → project root
+                let project_root = docs_path.parent()?.parent()?.parent()?;
+                let source_path = project_root.join(sn);
+                fs::read_to_string(&source_path).ok()
+            })
+            .map(|content| content.lines().map(|l| l.to_string()).collect());
+
+        // Build a list of ALL top-level definition start lines from the source file.
+        // We scan for lines that start with a non-space character and look like PureScript
+        // definitions (name ::, name =, data, newtype, type, class, foreign, instance, etc).
+        // This gives us much better boundaries than using only exported declarations from docs.json.
+        let mut top_level_starts: Vec<usize> = Vec::new();
+        if let Some(ref lines) = source_lines {
+            for (i, line) in lines.iter().enumerate() {
+                if line.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+                    continue;
+                }
+                // Skip comments and module/import lines
+                if line.starts_with("--") || line.starts_with("module ") || line.starts_with("import ") {
+                    continue;
+                }
+                // This is a top-level definition line (1-indexed)
+                top_level_starts.push(i + 1);
+            }
+        }
+        top_level_starts.sort();
+        top_level_starts.dedup();
+
+        let total_lines = source_lines.as_ref().map(|l| l.len()).unwrap_or(0);
+
         let mut declarations = Vec::new();
         let mut child_declarations = Vec::new();
 
@@ -509,6 +559,58 @@ impl LoadPipeline {
                     })
                     .collect();
                 Value::Array(arr)
+            });
+
+            // Extract source code from source file using line numbers.
+            // Try CST-based spans first (accurate), fall back to heuristic.
+            let source_code = decl.source_span.as_ref().and_then(|span| {
+                let lines = source_lines.as_ref()?;
+
+                // Try CST-based span first (from minard-cst pre-processing)
+                if let Some(ref sn) = source_name {
+                    if let Some((cst_start, cst_end)) = self.cst_index.get_span(sn, &decl.title) {
+                        let start_idx = (cst_start as usize).saturating_sub(1);
+                        let end_idx = (cst_end as usize).min(lines.len());
+                        if start_idx < end_idx {
+                            let extracted: Vec<&str> = lines[start_idx..end_idx]
+                                .iter()
+                                .map(|s| s.as_str())
+                                .collect();
+                            return Some(extracted.join("\n"));
+                        }
+                    }
+                }
+
+                // Fallback: heuristic using top-level definition starts
+                let start_line = span.start[0] as usize;
+                if start_line == 0 || start_line > lines.len() {
+                    return None;
+                }
+
+                // Find the next declaration's start line after this one
+                let end_line = top_level_starts
+                    .iter()
+                    .find(|&&l| l > start_line)
+                    .map(|&next_start| {
+                        // Walk backwards from next decl to skip blank lines
+                        let mut end = next_start - 1;
+                        while end > start_line && lines.get(end - 1).map_or(true, |l| l.trim().is_empty()) {
+                            end -= 1;
+                        }
+                        end
+                    })
+                    .unwrap_or(total_lines); // Last declaration: extend to end of file
+
+                let start_idx = start_line - 1;
+                let end_idx = end_line.min(lines.len());
+                if start_idx >= end_idx {
+                    return None;
+                }
+                let extracted: Vec<&str> = lines[start_idx..end_idx]
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect();
+                Some(extracted.join("\n"))
             });
 
             declarations.push(Declaration {
@@ -537,6 +639,7 @@ impl LoadPipeline {
                         "name": s.name
                     })
                 }),
+                source_code,
             });
 
             // Process child declarations
