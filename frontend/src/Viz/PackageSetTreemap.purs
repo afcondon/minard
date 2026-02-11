@@ -331,10 +331,81 @@ toPackageRenderDataWithDeps config dependsOnMap dependedByMap pp =
     , dependedBy: fromMaybe [] $ Map.lookup pp.pkg.name dependedByMap
     }
 
+-- | Build a position map from package name to center coordinates
+buildPackagePositionMap :: Array PackageRenderData -> Map String { x :: Number, y :: Number }
+buildPackagePositionMap pkgs =
+  Map.fromFoldable $ pkgs <#> \(PackageRenderData d) ->
+    Tuple d.name { x: d.cx, y: d.cy }
+
+-- | Render all package dependency links as curved paths
+renderPackageDependencyLinks :: Map String { x :: Number, y :: Number } -> Array PackageRenderData -> Tree
+renderPackageDependencyLinks posMap pkgs =
+  let links = Array.concatMap (packageOutgoingLinks posMap) pkgs
+  in elem Group
+    [ staticStr "class" "dependency-links"
+    , staticStr "pointer-events" "none"
+    , thunkedStr "data-link-count" (show (Array.length links))
+    ]
+    links
+
+-- | Generate outgoing links from a single package to its dependencies
+packageOutgoingLinks :: Map String { x :: Number, y :: Number } -> PackageRenderData -> Array Tree
+packageOutgoingLinks posMap (PackageRenderData d) =
+  d.dependsOn # Array.mapMaybe \depName ->
+    Map.lookup depName posMap <#> \toPos ->
+      packageLinkPath { x: d.cx, y: d.cy } toPos d.name depName
+
+-- | Render a curved link between two package centers
+-- | Uses a quadratic Bezier curve, participates in CoordinatedHighlight
+packageLinkPath :: { x :: Number, y :: Number } -> { x :: Number, y :: Number } -> String -> String -> Tree
+packageLinkPath from to fromName toName =
+  let
+    dx = to.x - from.x
+    dy = to.y - from.y
+    dist = sqrt (dx * dx + dy * dy)
+
+    curvature = min 0.3 (dist / 500.0) * 40.0
+    perpX = if dist > 0.0 then -dy / dist * curvature else 0.0
+    perpY = if dist > 0.0 then dx / dist * curvature else 0.0
+    midX = (from.x + to.x) / 2.0
+    midY = (from.y + to.y) / 2.0
+    cx = midX + perpX
+    cy = midY + perpY
+
+    pathD = "M " <> show from.x <> " " <> show from.y
+         <> " Q " <> show cx <> " " <> show cy
+         <> " " <> show to.x <> " " <> show to.y
+
+    linkId = fromName <> "→" <> toName
+  in
+    withBehaviors
+      [ onCoordinatedHighlight
+          { identify: linkId
+          , classify: \hoveredId ->
+              -- fromName depends on toName, so:
+              -- hovering fromName → link shows its upstream dep → Upstream (green)
+              -- hovering toName → link shows its downstream dependent → Downstream (orange)
+              if hoveredId == fromName then Upstream
+              else if hoveredId == toName then Downstream
+              else Dimmed
+          , group: Nothing  -- Global coordination (same as package cells)
+          }
+      ]
+    $ elem Path
+        [ thunkedStr "d" pathD
+        , staticStr "fill" "none"
+        , staticStr "stroke" "#888"
+        , staticStr "stroke-width" "0.75"
+        , staticStr "stroke-opacity" "0"  -- Invisible until hover
+        , staticStr "class" "dependency-link"
+        ]
+        []
+
 -- | Build the SVG tree structure using forEach
 buildSVGTree :: Config -> Array PackageRenderData -> Boolean -> Tree
 buildSVGTree config packageData enableHighlighting =
   let colors = themeColors config.theme
+      posMap = buildPackagePositionMap packageData
   in
   elem SVG
     [ staticStr "id" "galaxy-treemap-svg"
@@ -354,6 +425,10 @@ buildSVGTree config packageData enableHighlighting =
             else forEach "packages" Group packageData (\(PackageRenderData d) -> d.name)
                    (packageGroupTree config)
         ]
+    , -- Dependency link layer (on top of packages, pointer-events: none)
+      if enableHighlighting
+        then renderPackageDependencyLinks posMap packageData
+        else elem Group [] []
     ]
 
 -- | Create tree for a single package group (called from forEach template)
@@ -396,6 +471,7 @@ packageGroupTree config (PackageRenderData d) =
     ]
 
 -- | Create tree for a single package group with coordinated highlighting behavior
+-- | Highlight triggers only from circle/label hover, NOT rect background
 packageGroupTreeWithHighlighting :: Config -> PackageRenderData -> Tree
 packageGroupTreeWithHighlighting config (PackageRenderData d) =
   let
@@ -407,7 +483,8 @@ packageGroupTreeWithHighlighting config (PackageRenderData d) =
       BlueprintTheme -> "rgba(255, 255, 255, 0.6)"  -- Brighter white for blueprint
       _ -> colors.stroke
 
-    -- Highlighting behavior for the group
+    -- Highlighting behavior — attached to cell content, not the group
+    -- so hovering the rect background doesn't trigger highlighting
     highlightBehavior = onCoordinatedHighlight
         { identify: d.name
         , classify: \hoveredName ->
@@ -436,16 +513,18 @@ packageGroupTreeWithHighlighting config (PackageRenderData d) =
     rectWithClick = case config.onRectClick of
       Just handler -> withBehaviors [ onClick (handler d.name) ] rectElem
       Nothing -> rectElem
+
+    -- Cell content with highlight behavior — only this area triggers hover
+    cellContent = renderCellContent config colors (PackageRenderData d)
+    highlightedCellContent = withBehaviors [ highlightBehavior ] cellContent
   in
-  withBehaviors [ highlightBehavior ]
-  $ elem Group
+  elem Group
       [ staticStr "class" $ "treemap-package" <> if d.inProject then " project-package" else ""
       , staticStr "data-name" d.name
       , staticStr "data-layer" (show d.topoLayer)
       ]
       [ rectWithClick
-      , -- Cell contents (circle, text) - circle may have its own click handler
-        renderCellContent config colors (PackageRenderData d)
+      , highlightedCellContent
       ]
 
 -- | Render cell content based on cellContents config
@@ -476,7 +555,7 @@ renderCellContent config colors (PackageRenderData d) =
         [ thunkedNum "x" d.cx
         , thunkedNum "y" (d.cy + d.circleR + 12.0)
         , staticStr "text-anchor" "middle"
-        , thunkedStr "font-size" (if d.width > 80.0 then "9" else "7")
+        , thunkedStr "font-size" (if d.width > 80.0 then "12" else "9")
         , staticStr "fill" colors.textMuted
         , staticStr "font-family" "'Courier New', Courier, monospace"
         , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)
@@ -495,7 +574,7 @@ renderCellContent config colors (PackageRenderData d) =
         , thunkedNum "y" d.cy
         , staticStr "text-anchor" "middle"
         , staticStr "dominant-baseline" "middle"
-        , thunkedStr "font-size" (if d.width > 80.0 then "9" else "7")
+        , thunkedStr "font-size" (if d.width > 80.0 then "12" else "9")
         , staticStr "fill" colors.text
         , staticStr "font-family" "'Courier New', Courier, monospace"
         , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)

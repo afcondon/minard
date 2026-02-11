@@ -648,7 +648,7 @@ packageNodeHATS config node =
               [ staticStr "x" "0"
               , thunkedStr "y" (show (node.r + 12.0))  -- Below the circle
               , staticStr "text-anchor" "middle"
-              , staticStr "font-size" "9"
+              , staticStr "font-size" "12"
               , staticStr "font-family" "'Courier New', monospace"
               , staticStr "fill" "#fff"
               , staticStr "class" "package-label"

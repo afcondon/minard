@@ -27,15 +27,18 @@ import Data.Int (toNumber)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.String as String
 import Data.Nullable as Nullable
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Class.Console (log)
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onMouseEnter, onMouseLeave, onClick, onClickWithModifier)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onMouseEnter, onMouseLeave, onClick, onClickWithModifier, onCoordinatedHighlight)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Behavior.Types (HighlightClass(..))
+import Data.Number (sqrt)
 import Hylograph.Simulation.HATS (tickUpdate)
 
 -- Simulation imports
@@ -191,7 +194,12 @@ render config callbacks nodes = do
       -- Fast path: only update transforms (not full HATS rerender)
       currentNodes <- handle.getNodes
       tickUpdate C.bubblePackBeeswarmNodes currentNodes
-    Completed -> log "[BubblePackBeeswarm] Simulation converged"
+    Completed -> do
+      log "[BubblePackBeeswarm] Simulation converged"
+      finalNodes <- handle.getNodes
+      let tree = createPackageNodesTreeWithLinks callbacks finalNodes
+      _ <- rerender C.bubblePackBeeswarmNodes tree
+      pure unit
     Started -> log "[BubblePackBeeswarm] Simulation started"
     Stopped -> pure unit
 
@@ -252,7 +260,12 @@ renderWithPositions config callbacks nodes positions = do
     Tick _ -> do
       currentNodes <- handle.getNodes
       tickUpdate C.bubblePackBeeswarmNodes currentNodes
-    Completed -> log "[BubblePackBeeswarm] Simulation converged"
+    Completed -> do
+      log "[BubblePackBeeswarm] Simulation converged"
+      finalNodes <- handle.getNodes
+      let tree = createPackageNodesTreeWithLinks callbacks finalNodes
+      _ <- rerender C.bubblePackBeeswarmNodes tree
+      pure unit
     Started -> log "[BubblePackBeeswarm] Simulation started"
     Stopped -> pure unit
 
@@ -507,9 +520,13 @@ renderNodesHATS callbacks nodes = do
   pure unit
 
 -- | Create the nodes tree for HATS rendering
+-- | Wrapped in a Group to match createPackageNodesTreeWithLinks structure
+-- | so HATS can reconcile when links are added after simulation converges
 createPackageNodesTree :: Callbacks -> Array PackedPackageNode -> Tree
 createPackageNodesTree callbacks nodes =
-  forEach "packages" Group nodes nodeKey (packageNodeHATS callbacks)
+  elem Group []
+    [ forEach "packages" Group nodes nodeKey (packageNodeHATS callbacks)
+    ]
   where
   nodeKey :: PackedPackageNode -> String
   nodeKey n = n.name
@@ -550,31 +567,34 @@ packageNodeHATS callbacks node =
         -- Module circles inside
         <> map (moduleCircleHATS callbacks node) node.modules
         <>
-        [ -- Package label below (click → treemap view)
+        [ -- Label background rect
+          let charWidth = 7.8
+              labelW = toNumber (String.length node.name) * charWidth + 8.0
+              labelH = 18.0
+              labelY = node.r + 15.0
+          in elem Rect
+            [ staticStr "class" "label-bg"
+            , thunkedNum "x" (-(labelW / 2.0))
+            , thunkedNum "y" (labelY - labelH + 4.0)
+            , thunkedNum "width" labelW
+            , thunkedNum "height" labelH
+            , staticStr "rx" "3"
+            , staticStr "fill" "#F5F0E6"
+            , staticStr "fill-opacity" "0.85"
+            ]
+            []
+        , -- Package label below (click → treemap view)
           withBehaviors [ onClick (callbacks.onPackageLabelClick node.name) ]
           $ elem Text
             [ staticStr "class" "package-label"
             , thunkedNum "y" (node.r + 15.0)
             , staticStr "text-anchor" "middle"
             , staticStr "fill" "#666"
-            , staticStr "font-size" "11px"
+            , staticStr "font-size" "13px"
             , staticStr "font-weight" "500"
             , staticStr "font-family" "system-ui, sans-serif"
             , staticStr "cursor" "pointer"  -- Indicate clickable
             , thunkedStr "textContent" node.name
-            ]
-            []
-        -- Module count above
-        , elem Text
-            [ staticStr "class" "module-count"
-            , thunkedNum "y" (-(node.r) - 5.0)
-            , staticStr "text-anchor" "middle"
-            , staticStr "fill" "#888"
-            , staticStr "font-size" "10px"
-            , staticStr "font-family" "system-ui, sans-serif"
-            , thunkedStr "textContent" (if node.moduleCount > 0
-                then show node.moduleCount <> " modules"
-                else "")
             ]
             []
         ]
@@ -587,6 +607,15 @@ moduleCircleHATS callbacks node mod =
     [ onClick (callbacks.onModuleClick node.name mod.name)
     , onMouseEnter (callbacks.onModuleHover node.name (Just mod.name))
     , onMouseLeave (callbacks.onModuleHover node.name Nothing)
+    , onCoordinatedHighlight
+        { identify: mod.name
+        , classify: \hoveredId ->
+            if mod.name == hoveredId then Primary
+            else if Array.elem hoveredId mod.imports then Related
+            else if Array.elem hoveredId mod.importedBy then Related
+            else Dimmed
+        , group: Just "modules"
+        }
     ]
   $ elem Group
       [ staticStr "class" "module-circle-group"
@@ -628,3 +657,107 @@ packageColor idx =
     , "#9c755f"  -- Brown
     , "#bab0ac"  -- Gray
     ]
+
+-- =============================================================================
+-- Cross-Package Dependency Links
+-- =============================================================================
+
+-- | Compute cross-package module import links
+-- | Only includes imports where the target module is in a DIFFERENT package
+computeCrossPackageLinks :: Array PackedPackageNode -> Array { fromModule :: String, toModule :: String }
+computeCrossPackageLinks nodes =
+  let
+    -- Build a set of all module names per package
+    moduleToPackage :: Map String String
+    moduleToPackage = Map.fromFoldable $ nodes >>= \n ->
+      n.modules <#> \m -> Tuple m.name n.name
+  in
+    nodes >>= \n ->
+      n.modules >>= \m ->
+        m.imports # Array.mapMaybe \imp ->
+          case Map.lookup imp moduleToPackage of
+            Just pkg | pkg /= n.name -> Just { fromModule: m.name, toModule: imp }
+            _ -> Nothing
+
+-- | Build absolute position map for all modules
+-- | Module positions are relative to package center, so we add package (x, y)
+buildModulePositionMap :: Array PackedPackageNode -> Map String { x :: Number, y :: Number }
+buildModulePositionMap nodes =
+  Map.fromFoldable $ nodes >>= \n ->
+    n.modules <#> \m ->
+      Tuple m.name { x: n.x + m.x, y: n.y + m.y }
+
+-- | Render all cross-package module dependency links as curved paths
+renderModuleDependencyLinks
+  :: Map String { x :: Number, y :: Number }
+  -> Array { fromModule :: String, toModule :: String }
+  -> Tree
+renderModuleDependencyLinks posMap links =
+  let paths = links # Array.mapMaybe \link -> do
+        fromPos <- Map.lookup link.fromModule posMap
+        toPos <- Map.lookup link.toModule posMap
+        pure $ moduleLinkPath fromPos toPos link.fromModule link.toModule
+  in elem Group
+    [ staticStr "class" "dependency-links"
+    , staticStr "pointer-events" "none"
+    , thunkedStr "data-link-count" (show (Array.length paths))
+    ]
+    paths
+
+-- | Render a curved link between two module positions
+moduleLinkPath
+  :: { x :: Number, y :: Number }
+  -> { x :: Number, y :: Number }
+  -> String -> String -> Tree
+moduleLinkPath from to fromName toName =
+  let
+    dx = to.x - from.x
+    dy = to.y - from.y
+    dist = sqrt (dx * dx + dy * dy)
+
+    curvature = min 0.3 (dist / 500.0) * 40.0
+    perpX = if dist > 0.0 then -dy / dist * curvature else 0.0
+    perpY = if dist > 0.0 then dx / dist * curvature else 0.0
+    midX = (from.x + to.x) / 2.0
+    midY = (from.y + to.y) / 2.0
+    cx = midX + perpX
+    cy = midY + perpY
+
+    pathD = "M " <> show from.x <> " " <> show from.y
+         <> " Q " <> show cx <> " " <> show cy
+         <> " " <> show to.x <> " " <> show to.y
+
+    linkId = fromName <> "→" <> toName
+  in
+    withBehaviors
+      [ onCoordinatedHighlight
+          { identify: linkId
+          , classify: \hoveredId ->
+              if hoveredId == fromName || hoveredId == toName then Related
+              else Dimmed
+          , group: Just "modules"  -- Same group as module circles
+          }
+      ]
+    $ elem Path
+        [ thunkedStr "d" pathD
+        , staticStr "fill" "none"
+        , staticStr "stroke" "#f59e0b"
+        , staticStr "stroke-width" "0.75"
+        , staticStr "stroke-opacity" "0.25"
+        , staticStr "class" "dependency-link"
+        ]
+        []
+
+-- | Create package nodes tree WITH cross-package dependency links
+-- | Used after simulation converges (Completed event) when positions are final
+createPackageNodesTreeWithLinks :: Callbacks -> Array PackedPackageNode -> Tree
+createPackageNodesTreeWithLinks callbacks nodes =
+  let posMap = buildModulePositionMap nodes
+      links = computeCrossPackageLinks nodes
+  in elem Group []
+       [ forEach "packages" Group nodes nodeKey (packageNodeHATS callbacks)
+       , renderModuleDependencyLinks posMap links
+       ]
+  where
+  nodeKey :: PackedPackageNode -> String
+  nodeKey n = n.name

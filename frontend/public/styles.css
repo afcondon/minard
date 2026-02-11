@@ -1090,12 +1090,7 @@ line.fn-highlight-dimmed {
   transition: opacity 0.2s ease;
 }
 
-/* Individual package rect hover effect */
-.treemap-package:hover {
-  stroke: #000;
-  stroke-width: 0.5;
-  transition: stroke 0.15s ease, stroke-width 0.15s ease;
-}
+/* Individual package rect hover effect — stroke handled by HATS highlight classes */
 
 .treemap-module:hover {
   stroke: #111;
@@ -1851,84 +1846,88 @@ select.project-dropdown:focus {
   transition: fill 0.15s ease-out;
 }
 
-.treemap-package.highlight-primary text {
+/* Highlight classes are on the cell content group (child of .treemap-package),
+   not on .treemap-package itself — hover triggers only from circle/label area.
+   CSS :has() propagates visual effects to sibling elements (rect, text). */
+
+.treemap-package:has(.highlight-primary) text {
   fill: rgba(255, 255, 255, 0.95) !important;
 }
 
-.treemap-package.highlight-related text {
+.treemap-package:has(.highlight-related) text {
   fill: rgba(255, 255, 255, 0.8) !important;
 }
 
-.treemap-package.highlight-dimmed text {
+.treemap-package:has(.highlight-dimmed) text {
   fill: rgba(255, 255, 255, 0.2) !important;
 }
 
 /* Primary: The hovered package - bright stroke for visibility on dark theme */
-.treemap-package.highlight-primary rect {
+.treemap-package:has(.highlight-primary) rect {
   stroke: #ffc040 !important;
   stroke-width: 2px !important;
 }
 
-.treemap-package.highlight-primary circle {
+.treemap-package:has(.highlight-primary) circle {
   fill: #ffc040 !important;
   stroke: #fff !important;
   stroke-width: 2px !important;
 }
 
 /* Related: Packages with dependency relationships - blue accent (generic fallback) */
-.treemap-package.highlight-related rect {
+.treemap-package:has(.highlight-related) rect {
   stroke: #60a5fa !important;
   stroke-width: 1.5px !important;
 }
 
-.treemap-package.highlight-related circle {
+.treemap-package:has(.highlight-related) circle {
   fill: #60a5fa !important;
   stroke: #fff !important;
   stroke-width: 1px !important;
 }
 
 /* Upstream: Dependencies (things the hovered package depends on) - green */
-.treemap-package.highlight-upstream rect {
+.treemap-package:has(.highlight-upstream) rect {
   stroke: #22c55e !important;
   stroke-width: 1.5px !important;
 }
 
-.treemap-package.highlight-upstream circle {
+.treemap-package:has(.highlight-upstream) circle {
   fill: #22c55e !important;
   stroke: #fff !important;
   stroke-width: 1px !important;
 }
 
-.treemap-package.highlight-upstream text {
+.treemap-package:has(.highlight-upstream) text {
   fill: rgba(255, 255, 255, 0.9) !important;
 }
 
 /* Downstream: Dependents (things that depend on hovered package) - orange */
-.treemap-package.highlight-downstream rect {
+.treemap-package:has(.highlight-downstream) rect {
   stroke: #f97316 !important;
   stroke-width: 1.5px !important;
 }
 
-.treemap-package.highlight-downstream circle {
+.treemap-package:has(.highlight-downstream) circle {
   fill: #f97316 !important;
   stroke: #fff !important;
   stroke-width: 1px !important;
 }
 
-.treemap-package.highlight-downstream text {
+.treemap-package:has(.highlight-downstream) text {
   fill: rgba(255, 255, 255, 0.9) !important;
 }
 
 /* Dimmed: Unrelated packages - faded */
-.treemap-package.highlight-dimmed {
+.treemap-package:has(.highlight-dimmed) {
   opacity: 0.15;
 }
 
-.treemap-package.highlight-dimmed rect {
+.treemap-package:has(.highlight-dimmed) rect {
   fill: #1a2a4a !important;
 }
 
-.treemap-package.highlight-dimmed circle {
+.treemap-package:has(.highlight-dimmed) circle {
   fill: #3a4a6a !important;
 }
 
@@ -2034,9 +2033,46 @@ select.project-dropdown:focus {
   stroke-opacity: 1 !important;
 }
 
+/* Upstream: Link to a dependency of the hovered package - green */
+.dependency-link.highlight-upstream {
+  stroke: #22c55e !important;  /* Green-500 */
+  stroke-width: 1.5px !important;
+  stroke-opacity: 1 !important;
+}
+
+/* Downstream: Link from a dependent of the hovered package - orange */
+.dependency-link.highlight-downstream {
+  stroke: #f97316 !important;  /* Orange-500 */
+  stroke-width: 1.5px !important;
+  stroke-opacity: 1 !important;
+}
+
 /* Dimmed: Unrelated links - fade to near invisible */
 .dependency-link.highlight-dimmed {
-  stroke-opacity: 0.03 !important;
+  stroke-opacity: 0 !important;
+}
+
+/* -----------------------------------------------------------------------------
+   Module Circle Highlighting (BubblePackBeeswarm)
+   ----------------------------------------------------------------------------- */
+
+.module-circle-group {
+  transition: opacity 0.15s ease-out;
+}
+
+.module-circle-group.highlight-primary .module-circle {
+  stroke: #fbbf24 !important;
+  stroke-width: 2px !important;
+}
+
+.module-circle-group.highlight-related .module-circle {
+  stroke: #f59e0b !important;
+  stroke-width: 1.5px !important;
+  fill-opacity: 0.9 !important;
+}
+
+.module-circle-group.highlight-dimmed {
+  opacity: 0.15;
 }
 
 /* =============================================================================
@@ -2238,6 +2274,16 @@ select.project-dropdown:focus {
 }
 
 /* For SVG elements, tooltip positioned based on element center */
+/* BubblePack beeswarm label backgrounds — hidden until hover */
+.package-bubble .label-bg {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.package-bubble:hover .label-bg {
+  opacity: 1;
+}
+
 svg [data-tooltip]::after {
   left: 50%;
   bottom: auto;
