@@ -170,9 +170,9 @@ getModuleStyling colorMode gitStatus = case colorMode of
         , strokeWidth: "3"
         }
   _ ->
-    -- Default paperwhite styling for non-git modes
-    { fillColor: "#fafafa"
-    , strokeColor: "rgba(0, 0, 0, 0.2)"
+    -- Default styling: transparent so scene background shows through, white grid strokes
+    { fillColor: "transparent"
+    , strokeColor: "rgba(255, 255, 255, 0.3)"
     , strokeWidth: "1"
     }
 
@@ -598,7 +598,7 @@ buildEnrichedTreemapTree config enriched =
       , staticStr "width" "100%"
       , staticStr "height" "100%"
       , staticStr "preserveAspectRatio" "xMidYMid meet"
-      , staticStr "style" "background: #fafafa; display: block; border-radius: 8px;"
+      , staticStr "style" "background: transparent; display: block; border-radius: 8px;"
       ]
       [ -- Module cells with declarations (rendered first = behind)
         forEach "modules" Group enriched _.name (enrichedModuleCell config)
@@ -765,7 +765,7 @@ enrichedModuleCell config m =
           , staticStr "text-anchor" "middle"
           , staticStr "dominant-baseline" "auto"
           , thunkedStr "font-size" (if m.width > 60.0 then "9" else "7")
-          , staticStr "fill" "#555"
+          , staticStr "fill" "rgba(255, 255, 255, 0.9)"
           , staticStr "font-family" "system-ui, sans-serif"
           , staticStr "font-weight" "500"
           , thunkedStr "textContent" (truncateName (m.width / 7.0) m.shortName)
@@ -779,7 +779,7 @@ enrichedModuleCell config m =
           , staticStr "y" "10"
           , staticStr "text-anchor" "end"
           , staticStr "font-size" "7"
-          , staticStr "fill" "#999"
+          , staticStr "fill" "rgba(255, 255, 255, 0.5)"
           , staticStr "font-family" "system-ui, sans-serif"
           , thunkedStr "textContent"
               (if m.width > 35.0 && m.height > 25.0 && m.declarationCount > 0

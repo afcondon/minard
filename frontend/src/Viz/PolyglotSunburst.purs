@@ -41,7 +41,7 @@ import DataViz.Layout.Hierarchy.Partition
 
 -- Local imports
 import CE2.Data.Loader (PolyglotSummary, PolyglotBackend, PolyglotProject, PolyglotPackage)
-import CE2.Types (ViewTheme(..), themeColors)
+import CE2.Types (ViewTheme, isDarkTheme, themeColors)
 
 -- =============================================================================
 -- Types
@@ -223,7 +223,7 @@ buildSVGTree config nodes =
     , staticStr "viewBox" $ "0 0 " <> show config.width <> " " <> show config.height
     , staticStr "width" "100%"
     , staticStr "height" "100%"
-    , staticStr "style" $ "background: " <> colors.background <> "; display: block;"
+    , staticStr "style" "background: transparent; display: block;"
     , staticStr "preserveAspectRatio" "xMidYMid meet"
     ]
     [ -- Transform group to center the sunburst
@@ -359,15 +359,15 @@ projectColor = case _ of
 -- | Color for package ring (based on source type)
 packageColor :: ViewTheme -> String -> String
 packageColor theme source = case source of
-  "workspace" -> case theme of
-    BlueprintTheme -> "rgba(255, 255, 255, 0.6)"
-    _ -> "rgba(60, 60, 60, 0.7)"
-  "registry"  -> case theme of
-    BlueprintTheme -> "rgba(100, 150, 200, 0.5)"
-    _ -> "rgba(100, 100, 100, 0.5)"
-  "extra"     -> case theme of
-    BlueprintTheme -> "rgba(150, 200, 150, 0.5)"
-    _ -> "rgba(80, 120, 80, 0.5)"
+  "workspace" -> if isDarkTheme theme
+    then "rgba(255, 255, 255, 0.6)"
+    else "rgba(60, 60, 60, 0.7)"
+  "registry"  -> if isDarkTheme theme
+    then "rgba(100, 150, 200, 0.5)"
+    else "rgba(100, 100, 100, 0.5)"
+  "extra"     -> if isDarkTheme theme
+    then "rgba(150, 200, 150, 0.5)"
+    else "rgba(80, 120, 80, 0.5)"
   _           -> "rgba(128, 128, 128, 0.5)"
 
 -- | Truncate a name with ellipsis

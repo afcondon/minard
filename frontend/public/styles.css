@@ -11,7 +11,7 @@
 
 :root {
   /* Blueprint Theme - Technical Drawing Aesthetic */
-  --color-blueprint-base: #0E4C8A;
+  --color-blueprint-base: #082B5A;
   --color-blueprint-light: rgba(255, 255, 255, 0.9);
   --color-blueprint-white: #FFFFFF;
   --color-blueprint-grid: rgba(255, 255, 255, 0.15);
@@ -27,7 +27,7 @@
   --color-line: #999999;
   --color-text-dark: #333333;
   --color-text-muted: #666666;
-  --color-canvas: #0E4C8A;
+  --color-canvas: #0A0A1A;
   /* Blueprint background */
   --color-card: #F5F2E8;
   /* Light beige for cards and dropdowns */

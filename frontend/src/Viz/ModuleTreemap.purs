@@ -269,7 +269,7 @@ buildModuleTreemapTree config renderData enableHighlighting =
     , staticStr "width" "100%"
     , staticStr "height" "100%"
     , staticStr "preserveAspectRatio" "xMidYMid meet"
-    , staticStr "style" "background: #fafafa; display: block; border-radius: 8px;"
+    , staticStr "style" "background: transparent; display: block; border-radius: 8px;"
     ]
     [ -- Modules as treemap cells
       if enableHighlighting

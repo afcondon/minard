@@ -516,7 +516,7 @@ renderSVGContainerHATS = do
           , staticStr "viewBox" "-600 -400 1200 800"
           , staticStr "width" "100%"
           , staticStr "height" "700"
-          , staticStr "style" "background: #1a1a2e; border-radius: 8px;"
+          , staticStr "style" "background: transparent; border-radius: 8px;"
           ]
           [ elem Group
               [ staticStr "id" C.circlePackNodesId
@@ -603,20 +603,20 @@ toModuleCircleHATS mod = elem Circle
 -- | layer -1 (deps): blue tint, layer 0 (focal): gold/highlighted, layer 1 (dependents): green tint
 packageFillByLayer :: Int -> String -> String
 packageFillByLayer layer source = case layer of
-  (-1) -> "#2a4a6a"  -- Deps: blue-gray
+  (-1) -> "#3a6090"  -- Deps: medium blue
   0    -> case source of
-           "workspace" -> "#3a5a8a"  -- Focal: brighter if workspace
-           _ -> "#4a4a2a"  -- Focal: gold tint
-  1    -> "#2a5a4a"  -- Dependents: green tint
+           "workspace" -> "#4a78b0"  -- Focal: brighter if workspace
+           _ -> "#6a6a30"  -- Focal: gold tint
+  1    -> "#3a7a5a"  -- Dependents: green tint
   _    -> Color.packageColor source
 
 -- | Package stroke color by layer
 packageStrokeByLayer :: Int -> String -> String
 packageStrokeByLayer layer _source = case layer of
-  (-1) -> "#6a9acc"  -- Deps: lighter blue
+  (-1) -> "#80b0e0"  -- Deps: lighter blue
   0    -> "#ffc040"  -- Focal: gold highlight
-  1    -> "#6acc9a"  -- Dependents: lighter green
-  _    -> "#9a9a9a"
+  1    -> "#80d0a0"  -- Dependents: lighter green
+  _    -> "#b0b0b0"
 
 
 truncateName :: Int -> String -> String

@@ -115,13 +115,13 @@ buildOverloadTree w h cx cy n =
     , staticStr "viewBox" $ "0 0 " <> show w <> " " <> show h
     , staticStr "width" "100%"
     , staticStr "height" "100%"
-    , staticStr "style" "background: #1a2744;"
+    , staticStr "style" "background: transparent;"
     ]
     [ elem Text
         [ staticNum "x" cx
         , staticNum "y" (cy - 20.0)
         , staticStr "text-anchor" "middle"
-        , staticStr "fill" "#ff6b6b"
+        , staticStr "fill" "#d63031"
         , staticStr "font-size" "24px"
         , staticStr "font-family" "system-ui, sans-serif"
         , staticStr "textContent" "⚠ Chord Overload"
@@ -130,7 +130,7 @@ buildOverloadTree w h cx cy n =
         [ staticNum "x" cx
         , staticNum "y" (cy + 20.0)
         , staticStr "text-anchor" "middle"
-        , staticStr "fill" "#aaa"
+        , staticStr "fill" "#555"
         , staticStr "font-size" "16px"
         , staticStr "font-family" "system-ui, sans-serif"
         , staticStr "textContent" $ show n <> " entities is too many for a readable chord diagram"
@@ -139,7 +139,7 @@ buildOverloadTree w h cx cy n =
         [ staticNum "x" cx
         , staticNum "y" (cy + 60.0)
         , staticStr "text-anchor" "middle"
-        , staticStr "fill" "#888"
+        , staticStr "fill" "#777"
         , staticStr "font-size" "14px"
         , staticStr "font-family" "system-ui, sans-serif"
         , staticStr "textContent" $ "Maximum supported: " <> show maxEntities <> " entities"

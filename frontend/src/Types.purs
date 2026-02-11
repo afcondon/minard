@@ -121,36 +121,60 @@ instance showCellContents :: Show CellContents where
 
 -- | Visual theme for treemap - distinguishes scale levels
 -- | Each theme defines background, stroke, and text colors
+-- | 5-level dark-to-light luminance gradient matching abstract→concrete
 data ViewTheme
-  = BlueprintTheme    -- Blue background, white text (galaxy/registry scale)
-  | PaperwhiteTheme   -- White/light background, black text (solar system/package scale)
-  | BeigeTheme        -- Warm beige background, black text (planet/module scale)
+  = MidnightTheme     -- Near-black background, white text (package set / galaxy)
+  | BlueprintTheme    -- Dark navy, white text (neighborhood / solar system)
+  | SteelTheme        -- Blueprint blue, white text/strokes (package level)
+  | MistTheme         -- Pale blue, dark text (module level)
+  | DaylightTheme     -- White, dark text (declaration level)
 
 derive instance eqViewTheme :: Eq ViewTheme
 
 instance showViewTheme :: Show ViewTheme where
+  show MidnightTheme = "Midnight"
   show BlueprintTheme = "Blueprint"
-  show PaperwhiteTheme = "Paperwhite"
-  show BeigeTheme = "Beige"
+  show SteelTheme = "Steel"
+  show MistTheme = "Mist"
+  show DaylightTheme = "Daylight"
+
+-- | Check if a theme uses light text on dark background
+isDarkTheme :: ViewTheme -> Boolean
+isDarkTheme MidnightTheme = true
+isDarkTheme BlueprintTheme = true
+isDarkTheme SteelTheme = true
+isDarkTheme _ = false
 
 -- | Get theme colors for rendering
 -- | Returns { background, stroke, text, textMuted }
 themeColors :: ViewTheme -> { background :: String, stroke :: String, text :: String, textMuted :: String }
+themeColors MidnightTheme =
+  { background: "#0A0A1A"
+  , stroke: "rgba(255, 255, 255, 0.25)"
+  , text: "rgba(255, 255, 255, 0.9)"
+  , textMuted: "rgba(255, 255, 255, 0.5)"
+  }
 themeColors BlueprintTheme =
+  { background: "#082B5A"
+  , stroke: "rgba(255, 255, 255, 0.25)"
+  , text: "rgba(255, 255, 255, 0.9)"
+  , textMuted: "rgba(255, 255, 255, 0.5)"
+  }
+themeColors SteelTheme =
   { background: "#0E4C8A"
   , stroke: "rgba(255, 255, 255, 0.3)"
   , text: "rgba(255, 255, 255, 0.9)"
   , textMuted: "rgba(255, 255, 255, 0.5)"
   }
-themeColors PaperwhiteTheme =
-  { background: "#FAFAFA"
-  , stroke: "rgba(0, 0, 0, 0.2)"
+themeColors MistTheme =
+  { background: "#D8E4EE"
+  , stroke: "rgba(0, 0, 0, 0.12)"
   , text: "rgba(0, 0, 0, 0.87)"
   , textMuted: "rgba(0, 0, 0, 0.54)"
   }
-themeColors BeigeTheme =
-  { background: "#F5F0E6"
-  , stroke: "rgba(0, 0, 0, 0.15)"
+themeColors DaylightTheme =
+  { background: "#FFFFFF"
+  , stroke: "rgba(0, 0, 0, 0.1)"
   , text: "rgba(0, 0, 0, 0.87)"
   , textMuted: "rgba(0, 0, 0, 0.54)"
   }
@@ -343,21 +367,21 @@ instance showColorMode :: Show ColorMode where
 
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String
-brightColor BlueprintTheme = "rgba(255, 255, 255, 1.0)"
-brightColor PaperwhiteTheme = "rgba(0, 0, 0, 0.8)"
-brightColor BeigeTheme = "rgba(60, 40, 20, 0.9)"
+brightColor theme = if isDarkTheme theme
+  then "rgba(255, 255, 255, 1.0)"
+  else "rgba(0, 0, 0, 0.8)"
 
 -- | Medium color for transitive packages
 mediumColor :: ViewTheme -> String
-mediumColor BlueprintTheme = "rgba(255, 255, 255, 0.6)"
-mediumColor PaperwhiteTheme = "rgba(0, 0, 0, 0.5)"
-mediumColor BeigeTheme = "rgba(60, 40, 20, 0.6)"
+mediumColor theme = if isDarkTheme theme
+  then "rgba(255, 255, 255, 0.6)"
+  else "rgba(0, 0, 0, 0.5)"
 
 -- | Dim color for non-project packages
 dimColor :: ViewTheme -> String
-dimColor BlueprintTheme = "rgba(255, 255, 255, 0.15)"
-dimColor PaperwhiteTheme = "rgba(0, 0, 0, 0.15)"
-dimColor BeigeTheme = "rgba(60, 40, 20, 0.2)"
+dimColor theme = if isDarkTheme theme
+  then "rgba(255, 255, 255, 0.15)"
+  else "rgba(0, 0, 0, 0.15)"
 
 -- | Convert topo layer to a color (cool purple -> warm orange)
 topoLayerColor :: Int -> Int -> String

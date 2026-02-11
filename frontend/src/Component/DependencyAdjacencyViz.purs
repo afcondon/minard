@@ -91,7 +91,7 @@ render state =
   HH.div
     [ HP.id state.lastInput.containerId
     , HP.class_ (HH.ClassName "dependency-adjacency")
-    , HP.style "position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+    , HP.style "position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #F0F0F0;"
     ]
     []
 

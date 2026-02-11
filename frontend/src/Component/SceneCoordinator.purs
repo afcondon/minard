@@ -61,7 +61,7 @@ import CE2.Containers as C
 import CE2.Data.Loader as Loader
 import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
-import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, PackageGitStatus)
+import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus)
 
 -- FFI declarations for browser history integration
 foreign import pushHistoryState :: String -> String -> Effect Unit
@@ -451,8 +451,8 @@ renderFooterBar :: forall m. State -> H.ComponentHTML Action Slots m
 renderFooterBar state =
   let
     theme = themeForScene state.scene
-    textColor = if theme == BlueprintTheme then "rgba(255,255,255,0.8)" else "rgba(0,0,0,0.7)"
-    bgColor = if theme == BlueprintTheme then "rgba(0,0,0,0.3)" else "rgba(0,0,0,0.05)"
+    textColor = if isDarkTheme theme then "rgba(255,255,255,0.8)" else "rgba(0,0,0,0.7)"
+    bgColor = if isDarkTheme theme then "rgba(0,0,0,0.3)" else "rgba(0,0,0,0.05)"
   in HH.div
     [ HP.class_ (HH.ClassName "scene-footer-bar")
     , HP.style $ "height: 28px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; "
@@ -1368,20 +1368,22 @@ computePackageGitStatus mGitStatus mV2Data = do
     }
 
 -- | Get appropriate theme for a scene
--- | Three "Powers of Ten" levels:
--- |   Galaxy (registry) → Blueprint blue
--- |   Solar System (packages) → Beige
--- |   Module (code) → Paperwhite
+-- | Five "Powers of Ten" levels: dark→light luminance gradient
+-- |   Package Set (registry) → Midnight (near-black)
+-- |   Neighborhood (project packages) → Blueprint blue
+-- |   Package (modules) → Steel blue
+-- |   Module (declarations) → Mist (pale blue)
+-- |   Declaration → Daylight (white)
 themeForScene :: Scene -> ViewTheme
 themeForScene = case _ of
-  GalaxyTreemap -> BlueprintTheme
-  GalaxyBeeswarm -> BlueprintTheme
-  SolarSwarm -> BeigeTheme              -- Solar system level = warm beige
-  PkgTreemap _ -> PaperwhiteTheme       -- Module level = paperwhite
-  PkgModuleBeeswarm _ -> PaperwhiteTheme -- Module level with flow overlay
-  ModuleOverview _ _ -> PaperwhiteTheme  -- Module detail = paperwhite
-  DeclarationDetail _ _ _ -> PaperwhiteTheme  -- Declaration detail = paperwhite
-  TypeClassGrid -> BlueprintTheme         -- Type classes use blueprint theme
+  GalaxyTreemap -> MidnightTheme
+  GalaxyBeeswarm -> MidnightTheme
+  SolarSwarm -> BlueprintTheme
+  PkgTreemap _ -> SteelTheme
+  PkgModuleBeeswarm _ -> SteelTheme
+  ModuleOverview _ _ -> MistTheme
+  DeclarationDetail _ _ _ -> DaylightTheme
+  TypeClassGrid -> MidnightTheme
 
 -- | Canonical state code for precise communication
 -- | See docs/kb/reference/ce2-state-machine-analysis.md for full naming system

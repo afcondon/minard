@@ -102,7 +102,7 @@ render state =
   in
   HH.div
     [ HP.class_ (HH.ClassName "declaration-detail-viz")
-    , HP.style "display: flex; width: 100%; height: 100%; background: #fafafa;"
+    , HP.style "display: flex; width: 100%; height: 100%;"
     ]
     [ -- Left panel: SVG bubble pack (target declaration highlighted)
       HH.div

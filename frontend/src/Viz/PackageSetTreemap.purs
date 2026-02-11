@@ -42,7 +42,7 @@ import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
 import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreemapConfig, squarify, phi)
 
 import CE2.Data.Loader (PackageSetPackage)
-import CE2.Types (CellContents(..), ViewTheme(..), themeColors, ColorMode)
+import CE2.Types (CellContents(..), ColorMode, ViewTheme, isDarkTheme, themeColors)
 
 -- =============================================================================
 -- Types
@@ -423,7 +423,7 @@ buildSVGTree config packageData enableHighlighting =
     , staticStr "viewBox" $ "0 0 " <> show config.width <> " " <> show config.height
     , staticStr "width" "100%"
     , staticStr "height" "100%"
-    , staticStr "style" $ "background: " <> colors.background <> "; display: block;"
+    , staticStr "style" "background: transparent; display: block;"
     , staticStr "preserveAspectRatio" "xMidYMid meet"
     , thunkedStr "data-infra-threshold" (show config.infraLayerThreshold)
     ]
@@ -451,9 +451,9 @@ packageGroupTree config (PackageRenderData d) =
     -- Use background color for rects - strokes create the grid pattern
     rectFill = colors.background
     -- Stronger stroke for blueprint grid effect
-    strokeColor = case config.theme of
-      BlueprintTheme -> "rgba(255, 255, 255, 0.6)"  -- Brighter white for blueprint
-      _ -> colors.stroke
+    strokeColor = if isDarkTheme config.theme
+      then "rgba(255, 255, 255, 0.6)"
+      else colors.stroke
 
     -- Rectangle element - may have click handler for navigating to package treemap
     rectElem = elem Rect
@@ -491,9 +491,9 @@ packageGroupTreeWithHighlighting config (PackageRenderData d) =
     -- Use background color for rects - strokes create the grid pattern
     rectFill = colors.background
     -- Stronger stroke for blueprint grid effect
-    strokeColor = case config.theme of
-      BlueprintTheme -> "rgba(255, 255, 255, 0.6)"  -- Brighter white for blueprint
-      _ -> colors.stroke
+    strokeColor = if isDarkTheme config.theme
+      then "rgba(255, 255, 255, 0.6)"
+      else colors.stroke
 
     -- Highlighting behavior — attached to cell content, not the group
     -- so hovering the rect background doesn't trigger highlighting

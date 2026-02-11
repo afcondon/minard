@@ -111,13 +111,13 @@ buildOverloadTree n =
     , staticStr "viewBox" "0 0 600 400"
     , staticStr "width" "100%"
     , staticStr "height" "100%"
-    , staticStr "style" "background: #1a2744;"
+    , staticStr "style" "background: transparent;"
     ]
     [ elem Text
         [ staticNum "x" 300.0
         , staticNum "y" 180.0
         , staticStr "text-anchor" "middle"
-        , staticStr "fill" "#ff6b6b"
+        , staticStr "fill" "#d63031"
         , staticStr "font-size" "24px"
         , staticStr "font-family" "system-ui, sans-serif"
         , staticStr "textContent" "⚠ Matrix Overload"
@@ -126,7 +126,7 @@ buildOverloadTree n =
         [ staticNum "x" 300.0
         , staticNum "y" 220.0
         , staticStr "text-anchor" "middle"
-        , staticStr "fill" "#aaa"
+        , staticStr "fill" "#555"
         , staticStr "font-size" "16px"
         , staticStr "font-family" "system-ui, sans-serif"
         , staticStr "textContent" $ show n <> " entities would create " <> show (n * n) <> " cells"
@@ -135,7 +135,7 @@ buildOverloadTree n =
         [ staticNum "x" 300.0
         , staticNum "y" 260.0
         , staticStr "text-anchor" "middle"
-        , staticStr "fill" "#888"
+        , staticStr "fill" "#777"
         , staticStr "font-size" "14px"
         , staticStr "font-family" "system-ui, sans-serif"
         , staticStr "textContent" $ "Maximum supported: " <> show maxEntities <> " entities (" <> show (maxEntities * maxEntities) <> " cells)"
@@ -161,8 +161,8 @@ buildMatrixTree config matrixLayout =
     gridOffsetY = defaultConfig.labelHeight + defaultConfig.labelMargin
 
     -- Matrix-mode colors (green on black) vs default (blue on dark)
-    bgColor = if config.matrixMode then "#000000" else "#1a2744"
-    strokeColor = if config.matrixMode then "#003300" else "#2a3754"
+    bgColor = if config.matrixMode then "#000000" else "transparent"
+    strokeColor = if config.matrixMode then "#003300" else "#ddd"
     labelColor = if config.matrixMode then "#00ff00" else "#333"
   in
     elem SVG
@@ -211,7 +211,7 @@ renderCell config cell =
       then if config.matrixMode then "#00ff00" else "#4a9eff"
       else "transparent"
     fillOpacity = if cell.value > 0.0 then 0.8 else 0.0
-    strokeColor = if config.matrixMode then "#003300" else "#2a3754"
+    strokeColor = if config.matrixMode then "#003300" else "#ddd"
   in
     elem Rect
       [ staticStr "class" "matrix-cell"
