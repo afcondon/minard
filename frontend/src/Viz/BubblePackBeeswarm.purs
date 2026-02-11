@@ -33,7 +33,7 @@ import Effect (Effect)
 import Effect.Class.Console (log)
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onMouseEnter, onMouseLeave, onClick)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onMouseEnter, onMouseLeave, onClick, onClickWithModifier)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Selection.Types (ElementType(..))
 import Hylograph.Simulation.HATS (tickUpdate)
@@ -81,7 +81,8 @@ type Config =
 
 -- | Callbacks for user interactions
 type Callbacks =
-  { onPackageClick :: String -> Effect Unit  -- Circle click: package name → neighborhood view
+  { onPackageClick :: String -> Effect Unit  -- Plain circle click: package name → drill in
+  , onPackageModifierClick :: String -> Effect Unit  -- Modifier+circle click: package name → focal filter
   , onPackageLabelClick :: String -> Effect Unit  -- Label click: package name → treemap view
   , onPackageHover :: Maybe String -> Effect Unit  -- Package name or Nothing
   , onModuleClick :: String -> String -> Effect Unit  -- Package name, Module name
@@ -528,8 +529,12 @@ packageNodeHATS callbacks node =
       , thunkedStr "data-name" node.name
       , staticStr "cursor" "pointer"
       ]
-      ( [ -- Package enclosing circle (click → neighborhood view)
-          withBehaviors [ onClick (callbacks.onPackageClick node.name) ]
+      ( [ -- Package enclosing circle
+          -- Plain click → drill into package, modifier+click → focal filter
+          withBehaviors [ onClickWithModifier
+                            (callbacks.onPackageClick node.name)
+                            (callbacks.onPackageModifierClick node.name)
+                        ]
           $ elem Circle
             [ staticStr "class" "package-circle"
             , staticStr "cx" "0"
