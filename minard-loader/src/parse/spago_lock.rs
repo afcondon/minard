@@ -222,6 +222,16 @@ impl SpagoLock {
         }
         None
     }
+
+    /// Get workspace package names with their file system paths.
+    /// Used by the pipeline to assign local modules to the correct workspace package.
+    pub fn workspace_package_paths(&self) -> Vec<(String, String)> {
+        self.workspace
+            .packages
+            .iter()
+            .map(|(name, ws_pkg)| (name.clone(), ws_pkg.path.clone()))
+            .collect()
+    }
 }
 
 /// Simplified package info for loading

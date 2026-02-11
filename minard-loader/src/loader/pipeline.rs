@@ -186,53 +186,18 @@ impl LoadPipeline {
         insert_package_dependencies(conn, &package_deps)?;
         stats.dependencies_loaded = package_deps.len();
 
-        // Create workspace package for local modules
-        // Use the spago package name (for dependency resolution) but keep path in description
-        let workspace_pkg_name = spago_lock
-            .root_workspace_name()
-            .unwrap_or_else(|| project_name.to_string());
-        let workspace_pkg_id = self.id_gen.next_package_id();
-        let workspace_pkg = PackageVersion {
-            id: workspace_pkg_id,
-            name: workspace_pkg_name.clone(),
-            version: "0.0.0".to_string(),
-            description: Some(format!("Workspace package at {}", project_name)),
-            license: None,
-            repository: None,
-            source: "workspace".to_string(),
-            // FFI stats will be populated by post-load phase
-            loc_ffi_js: None,
-            loc_ffi_erlang: None,
-            loc_ffi_python: None,
-            loc_ffi_lua: None,
-            ffi_file_count: None,
-        };
-        let workspace_id_map = insert_package_versions_with_ids(conn, &[workspace_pkg.clone()])?;
-        let workspace_pkg_id = *workspace_id_map
-            .get(&(workspace_pkg.name.clone(), workspace_pkg.version.clone()))
-            .unwrap_or(&workspace_pkg_id);
-
-        // Workspace packages are always "new" - we always load their modules
-        if !package_has_modules(conn, workspace_pkg_id)? {
-            packages_to_load.insert(workspace_pkg_id);
-            stats.packages_loaded += 1;
-        } else {
-            stats.packages_reused += 1;
+        // Build workspace path -> package_id map for module assignment
+        let mut workspace_pkg_ids: Vec<i64> = Vec::new();
+        let mut workspace_paths: Vec<(String, i64)> = Vec::new(); // (path_prefix, pkg_id)
+        for (ws_name, ws_path) in spago_lock.workspace_package_paths() {
+            if let Some(&pkg_id) = package_map.get(&ws_name) {
+                workspace_pkg_ids.push(pkg_id);
+                workspace_paths.push((ws_path, pkg_id));
+            }
         }
-
-        // Add dependencies for the workspace package (from spago.lock root package)
-        let ws_deps: Vec<PackageDependency> = spago_lock
-            .root_workspace_dependencies()
-            .into_iter()
-            .map(|dep_name| PackageDependency {
-                dependent_id: workspace_pkg_id,
-                dependency_name: dep_name,
-            })
-            .collect();
-        if !ws_deps.is_empty() {
-            insert_package_dependencies(conn, &ws_deps)?;
-            stats.dependencies_loaded += ws_deps.len();
-        }
+        // Sort by path length descending so longer (more specific) paths match first.
+        // A root workspace with path "." (1 char) sorts last as a catch-all.
+        workspace_paths.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
 
         // Create snapshot_packages with actual IDs
         let mut snapshot_packages = Vec::new();
@@ -242,31 +207,28 @@ impl LoadPipeline {
                     snapshot_id,
                     package_version_id: actual_id,
                     source: pkg.source.clone(),
-                    is_direct: false,
+                    is_direct: workspace_pkg_ids.contains(&actual_id),
                 });
             }
         }
 
-        // Link workspace package to snapshot
-        snapshot_packages.push(SnapshotPackage {
-            snapshot_id,
-            package_version_id: workspace_pkg_id,
-            source: "workspace".to_string(),
-            is_direct: true,
-        });
-
         insert_snapshot_packages(conn, &snapshot_packages)?;
 
-        // Phase 5: Parse docs.json files in parallel (only for workspace package)
+        // Phase 5: Parse docs.json files in parallel (for workspace packages)
         // Registry packages should be loaded from .spago cache, not output/
         progress.set_message("Parsing docs.json files...");
         progress.set_total(discovery.module_count() as u64);
 
         let parse_errors = Mutex::new(0usize);
 
-        // Only process if workspace package needs loading
+        // Only process if any workspace package needs loading
+        let any_workspace_needs_loading = workspace_pkg_ids
+            .iter()
+            .any(|id| packages_to_load.contains(id));
+
         // Filter to only load LOCAL modules (from src/) not dependency modules (from .spago/)
-        let parsed_modules: Vec<ParsedModule> = if packages_to_load.contains(&workspace_pkg_id) {
+        // Each local module is assigned to its workspace package by matching source paths
+        let parsed_modules: Vec<ParsedModule> = if any_workspace_needs_loading {
             let local_modules = Mutex::new(0usize);
             let dep_modules = Mutex::new(0usize);
 
@@ -276,7 +238,7 @@ impl LoadPipeline {
                 .filter_map(|docs_path| {
                     progress.inc(1);
 
-                    match self.parse_docs_json_if_local(docs_path, workspace_pkg_id) {
+                    match self.parse_docs_json_for_workspace(docs_path, &workspace_paths) {
                         Ok(Some(parsed)) => {
                             *local_modules.lock().unwrap() += 1;
                             Some(parsed)
@@ -307,7 +269,7 @@ impl LoadPipeline {
 
             result
         } else {
-            // Workspace already loaded, skip parsing
+            // All workspace packages already loaded, skip parsing
             stats.modules_reused = discovery.module_count();
             Vec::new()
         };
@@ -385,29 +347,36 @@ impl LoadPipeline {
         }
 
         // Phase 7: Post-load processing (imports, calls, git data)
+        // Process each workspace package separately
         progress.set_message("Extracting module imports...");
-        if let Ok(count) = insert_module_imports(conn, &discovery.output_dir, workspace_pkg_id) {
-            stats.module_imports_loaded = count;
+        for &ws_pkg_id in &workspace_pkg_ids {
+            if let Ok(count) = insert_module_imports(conn, &discovery.output_dir, ws_pkg_id) {
+                stats.module_imports_loaded += count;
+            }
         }
 
         progress.set_message("Extracting function calls...");
-        match insert_function_calls(conn, &discovery.output_dir, workspace_pkg_id) {
-            Ok(count) => stats.function_calls_loaded = count,
-            Err(e) if self.verbose => eprintln!("Warning: Failed to extract function calls: {}", e),
-            _ => {}
+        for &ws_pkg_id in &workspace_pkg_ids {
+            match insert_function_calls(conn, &discovery.output_dir, ws_pkg_id) {
+                Ok(count) => stats.function_calls_loaded += count,
+                Err(e) if self.verbose => eprintln!("Warning: Failed to extract function calls: {}", e),
+                _ => {}
+            }
         }
 
         // Phase 8: Git data collection
         progress.set_message("Collecting git data...");
-        match collect_git_data(
-            conn,
-            &discovery.project_path,
-            project_id,
-            workspace_pkg_id,
-        ) {
-            Ok((commits, _links)) => stats.commits_loaded = commits,
-            Err(e) if self.verbose => eprintln!("Warning: Failed to collect git data: {}", e),
-            _ => {}
+        for &ws_pkg_id in &workspace_pkg_ids {
+            match collect_git_data(
+                conn,
+                &discovery.project_path,
+                project_id,
+                ws_pkg_id,
+            ) {
+                Ok((commits, _links)) => stats.commits_loaded += commits,
+                Err(e) if self.verbose => eprintln!("Warning: Failed to collect git data: {}", e),
+                _ => {}
+            }
         }
 
         // Phase 8b: Scan FFI files for polyglot statistics
@@ -424,13 +393,18 @@ impl LoadPipeline {
                     ffi_stats.loc_lua
                 );
             }
-            let _ = update_package_ffi_stats(conn, workspace_pkg_id, &ffi_stats);
+            // FFI scan is project-wide; assign to first workspace package
+            if let Some(&first_ws_id) = workspace_pkg_ids.first() {
+                let _ = update_package_ffi_stats(conn, first_ws_id, &ffi_stats);
+            }
         }
 
         // Phase 9: Update metrics
         progress.set_message("Updating metrics...");
-        let _ = update_module_metrics(conn, workspace_pkg_id);
-        let _ = update_coupling_metrics(conn, workspace_pkg_id);
+        for &ws_pkg_id in &workspace_pkg_ids {
+            let _ = update_module_metrics(conn, ws_pkg_id);
+            let _ = update_coupling_metrics(conn, ws_pkg_id);
+        }
 
         // Phase 10: Compute topological layers
         progress.set_message("Computing topological layers...");
@@ -443,11 +417,12 @@ impl LoadPipeline {
         Ok(stats)
     }
 
-    /// Parse a single docs.json file, returning None if it's a dependency module
-    fn parse_docs_json_if_local(
+    /// Parse a single docs.json file, assigning it to the appropriate workspace package.
+    /// Returns None for dependency modules or if no workspace package matches.
+    fn parse_docs_json_for_workspace(
         &self,
         docs_path: &Path,
-        package_id: i64,
+        workspace_paths: &[(String, i64)],
     ) -> Result<Option<ParsedModule>> {
         let docs = DocsJson::from_path(docs_path)?;
 
@@ -456,7 +431,32 @@ impl LoadPipeline {
             return Ok(None);
         }
 
-        Ok(Some(self.parse_docs_json_inner(docs, docs_path, package_id)?))
+        // Match source path to the correct workspace package
+        let source_path = docs.get_source_path();
+        let pkg_id = source_path
+            .as_ref()
+            .and_then(|sp| {
+                workspace_paths
+                    .iter()
+                    .find(|(prefix, _)| {
+                        if prefix == "." || prefix == "./" {
+                            true // Root workspace matches all local modules
+                        } else {
+                            sp.starts_with(prefix)
+                                && sp
+                                    .as_bytes()
+                                    .get(prefix.len())
+                                    .map_or(true, |&b| b == b'/')
+                        }
+                    })
+                    .map(|(_, id)| *id)
+            })
+            .or_else(|| workspace_paths.first().map(|(_, id)| *id));
+
+        match pkg_id {
+            Some(id) => Ok(Some(self.parse_docs_json_inner(docs, docs_path, id)?)),
+            None => Ok(None),
+        }
     }
 
     /// Parse a single docs.json file (internal implementation)
