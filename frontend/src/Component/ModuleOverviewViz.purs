@@ -29,7 +29,7 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, kindColor, packDeclarations)
+import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, kindColor, childCircleElem, packDeclarations)
 
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
@@ -249,35 +249,76 @@ bubbleCircle input mListener decl =
       Just listener -> [ onClick (HS.notify listener (HandleDeclarationClick input.packageName input.moduleName decl.name)) ]
   in
   withBehaviors clickBehavior
-  $ elem Group
-    [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
-    , staticStr "cursor" "pointer"
-    , staticStr "class" "overview-decl-circle"
-    ]
-    [ elem Circle
-        [ staticStr "cx" "0"
-        , staticStr "cy" "0"
-        , thunkedNum "r" decl.r
-        , thunkedStr "fill" (kindColor decl.kind)
-        , staticStr "fill-opacity" "0.8"
-        , staticStr "stroke" "white"
-        , staticStr "stroke-width" "1"
+  $ if Array.null decl.children
+    then
+      -- Simple circle for childless declarations
+      elem Group
+        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
+        , staticStr "cursor" "pointer"
+        , staticStr "class" "overview-decl-circle"
         ]
-        []
-    , elem Text
-        [ staticStr "x" "0"
-        , staticStr "y" "0"
-        , staticStr "text-anchor" "middle"
-        , staticStr "dominant-baseline" "central"
-        , thunkedStr "font-size" (if decl.r > 15.0 then "8" else if decl.r > 10.0 then "6" else "0")
-        , staticStr "fill" "#fff"
-        , staticStr "font-family" "system-ui, sans-serif"
-        , staticStr "font-weight" "600"
-        , staticStr "pointer-events" "none"
-        , thunkedStr "textContent" (truncateBubbleLabel decl.r decl.name)
+        [ elem Circle
+            [ staticStr "cx" "0"
+            , staticStr "cy" "0"
+            , thunkedNum "r" decl.r
+            , thunkedStr "fill" (kindColor decl.kind)
+            , staticStr "fill-opacity" "0.8"
+            , staticStr "stroke" "white"
+            , staticStr "stroke-width" "1"
+            ]
+            []
+        , elem Text
+            [ staticStr "x" "0"
+            , staticStr "y" "0"
+            , staticStr "text-anchor" "middle"
+            , staticStr "dominant-baseline" "central"
+            , thunkedStr "font-size" (if decl.r > 15.0 then "8" else if decl.r > 10.0 then "6" else "0")
+            , staticStr "fill" "#fff"
+            , staticStr "font-family" "system-ui, sans-serif"
+            , staticStr "font-weight" "600"
+            , staticStr "pointer-events" "none"
+            , thunkedStr "textContent" (truncateBubbleLabel decl.r decl.name)
+            ]
+            []
         ]
-        []
-    ]
+    else
+      -- Group with outer ring and nested child circles
+      elem Group
+        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
+        , staticStr "class" "overview-decl-with-children"
+        , staticStr "cursor" "pointer"
+        ]
+        [ -- Outer circle (lighter container)
+          elem Circle
+            [ staticStr "cx" "0"
+            , staticStr "cy" "0"
+            , thunkedNum "r" decl.r
+            , thunkedStr "fill" (kindColor decl.kind)
+            , staticStr "fill-opacity" "0.3"
+            , thunkedStr "stroke" (kindColor decl.kind)
+            , staticStr "stroke-width" "1.5"
+            , staticStr "stroke-opacity" "0.8"
+            ]
+            []
+        -- Nested child circles
+        , elem Group
+            [ staticStr "class" "overview-children" ]
+            (map (childCircleElem decl.kind) decl.children)
+        -- Label
+        , elem Text
+            [ staticStr "x" "0"
+            , thunkedStr "y" (show (decl.r - 6.0))
+            , staticStr "text-anchor" "middle"
+            , staticStr "dominant-baseline" "central"
+            , thunkedStr "font-size" (if decl.r > 20.0 then "7" else if decl.r > 12.0 then "5" else "0")
+            , thunkedStr "fill" (kindColor decl.kind)
+            , staticStr "font-family" "system-ui, sans-serif"
+            , staticStr "font-weight" "600"
+            , staticStr "pointer-events" "none"
+            , thunkedStr "textContent" (truncateBubbleLabel decl.r decl.name)
+            ]
+            []
+        ]
 
 -- =============================================================================
 -- Utilities

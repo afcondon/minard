@@ -42,6 +42,7 @@ import Type.Proxy (Proxy(..))
 
 -- PSD3 Imports
 import Hylograph.Render (runD3, clear)
+import Hylograph.HATS.InterpreterTick (clearAllHighlights)
 
 -- Child visualization components (streamlined)
 import CE2.Component.BubblePackBeeswarmViz as BubblePackBeeswarmViz
@@ -844,8 +845,9 @@ handleAction = case _ of
     state <- H.get
     log $ "[SceneCoordinator] Navigating to: " <> show targetScene
 
-    -- Clear existing viz containers
+    -- Clear existing viz containers and dismiss any visible tooltips
     liftEffect clearAllVizContainers
+    liftEffect clearAllHighlights
 
     -- SolarSwarm is the "Project Packages" view - always start with ProjectOnly scope
     -- to show only workspace packages by default
@@ -875,8 +877,9 @@ handleAction = case _ of
 
     -- Skip if already at this scene with same viewMode
     when (state.scene /= targetScene || state.viewMode /= targetViewMode) do
-      -- Clear existing viz containers
+      -- Clear existing viz containers and dismiss any visible tooltips
       liftEffect clearAllVizContainers
+      liftEffect clearAllHighlights
 
       -- Determine appropriate scope for the scene
       let scopeForScene = case targetScene of

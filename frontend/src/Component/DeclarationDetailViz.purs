@@ -29,7 +29,7 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, kindColor, packDeclarations)
+import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, kindColor, childKindColor, childCircleElem, packDeclarations)
 
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
@@ -307,41 +307,84 @@ focusedBubbleCircle input mListener decl =
   let
     isFocused = decl.name == input.declarationName
     opacity = if isFocused then "0.9" else "0.25"
+    outerOpacity = if isFocused then "0.3" else "0.15"
     strokeColor = if isFocused then kindColor decl.kind else "white"
     strokeWidth = if isFocused then "2.5" else "0.5"
+    labelColor = if isFocused then "#fff" else "rgba(255,255,255,0.5)"
     clickBehavior = case mListener of
       Nothing -> []
       Just listener -> [ onClick (HS.notify listener (HandleDeclarationClick input.packageName input.moduleName decl.name)) ]
   in
   withBehaviors clickBehavior
-  $ elem Group
-    [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
-    , staticStr "cursor" "pointer"
-    ]
-    [ elem Circle
-        [ staticStr "cx" "0"
-        , staticStr "cy" "0"
-        , thunkedNum "r" decl.r
-        , thunkedStr "fill" (kindColor decl.kind)
-        , thunkedStr "fill-opacity" opacity
-        , thunkedStr "stroke" strokeColor
-        , thunkedStr "stroke-width" strokeWidth
+  $ if Array.null decl.children
+    then
+      -- Simple circle for childless declarations
+      elem Group
+        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
+        , staticStr "cursor" "pointer"
         ]
-        []
-    , elem Text
-        [ staticStr "x" "0"
-        , staticStr "y" "0"
-        , staticStr "text-anchor" "middle"
-        , staticStr "dominant-baseline" "central"
-        , thunkedStr "font-size" (if decl.r > 15.0 then "8" else if decl.r > 10.0 then "6" else "0")
-        , staticStr "fill" (if isFocused then "#fff" else "rgba(255,255,255,0.5)")
-        , staticStr "font-family" "system-ui, sans-serif"
-        , staticStr "font-weight" "600"
-        , staticStr "pointer-events" "none"
-        , thunkedStr "textContent" (truncateLabel decl.r decl.name)
+        [ elem Circle
+            [ staticStr "cx" "0"
+            , staticStr "cy" "0"
+            , thunkedNum "r" decl.r
+            , thunkedStr "fill" (kindColor decl.kind)
+            , thunkedStr "fill-opacity" opacity
+            , thunkedStr "stroke" strokeColor
+            , thunkedStr "stroke-width" strokeWidth
+            ]
+            []
+        , elem Text
+            [ staticStr "x" "0"
+            , staticStr "y" "0"
+            , staticStr "text-anchor" "middle"
+            , staticStr "dominant-baseline" "central"
+            , thunkedStr "font-size" (if decl.r > 15.0 then "8" else if decl.r > 10.0 then "6" else "0")
+            , thunkedStr "fill" labelColor
+            , staticStr "font-family" "system-ui, sans-serif"
+            , staticStr "font-weight" "600"
+            , staticStr "pointer-events" "none"
+            , thunkedStr "textContent" (truncateLabel decl.r decl.name)
+            ]
+            []
         ]
-        []
-    ]
+    else
+      -- Group with outer ring and nested child circles
+      elem Group
+        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
+        , staticStr "cursor" "pointer"
+        , staticStr "class" "detail-decl-with-children"
+        ]
+        [ -- Outer circle (lighter container)
+          elem Circle
+            [ staticStr "cx" "0"
+            , staticStr "cy" "0"
+            , thunkedNum "r" decl.r
+            , thunkedStr "fill" (kindColor decl.kind)
+            , thunkedStr "fill-opacity" outerOpacity
+            , thunkedStr "stroke" strokeColor
+            , thunkedStr "stroke-width" strokeWidth
+            , staticStr "stroke-opacity" "0.8"
+            ]
+            []
+        -- Nested child circles
+        , elem Group
+            [ staticStr "class" "detail-children" ]
+            (map (childCircleElem decl.kind) decl.children)
+        -- Label near the bottom
+        , elem Text
+            [ staticStr "x" "0"
+            , thunkedStr "y" (show (decl.r - 6.0))
+            , staticStr "text-anchor" "middle"
+            , staticStr "dominant-baseline" "central"
+            , thunkedStr "font-size" (if decl.r > 20.0 then "7" else if decl.r > 12.0 then "5" else "0")
+            , thunkedStr "fill" (kindColor decl.kind)
+            , staticStr "font-family" "system-ui, sans-serif"
+            , staticStr "font-weight" "600"
+            , staticStr "pointer-events" "none"
+            , thunkedStr "textContent" (truncateLabel decl.r decl.name)
+            ]
+            []
+        ]
 
 -- =============================================================================
 -- Utilities
@@ -364,20 +407,6 @@ childKindLabel = case _ of
   "newtype"    -> "Constructors"
   "type_class" -> "Members"
   _            -> "Children"
-
-childKindColor :: String -> String -> String
-childKindColor parentKind childKind = case childKind of
-  "constructor"  -> darkenColor (kindColor parentKind)
-  "class_member" -> "#ff9f43"
-  "instance"     -> "#ffeaa7"
-  _              -> kindColor parentKind
-
-darkenColor :: String -> String
-darkenColor color = case color of
-  "#59a14f" -> "#3d7a36"
-  "#76b7b2" -> "#5a9994"
-  "#f28e2b" -> "#d97706"
-  _         -> color
 
 truncateLabel :: Number -> String -> String
 truncateLabel r name =

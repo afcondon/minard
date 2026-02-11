@@ -20,6 +20,8 @@ module CE2.Viz.ModuleTreemapEnriched
   , render
   , cleanup
   , kindColor
+  , childKindColor
+  , childCircleElem
   , packDeclarations
   , shortModuleName
   ) where
