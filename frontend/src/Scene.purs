@@ -1,15 +1,18 @@
--- | Scene-Based Navigation (Streamlined)
+-- | Scene-Based Navigation
 -- |
--- | Clean state machine for "YouTube teaser" navigation path.
--- | Linear exploration with optional overlays.
+-- | Clean state machine with breadcrumb navigation.
+-- | Drill-in interaction with modifier+click for filtering.
 -- |
 -- | Navigation path:
--- |   GalaxyTreemap → GalaxyBeeswarm → SolarSwarm → PkgTreemap → PkgModuleBeeswarm
+-- |   GalaxyTreemap → PkgTreemap → ModuleOverview → DeclarationDetail
 -- |   (with focalPackage as filter on SolarSwarm, not a separate scene)
 module CE2.Scene
   ( Scene(..)
+  , BreadcrumbSegment
   , parentScene
+  , sceneBreadcrumbs
   , sceneLabel
+  , shortModuleName
   , isGalaxyScene
   , isSolarScene
   , isPackageScene
@@ -25,9 +28,6 @@ import Data.Maybe (Maybe(..))
 import Data.String as String
 
 -- | Scene type representing distinct visualization states
--- |
--- | 6 scenes for streamlined teaser navigation.
--- | Note: PkgNeighborhood was merged into SolarSwarm (focalPackage filter).
 data Scene
   = GalaxyTreemap                   -- Entry: blueprint treemap of full registry
   | GalaxyBeeswarm                  -- Topo beeswarm with scope filtering
@@ -36,7 +36,6 @@ data Scene
   | PkgModuleBeeswarm String        -- Module beeswarm overlay on treemap
   | ModuleOverview String String    -- Module overview: bubble pack + declaration listing (pkg, module)
   | DeclarationDetail String String String  -- Single declaration detail (pkg, module, decl)
-  | OverlayChordMatrix              -- Optional chord/matrix overlay (toggled)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
 
 derive instance eqScene :: Eq Scene
@@ -49,18 +48,9 @@ instance showScene :: Show Scene where
   show (PkgModuleBeeswarm pkg) = "PkgModuleBeeswarm(" <> pkg <> ")"
   show (ModuleOverview pkg mod) = "ModuleOverview(" <> pkg <> "," <> mod <> ")"
   show (DeclarationDetail pkg mod decl) = "DeclarationDetail(" <> pkg <> "," <> mod <> "," <> decl <> ")"
-  show OverlayChordMatrix = "OverlayChordMatrix"
   show TypeClassGrid = "TypeClassGrid"
 
 -- | Get the parent scene for back navigation
--- |
--- | Linear navigation path (instant jumps back):
--- |   GalaxyTreemap → GalaxyTreemap (root)
--- |   GalaxyBeeswarm → GalaxyTreemap
--- |   SolarSwarm → GalaxyBeeswarm
--- |   PkgTreemap → SolarSwarm
--- |   PkgModuleBeeswarm → PkgTreemap (same package)
--- |   OverlayChordMatrix → SolarSwarm (overlay returns to context)
 parentScene :: Scene -> Scene
 parentScene = case _ of
   GalaxyTreemap -> GalaxyTreemap           -- Root - no parent
@@ -70,8 +60,28 @@ parentScene = case _ of
   PkgModuleBeeswarm pkg -> PkgTreemap pkg  -- Back to same package's treemap
   ModuleOverview pkg _ -> PkgTreemap pkg   -- Back to package treemap
   DeclarationDetail pkg mod _ -> ModuleOverview pkg mod  -- Back to module overview
-  OverlayChordMatrix -> SolarSwarm         -- Overlay closes back to SolarSwarm
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
+
+-- | A segment in the breadcrumb trail
+type BreadcrumbSegment = { label :: String, scene :: Scene }
+
+-- | Build breadcrumb trail for a scene
+-- | The last segment is the current scene (displayed bold, not clickable).
+-- | Earlier segments are clickable navigation targets.
+sceneBreadcrumbs :: Scene -> Array BreadcrumbSegment
+sceneBreadcrumbs = case _ of
+  GalaxyTreemap       -> [reg]
+  GalaxyBeeswarm      -> [reg]
+  TypeClassGrid       -> [reg]
+  SolarSwarm          -> [reg, { label: "Packages", scene: SolarSwarm }]
+  PkgTreemap pkg      -> [reg, { label: pkg, scene: PkgTreemap pkg }]
+  PkgModuleBeeswarm p -> [reg, { label: p, scene: PkgTreemap p }]
+  ModuleOverview p m  -> [reg, { label: p, scene: PkgTreemap p }
+                              , { label: shortModuleName m, scene: ModuleOverview p m }]
+  DeclarationDetail p m d -> [reg, { label: p, scene: PkgTreemap p }
+                                  , { label: shortModuleName m, scene: ModuleOverview p m }
+                                  , { label: d, scene: DeclarationDetail p m d }]
+  where reg = { label: "Registry", scene: GalaxyTreemap }
 
 -- | Human-readable label for display in navigation UI
 sceneLabel :: Scene -> String
@@ -83,7 +93,6 @@ sceneLabel = case _ of
   PkgModuleBeeswarm pkg -> pkg <> " Module Flow"
   ModuleOverview _ mod -> shortModuleName mod
   DeclarationDetail _ _ decl -> decl
-  OverlayChordMatrix -> "Dependency Matrix"
   TypeClassGrid -> "Type Classes"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
@@ -95,7 +104,6 @@ isGalaxyScene _ = false
 -- | Check if scene is at the Solar level (project scope)
 isSolarScene :: Scene -> Boolean
 isSolarScene SolarSwarm = true
-isSolarScene OverlayChordMatrix = true     -- Overlay is at Solar level
 isSolarScene _ = false
 
 -- | Check if scene is at the Package level
@@ -122,7 +130,6 @@ sceneFromString str
   | str == "GalaxyTreemap" = Just GalaxyTreemap
   | str == "GalaxyBeeswarm" = Just GalaxyBeeswarm
   | str == "SolarSwarm" = Just SolarSwarm
-  | str == "OverlayChordMatrix" = Just OverlayChordMatrix
   | str == "TypeClassGrid" = Just TypeClassGrid
   | String.take 11 str == "PkgTreemap(" =
       let inner = String.drop 11 str

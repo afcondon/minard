@@ -53,7 +53,7 @@ import CE2.Component.SlideOutPanel as SlideOutPanel
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Scene (Scene(..), parentScene, sceneLabel, sceneToString, sceneFromString)
+import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
 import CE2.Viz.PackageSetTreemap as PackageSetTreemap
 import CE2.Viz.ModuleTreemap as ModuleTreemap
 import CE2.Viz.ModuleBeeswarm as ModuleBeeswarm
@@ -65,9 +65,23 @@ import CE2.Viz.DependencyAdjacency as DependencyAdjacency
 import CE2.Types (projectPackages, CellContents(..), ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, PackageGitStatus)
 
 -- FFI declarations for browser history integration
-foreign import pushHistoryState :: String -> Effect Unit
-foreign import replaceHistoryState :: String -> Effect Unit
-foreign import setupPopstateListener :: (String -> Effect Unit) -> Effect (Effect Unit)
+foreign import pushHistoryState :: String -> String -> Effect Unit
+foreign import replaceHistoryState :: String -> String -> Effect Unit
+foreign import setupPopstateListener :: (String -> String -> Effect Unit) -> Effect (Effect Unit)
+
+-- | Serialize ViewMode to string for browser history
+viewModeToString :: ViewMode -> String
+viewModeToString = case _ of
+  PrimaryView -> "primary"
+  MatrixView -> "matrix"
+  ChordView -> "chord"
+
+-- | Deserialize ViewMode from string
+viewModeFromString :: String -> ViewMode
+viewModeFromString = case _ of
+  "matrix" -> MatrixView
+  "chord" -> ChordView
+  _ -> PrimaryView
 
 -- =============================================================================
 -- Types
@@ -165,7 +179,6 @@ instance showViewMode :: Show ViewMode where
 type State =
   { -- Current scene
     scene :: Scene
-  , previousScene :: Maybe Scene      -- For edge cases, replaces navStack
 
     -- Data from parent (immutable)
   , modelData :: Maybe Loader.LoadedModel
@@ -225,9 +238,7 @@ data Action
   = Initialize
   | Receive Input
   | NavigateTo Scene
-  | NavigateBack
-  | NavigateForward                   -- "+" button for next level of detail
-  | HandlePopstate Scene              -- Browser back/forward button pressed
+  | HandlePopstate Scene ViewMode     -- Browser back/forward button pressed
   | HandleBubblePackBeeswarmOutput BubblePackBeeswarmViz.Output
   | HandleGalaxyBeeswarmOutput GalaxyBeeswarmViz.Output
   | HandleModuleTreemapOutput ModuleTreemapEnrichedViz.Output
@@ -239,8 +250,7 @@ data Action
   | HandleSlideOutPanelOutput SlideOutPanel.Output
   | OpenModulePanel String String         -- packageName, moduleName
   | OpenPackagePanel String               -- packageName - opens panel with first module
-  | TreemapCellClicked String             -- Package name clicked in treemap
-  | GalaxyTreemapCircleClicked String     -- Circle click in GalaxyTreemap → SolarSwarm
+  | GalaxyTreemapCircleClicked String     -- Circle click in GalaxyTreemap → drill in
   | GalaxyTreemapRectClicked String       -- Rect click in GalaxyTreemap → PkgTreemap
   | ToggleGitMode                         -- Toggle between GitStatus color mode and previous mode
 
@@ -264,7 +274,6 @@ component =
 initialState :: Input -> State
 initialState input =
   { scene: input.initialScene
-  , previousScene: Nothing
   , modelData: input.modelData
   , v2Data: input.v2Data
   , packageSetData: input.packageSetData
@@ -301,11 +310,8 @@ render state =
     -- Note: MUST use height: 100vh (not min-height) for flex-grow to work with the child's height: 0 pattern
     , HP.style $ "display: flex; flex-direction: column; height: 100vh; background: " <> colors.background <> "; transition: background 0.5s ease;"
     ]
-    [ -- Header bar (thin, info-dense)
+    [ -- Header bar with breadcrumb navigation
       renderHeaderBar state
-
-      -- 3-color tab strip (between header and viz)
-    , renderColorTabStrip state
 
       -- Scene-specific visualization (fills remaining space)
       -- Note: height: 0 + flex: 1 allows flex-grow to work properly with children that use height: 100%
@@ -324,37 +330,6 @@ render state =
         { initiallyOpen: false }
         HandleSlideOutPanelOutput
     ]
-
--- | Determine which depth level the current scene is at
--- | 0 = Galaxy (registry overview), 1 = Solar System (package details), 2 = Module (code level)
-sceneDepthLevel :: Scene -> Int
-sceneDepthLevel = case _ of
-  GalaxyTreemap -> 0
-  GalaxyBeeswarm -> 0
-  SolarSwarm -> 1
-  PkgTreemap _ -> 2
-  PkgModuleBeeswarm _ -> 2
-  ModuleOverview _ _ -> 3
-  DeclarationDetail _ _ _ -> 3
-  OverlayChordMatrix -> 1
-  TypeClassGrid -> 0  -- Type class view is at galaxy level
-
--- | Check if we can navigate back (not at root)
-canGoBack :: Scene -> Boolean
-canGoBack GalaxyTreemap = false
-canGoBack scene = parentScene scene /= scene
-
--- | Check if we can navigate forward (deeper detail available)
-canGoForward :: Scene -> Boolean
-canGoForward GalaxyTreemap = true      -- → Beeswarm
-canGoForward GalaxyBeeswarm = true     -- → SolarSwarm
-canGoForward SolarSwarm = true         -- → PkgTreemap (if focal set)
-canGoForward (PkgTreemap _) = true     -- → PkgModuleBeeswarm
-canGoForward (PkgModuleBeeswarm _) = false  -- End of path
-canGoForward (ModuleOverview _ _) = false
-canGoForward (DeclarationDetail _ _ _) = false
-canGoForward OverlayChordMatrix = false
-canGoForward TypeClassGrid = false     -- Standalone view, no forward navigation
 
 -- | Check if scene is a package treemap
 isPackageTreemap :: Scene -> Boolean
@@ -377,13 +352,81 @@ gitButtonStyle colorMode textColor =
     <> "color: " <> (if isActive then "#fff" else textColor) <> "; "
     <> "cursor: pointer; font-size: 9px; padding: 2px 6px; border-radius: 3px; margin-left: 4px;"
 
--- | Render the header bar (editorial beige style with Courier typography)
+-- | Render the header bar with breadcrumb navigation
 renderHeaderBar :: forall m. State -> H.ComponentHTML Action Slots m
 renderHeaderBar state =
   let
-    -- Consistent beige header regardless of scene theme
     textColor = "#333333"
     bgColor = "#D4C9A8"
+    crumbs = sceneBreadcrumbs state.scene
+    lastIdx = Array.length crumbs - 1
+
+    -- Render a single breadcrumb segment
+    renderSegment :: Int -> BreadcrumbSegment -> Array (H.ComponentHTML Action Slots m)
+    renderSegment idx seg =
+      let
+        isFinal = idx == lastIdx
+        separator = if idx > 0
+          then [ HH.span
+                   [ HP.style "margin: 0 6px; opacity: 0.5;" ]
+                   [ HH.text "›" ] ]
+          else []
+        label =
+          if isFinal
+            then
+              HH.span
+                [ HP.style "font-weight: bold;" ]
+                [ HH.text seg.label ]
+            else
+              HH.span
+                [ HE.onClick \_ -> NavigateTo seg.scene
+                , HP.style "cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: rgba(0,0,0,0.3);"
+                ]
+                [ HH.text seg.label ]
+      in separator <> [label]
+
+    -- Registry-level view toggles (shown when first crumb is active = galaxy-level scene)
+    isGalaxyLevel = case state.scene of
+      GalaxyTreemap -> true
+      GalaxyBeeswarm -> true
+      TypeClassGrid -> true
+      _ -> false
+
+    viewToggleStyle scene =
+      let isActive = state.scene == scene
+      in "cursor: pointer; padding: 1px 4px; border-radius: 2px; font-size: 10px; "
+        <> if isActive
+             then "font-weight: bold; background: rgba(0,0,0,0.1);"
+             else "opacity: 0.6;"
+
+    registryViewToggles =
+      if isGalaxyLevel
+        then
+          [ HH.span
+              [ HP.style "margin-left: 6px; display: inline-flex; gap: 2px; font-size: 10px;" ]
+              [ HH.span [ HP.style "opacity: 0.4;" ] [ HH.text "[" ]
+              , HH.span
+                  [ HE.onClick \_ -> NavigateTo GalaxyTreemap
+                  , HP.style $ viewToggleStyle GalaxyTreemap
+                  ]
+                  [ HH.text "treemap" ]
+              , HH.span [ HP.style "opacity: 0.3;" ] [ HH.text "·" ]
+              , HH.span
+                  [ HE.onClick \_ -> NavigateTo GalaxyBeeswarm
+                  , HP.style $ viewToggleStyle GalaxyBeeswarm
+                  ]
+                  [ HH.text "beeswarm" ]
+              , HH.span [ HP.style "opacity: 0.3;" ] [ HH.text "·" ]
+              , HH.span
+                  [ HE.onClick \_ -> NavigateTo TypeClassGrid
+                  , HP.style $ viewToggleStyle TypeClassGrid
+                  ]
+                  [ HH.text "types" ]
+              , HH.span [ HP.style "opacity: 0.4;" ] [ HH.text "]" ]
+              ]
+          ]
+        else []
+
   in HH.div
     [ HP.class_ (HH.ClassName "scene-header-bar")
     , HP.style $ "height: 36px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; "
@@ -391,95 +434,29 @@ renderHeaderBar state =
         <> "font-family: 'Courier New', Courier, monospace; font-size: 11px; "
         <> "border-bottom: 1px solid #999;"
     ]
-    [ -- Left: Back button + Minard branding + Scene name
+    [ -- Left: Branding + Breadcrumbs
       HH.div
-        [ HP.style "display: flex; align-items: center; gap: 12px;" ]
-        [ -- Back button
-          if canGoBack state.scene
-            then HH.button
-              [ HE.onClick \_ -> NavigateBack
-              , HP.style $ "background: none; border: none; color: " <> textColor <> "; cursor: pointer; font-size: 14px; padding: 4px 8px;"
-              ]
-              [ HH.text "←" ]
-            else HH.text ""
-        -- Minard branding
-        , HH.span
-            [ HP.style "font-weight: bold; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;" ]
-            [ HH.text "MINARD" ]
-        -- Scene label
-        , HH.span
-            [ HP.style "font-size: 10px;" ]
-            [ HH.text $ "» " <> sceneLabel state.scene ]
-        -- State code (tiny, for debugging)
-        , HH.span
-            [ HP.style "font-size: 9px; opacity: 0.6;" ]
-            [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
-        -- Type Classes button
-        , HH.button
-            [ HE.onClick \_ -> NavigateTo TypeClassGrid
-            , HP.style $ "background: none; border: 1px solid " <> textColor <> "; color: " <> textColor <> "; cursor: pointer; font-size: 9px; padding: 2px 6px; border-radius: 3px; margin-left: 8px;"
-            ]
-            [ HH.text "TC" ]
-        -- Git status button (toggles GitStatus color mode)
-        , HH.button
+        [ HP.style "display: flex; align-items: center; gap: 8px;" ]
+        ( [ HH.span
+              [ HP.style "font-weight: bold; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; margin-right: 8px;" ]
+              [ HH.text "MINARD" ]
+          ]
+          <> Array.concat (Array.mapWithIndex renderSegment crumbs)
+          <> registryViewToggles
+        )
+
+      -- Right: Git toggle + state code (debug)
+    , HH.div
+        [ HP.style "display: flex; align-items: center; gap: 8px;" ]
+        [ HH.button
             [ HE.onClick \_ -> ToggleGitMode
             , HP.style $ gitButtonStyle state.colorMode textColor
             ]
             [ HH.text "Git" ]
+        , HH.span
+            [ HP.style "font-size: 9px; opacity: 0.6;" ]
+            [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
         ]
-
-      -- Center: Count info
-    , HH.div
-        [ HP.style "display: flex; align-items: center; gap: 8px; font-size: 10px;" ]
-        [ renderHeaderCounts state ]
-
-      -- Right: Forward/detail button + scope indicator
-    , HH.div
-        [ HP.style "display: flex; align-items: center; gap: 12px;" ]
-        [ -- Scope indicator (if applicable)
-          if state.scene == GalaxyBeeswarm || state.scene == SolarSwarm
-            then HH.span
-              [ HP.style "font-size: 9px; text-transform: uppercase;" ]
-              [ HH.text $ "scope: " <> scopeName state.scope ]
-            else HH.text ""
-          -- Forward button
-        , if canGoForward state.scene
-            then HH.button
-              [ HE.onClick \_ -> NavigateForward
-              , HP.style $ "background: none; border: none; color: " <> textColor <> "; cursor: pointer; font-size: 14px; padding: 4px 8px;"
-              ]
-              [ HH.text "→" ]
-            else HH.text ""
-        ]
-    ]
-
--- | Render the 3-color tab strip (thin horizontal band between header and viz)
--- | The colors correspond to the three zoom levels (Galaxy/Solar/Module)
--- | Current level's color will visually blend with the background
-renderColorTabStrip :: forall m. State -> H.ComponentHTML Action Slots m
-renderColorTabStrip state =
-  let
-    currentLevel = sceneDepthLevel state.scene
-    -- Map depth 3 (declaration detail) to depth 2 (module) for tab display
-    tabLevel = min currentLevel 2
-    -- Heights: current level slightly taller to create "tab" effect
-    segmentHeight level = if level == tabLevel then "5px" else "3px"
-  in HH.div
-    [ HP.class_ (HH.ClassName "color-tab-strip")
-    , HP.style "display: flex; width: 100%;"
-    ]
-    [ -- Galaxy segment (blue)
-      HH.div
-        [ HP.style $ "flex: 1; height: " <> segmentHeight 0 <> "; background: #0E4C8A; transition: height 0.3s ease;" ]
-        []
-    -- Solar segment (beige)
-    , HH.div
-        [ HP.style $ "flex: 1; height: " <> segmentHeight 1 <> "; background: #F5F0E6; transition: height 0.3s ease;" ]
-        []
-    -- Module segment (paperwhite)
-    , HH.div
-        [ HP.style $ "flex: 1; height: " <> segmentHeight 2 <> "; background: #FAFAFA; transition: height 0.3s ease;" ]
-        []
     ]
 
 -- | Render the footer bar (persistent, shows stats and selection info)
@@ -510,63 +487,6 @@ renderFooterBar state =
         [ HP.style "display: flex; align-items: center; gap: 8px;" ]
         [ renderFooterControls state ]
     ]
-
--- | Header counts based on scene
-renderHeaderCounts :: forall m. State -> H.ComponentHTML Action Slots m
-renderHeaderCounts state = case state.scene of
-  GalaxyTreemap ->
-    case state.packageSetData of
-      Just psData -> HH.span_
-        [ HH.text $ show (Array.length psData.packages) <> " packages" ]
-      Nothing -> HH.text "Loading..."
-
-  GalaxyBeeswarm ->
-    case state.packageSetData of
-      Just psData ->
-        let visibleCount = countVisiblePackages state.scope psData.packages
-        in HH.span_
-          [ HH.text $ show visibleCount <> " / " <> show (Array.length psData.packages) <> " packages" ]
-      Nothing -> HH.text "Loading..."
-
-  SolarSwarm ->
-    case state.modelData of
-      Just model -> HH.span_
-        [ HH.text $ show model.packageCount <> " pkgs • " <> show model.moduleCount <> " modules" ]
-      Nothing -> HH.text "Loading..."
-
-  PkgTreemap pkg ->
-    case state.v2Data of
-      Just v2 ->
-        let moduleCount = Array.length $ Array.filter (\m -> m.package.name == pkg) v2.modules
-        in HH.span_
-          [ HH.text $ pkg <> " • " <> show moduleCount <> " modules" ]
-      Nothing -> HH.text "Loading..."
-
-  PkgModuleBeeswarm pkg ->
-    case state.v2Data of
-      Just v2 ->
-        let moduleCount = Array.length $ Array.filter (\m -> m.package.name == pkg) v2.modules
-        in HH.span_
-          [ HH.text $ pkg <> " • " <> show moduleCount <> " modules (flow)" ]
-      Nothing -> HH.text "Loading..."
-
-  ModuleOverview pkg modName ->
-    let declCount = findModuleDeclCount state pkg modName
-    in HH.span_
-      [ HH.text $ modName <> " • " <> show declCount <> " declarations" ]
-
-  DeclarationDetail _ modName declName ->
-    HH.span_
-      [ HH.text $ modName <> " » " <> declName ]
-
-  OverlayChordMatrix ->
-    HH.span_ [ HH.text "Dependency overlay" ]
-
-  TypeClassGrid ->
-    case state.typeClassStats of
-      Just stats -> HH.span_
-        [ HH.text $ show stats.count <> " type classes" ]
-      Nothing -> HH.text "Loading..."
 
 -- | Footer stats (total counts)
 renderFooterStats :: forall m. State -> H.ComponentHTML Action Slots m
@@ -661,14 +581,6 @@ renderFooterControls state =
             [ HH.text "Matrix" ]
         ]
       else HH.text ""
-
--- | Scope name for display
-scopeName :: BeeswarmScope -> String
-scopeName = case _ of
-  AllPackages -> "all"
-  ProjectOnly -> "project"
-  ProjectWithDeps -> "+deps"
-  ProjectWithTransitive -> "+transitive"
 
 -- | Render the current scene using child component slots
 -- | Streamlined to 6 scenes for teaser navigation
@@ -858,12 +770,6 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading declaration data..." ]
 
-  OverlayChordMatrix ->
-    -- Chord/Matrix overlay (toggle during SolarSwarm)
-    HH.div
-      [ HP.class_ (HH.ClassName "overlay-placeholder") ]
-      [ HH.text "Dependency matrix overlay - Coming soon" ]
-
   TypeClassGrid ->
     -- Type class grid visualization
     HH.div
@@ -891,15 +797,15 @@ handleAction = case _ of
     state <- H.get
 
     -- Replace current history state with initial scene (so back works from start)
-    liftEffect $ replaceHistoryState (sceneToString state.scene)
+    liftEffect $ replaceHistoryState (sceneToString state.scene) (viewModeToString state.viewMode)
 
     -- Set up popstate listener for back/forward navigation
     { emitter: historyEmitter, listener: historyListener } <- liftEffect HS.create
     void $ H.subscribe historyEmitter
 
-    cleanup <- liftEffect $ setupPopstateListener \sceneStr -> do
+    cleanup <- liftEffect $ setupPopstateListener \sceneStr viewModeStr -> do
       case sceneFromString sceneStr of
-        Just scene -> HS.notify historyListener (HandlePopstate scene)
+        Just scene -> HS.notify historyListener (HandlePopstate scene (viewModeFromString viewModeStr))
         Nothing -> pure unit
 
     H.modify_ _ { historyCleanup = Just cleanup }
@@ -949,130 +855,26 @@ handleAction = case _ of
 
     H.modify_ _
       { scene = targetScene
-      , previousScene = Just state.scene
       , viewMode = PrimaryView  -- Reset view mode on scene change
       , scope = scopeForScene
       }
 
     -- Push to browser history (enables back/forward buttons)
-    liftEffect $ pushHistoryState (sceneToString targetScene)
+    -- ViewMode resets to PrimaryView on scene change
+    liftEffect $ pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
 
     H.raise (SceneChanged targetScene)
     newState <- H.get
     prepareSceneData newState
 
-  NavigateBack -> do
-    state <- H.get
-    let parent = parentScene state.scene
-
-    when (parent /= state.scene) do
-      log $ "[SceneCoordinator] Navigating back to: " <> show parent
-
-      liftEffect clearAllVizContainers
-
-      -- Reset scope to AllPackages when leaving SolarSwarm (going back to GalaxyBeeswarm)
-      -- This ensures the beeswarm shows all packages again
-      let scopeForParent = case state.scene of
-            SolarSwarm -> AllPackages
-            _ -> state.scope
-
-      -- Clear transition state and focal package when going back
-      -- This prevents stale positions from affecting the re-render
-      H.modify_ _
-        { scene = parent
-        , previousScene = Just state.scene
-        , viewMode = PrimaryView  -- Reset view mode on scene change
-        , capturedPositions = Nothing  -- Clear stale positions
-        , focalPackage = Nothing  -- Clear focal when leaving SolarSwarm
-        , scope = scopeForParent  -- Reset scope when leaving SolarSwarm
-        }
-
-      -- Push to browser history (enables forward button after clicking ←)
-      liftEffect $ pushHistoryState (sceneToString parent)
-
-      H.raise (SceneChanged parent)
-      newState <- H.get
-      prepareSceneData newState
-
-  NavigateForward -> do
-    state <- H.get
-    case state.scene of
-      GalaxyTreemap -> do
-        -- Capture treemap cell positions for hero transition
-        log "[SceneCoordinator] Capturing treemap positions for transition"
-        case state.packageSetData of
-          Just psData -> do
-            let theme = themeForScene state.scene
-                config :: PackageSetTreemap.Config
-                config =
-                  { containerSelector: C.galaxyTreemapContainer
-                  , width: 1650.0
-                  , height: 900.0
-                  , projectPackages: Set.fromFoldable projectPackages
-                  , transitivePackages: computeTransitivePackages psData.packages
-                  , theme: theme
-                  , cellContents: CellCircle
-                  , onRectClick: Nothing   -- Position capture only, no click handling
-                  , onCircleClick: Nothing
-                  }
-                positions = PackageSetTreemap.computeCellPositions config psData.packages
-            log $ "[SceneCoordinator] Captured " <> show (Array.length positions) <> " positions"
-            H.modify_ _ { capturedPositions = Just positions }
-          Nothing -> do
-            log "[SceneCoordinator] No package data available for positions"
-        handleAction (NavigateTo GalaxyBeeswarm)
-
-      GalaxyBeeswarm -> do
-        -- Capture beeswarm positions for SolarSwarm transition via Query
-        log "[SceneCoordinator] Capturing beeswarm positions for SolarSwarm transition"
-        mPositions <- H.request _galaxyBeeswarmViz unit GalaxyBeeswarmViz.GetPositions
-        case mPositions of
-          Just positions -> do
-            log $ "[SceneCoordinator] Captured " <> show (Array.length positions) <> " positions from beeswarm"
-            H.modify_ _ { capturedPositions = Just positions }
-          Nothing -> do
-            log "[SceneCoordinator] Failed to get beeswarm positions via Query"
-        handleAction (NavigateTo SolarSwarm)
-
-      SolarSwarm -> do
-        -- Navigate to package module detail for focal package (if set)
-        -- Small packages (<200 modules): bubblepack view (force-directed circles)
-        -- Large packages (≥200 modules): treemap + beeswarm overlay
-        -- Both skip the standalone treemap (E) - go straight to the combined view
-        case state.focalPackage of
-          Just pkg -> do
-            let moduleCount = case state.v2Data of
-                  Just v2 -> Array.length $ Array.filter (\m -> m.package.name == pkg) v2.modules
-                  Nothing -> 0
-            H.modify_ _ { capturedPositions = Nothing }
-            if moduleCount < smallPackageThreshold
-              then do
-                log $ "[SceneCoordinator] Small package (" <> show moduleCount <> " modules) → bubblepack"
-                -- TODO: Navigate to module bubblepack view
-                -- For now, use PkgModuleBeeswarm which will need to adapt
-                handleAction (NavigateTo (PkgModuleBeeswarm pkg))
-              else do
-                log $ "[SceneCoordinator] Large package (" <> show moduleCount <> " modules) → treemap+beeswarm"
-                handleAction (NavigateTo (PkgModuleBeeswarm pkg))
-          Nothing -> do
-            log "[SceneCoordinator] No focal package set, cannot navigate forward"
-            pure unit
-
-      PkgTreemap pkg -> do
-        -- E is now mostly skipped, but if reached, go to F
-        H.modify_ _ { capturedPositions = Nothing }
-        handleAction (NavigateTo (PkgModuleBeeswarm pkg))
-
-      _ -> pure unit
-
   -- Browser back/forward button navigation
   -- Navigate to the scene without pushing to history (it's already there)
-  HandlePopstate targetScene -> do
+  HandlePopstate targetScene targetViewMode -> do
     state <- H.get
-    log $ "[SceneCoordinator] Popstate navigation to: " <> show targetScene
+    log $ "[SceneCoordinator] Popstate navigation to: " <> show targetScene <> " viewMode=" <> show targetViewMode
 
-    -- Skip if already at this scene
-    when (state.scene /= targetScene) do
+    -- Skip if already at this scene with same viewMode
+    when (state.scene /= targetScene || state.viewMode /= targetViewMode) do
       -- Clear existing viz containers
       liftEffect clearAllVizContainers
 
@@ -1083,8 +885,7 @@ handleAction = case _ of
 
       H.modify_ _
         { scene = targetScene
-        , previousScene = Just state.scene
-        , viewMode = PrimaryView
+        , viewMode = targetViewMode
         , scope = scopeForScene
         , capturedPositions = Nothing  -- Clear stale positions
         , focalPackage = Nothing  -- Clear focal when navigating via history
@@ -1097,8 +898,11 @@ handleAction = case _ of
   HandleBubblePackBeeswarmOutput output -> case output of
     BubblePackBeeswarmViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] BubblePack package circle clicked: " <> pkgName
-      -- Circle click → set focal to filter to neighborhood (stay in SolarSwarm)
-      -- RETIRED: handleAction (OpenPackagePanel pkgName)  -- Panel retired, info now in tooltips
+      -- Plain click → drill into package (module-level detail)
+      handleAction (NavigateTo (PkgTreemap pkgName))
+    BubblePackBeeswarmViz.PackageModifierClicked pkgName -> do
+      log $ "[SceneCoordinator] BubblePack package modifier+clicked: " <> pkgName
+      -- Modifier+click → set focal package (neighborhood filter)
       handleAction (SetFocalPackage (Just pkgName))
     BubblePackBeeswarmViz.PackageLabelClicked pkgName -> do
       log $ "[SceneCoordinator] BubblePack package label clicked: " <> pkgName
@@ -1121,10 +925,8 @@ handleAction = case _ of
   HandleGalaxyBeeswarmOutput output -> case output of
     GalaxyBeeswarmViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] Galaxy package circle clicked: " <> pkgName
-      -- Circle click → neighborhood view (SolarSwarm with focal package)
-      -- RETIRED: handleAction (OpenPackagePanel pkgName)  -- Panel retired, info now in tooltips
-      handleAction (SetFocalPackage (Just pkgName))
-      handleAction (NavigateTo SolarSwarm)
+      -- Plain click → drill into package (module-level detail)
+      handleAction (NavigateTo (PkgTreemap pkgName))
     GalaxyBeeswarmViz.PackageLabelClicked pkgName -> do
       log $ "[SceneCoordinator] Galaxy package label clicked: " <> pkgName
       -- Label click → package treemap (module-level detail)
@@ -1150,8 +952,13 @@ handleAction = case _ of
       pure unit
 
   HandleDeclarationDetailOutput output -> case output of
-    DeclarationDetailViz.BackToModuleOverview ->
-      handleAction NavigateBack
+    DeclarationDetailViz.BackToModuleOverview -> do
+      state <- H.get
+      case state.scene of
+        DeclarationDetail pkg mod _ ->
+          handleAction (NavigateTo (ModuleOverview pkg mod))
+        _ ->
+          pure unit  -- Shouldn't happen
     DeclarationDetailViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in detail: " <> declName
       handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
@@ -1171,8 +978,11 @@ handleAction = case _ of
     H.modify_ _ { focalPackage = mPkg }
 
   SetViewMode targetMode -> do
+    state <- H.get
     log $ "[SceneCoordinator] Setting view mode: " <> show targetMode
     H.modify_ _ { viewMode = targetMode }
+    -- Push view mode change to browser history
+    liftEffect $ pushHistoryState (sceneToString state.scene) (viewModeToString targetMode)
     -- Re-render the visualization with new mode
     newState <- H.get
     prepareSceneData newState
@@ -1202,21 +1012,15 @@ handleAction = case _ of
             Left err ->
               log $ "[SceneCoordinator] Failed to fetch git status: " <> err
 
-  TreemapCellClicked pkgName -> do
-    log $ "[SceneCoordinator] Treemap cell clicked: " <> pkgName
-    -- In GalaxyTreemap, clicking a package navigates to beeswarm
-    handleAction (NavigateTo GalaxyBeeswarm)
-
   GalaxyTreemapCircleClicked pkgName -> do
     log $ "[SceneCoordinator] GalaxyTreemap circle clicked: " <> pkgName
-    -- Circle click → neighborhood view (SolarSwarm with focal package)
-    -- RETIRED: handleAction (OpenPackagePanel pkgName)  -- Panel retired, info now in tooltips
+    -- Circle click → SolarSwarm with focal package (neighborhood view)
     handleAction (SetFocalPackage (Just pkgName))
     handleAction (NavigateTo SolarSwarm)
 
   GalaxyTreemapRectClicked pkgName -> do
     log $ "[SceneCoordinator] GalaxyTreemap rect clicked: " <> pkgName
-    -- Rect click → package treemap (module-level detail)
+    -- Rect click → treemap-to-treemap (drill into package modules)
     handleAction (NavigateTo (PkgTreemap pkgName))
 
   HandleSlideOutPanelOutput output -> case output of
@@ -1578,9 +1382,6 @@ prepareSceneData state = case state.scene of
       Nothing ->
         log "[SceneCoordinator] No v2Data for PkgModuleBeeswarm"
 
-  OverlayChordMatrix ->
-    log "[SceneCoordinator] OverlayChordMatrix"
-
   TypeClassGrid -> do
     log "[SceneCoordinator] TypeClassGrid"
     case state.typeClassStats of
@@ -1729,7 +1530,6 @@ themeForScene = case _ of
   PkgModuleBeeswarm _ -> PaperwhiteTheme -- Module level with flow overlay
   ModuleOverview _ _ -> PaperwhiteTheme  -- Module detail = paperwhite
   DeclarationDetail _ _ _ -> PaperwhiteTheme  -- Declaration detail = paperwhite
-  OverlayChordMatrix -> BeigeTheme
   TypeClassGrid -> BlueprintTheme         -- Type classes use blueprint theme
 
 -- | Canonical state code for precise communication
@@ -1762,8 +1562,6 @@ canonicalStateCode state = case state.scene of
 
   DeclarationDetail pkg mod decl -> "H(" <> pkg <> "," <> mod <> "," <> decl <> ")"
 
-  OverlayChordMatrix -> "O"  -- Overlay state
-
   TypeClassGrid -> "T"       -- Type class grid view
 
   where
@@ -1780,22 +1578,6 @@ canonicalStateCode state = case state.scene of
     MatrixView -> "M"
     ChordView -> "C"
 
--- | Count visible packages based on scope
-countVisiblePackages :: BeeswarmScope -> Array Loader.PackageSetPackage -> Int
-countVisiblePackages scope packages = case scope of
-  AllPackages -> Array.length packages
-  ProjectOnly -> Array.length $ Array.filter (\p -> Set.member p.name projectSet) packages
-  ProjectWithDeps -> Array.length $ Array.filter (\p ->
-    Set.member p.name projectSet || isDirectDep p.name) packages
-  ProjectWithTransitive -> Array.length $ Array.filter (\p ->
-    Set.member p.name projectSet || Set.member p.name transitiveSet) packages
-  where
-  projectSet = Set.fromFoldable projectPackages
-  transitiveSet = computeTransitivePackages packages
-  -- Check if package is a direct dependency of any project package
-  isDirectDep name = Array.any (\p ->
-    Set.member p.name projectSet && Array.elem name p.depends) packages
-
 -- =============================================================================
 -- Module/Declaration Lookup Helpers
 -- =============================================================================
@@ -1806,13 +1588,6 @@ lookupModuleDeclarations state pkgName modName = do
   v2 <- state.v2Data
   mod <- Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
   Map.lookup mod.id state.packageDeclarations
-
--- | Count declarations for a module (for header display)
-findModuleDeclCount :: State -> String -> String -> Int
-findModuleDeclCount state pkgName modName =
-  case lookupModuleDeclarations state pkgName modName of
-    Just decls -> Array.length decls
-    Nothing -> 0
 
 -- | Ensure declarations are loaded for a package's modules
 ensurePackageDeclarationsLoaded :: forall m. MonadAff m => State -> String -> H.HalogenM State Action Slots Output m Unit

@@ -58,10 +58,11 @@ type Input =
 
 -- | Output to parent
 data Output
-  = PackageClicked String       -- Circle click: package name → neighborhood view
-  | PackageLabelClicked String  -- Label click: package name → treemap view
+  = PackageClicked String              -- Plain circle click: drill into package
+  | PackageModifierClicked String      -- Modifier+circle click: set focal filter
+  | PackageLabelClicked String         -- Label click: package name → treemap view
   | PackageHovered (Maybe String)
-  | ModuleClicked String String  -- Package name, Module name
+  | ModuleClicked String String        -- Package name, Module name
   | ModuleHovered String (Maybe String)  -- Package name, Maybe module name (Nothing = mouse left)
 
 -- | Slot type for parent component
@@ -85,10 +86,11 @@ data Action
   = Initialize
   | Receive Input
   | Finalize
-  | HandlePackageClick String       -- Circle click → neighborhood view
-  | HandlePackageLabelClick String  -- Label click → treemap view
+  | HandlePackageClick String            -- Plain circle click → drill
+  | HandlePackageModifierClick String    -- Modifier+circle click → focal filter
+  | HandlePackageLabelClick String       -- Label click → treemap view
   | HandlePackageHover (Maybe String)
-  | HandleModuleClick String String  -- Package name, Module name
+  | HandleModuleClick String String      -- Package name, Module name
   | HandleModuleHover String (Maybe String)  -- Package name, Maybe module name
 
 -- =============================================================================
@@ -221,6 +223,10 @@ handleAction = case _ of
     log $ "[BubblePackBeeswarmViz] Package circle clicked: " <> packageName
     H.raise (PackageClicked packageName)
 
+  HandlePackageModifierClick packageName -> do
+    log $ "[BubblePackBeeswarmViz] Package modifier+clicked: " <> packageName
+    H.raise (PackageModifierClicked packageName)
+
   HandlePackageLabelClick packageName -> do
     log $ "[BubblePackBeeswarmViz] Package label clicked: " <> packageName
     H.raise (PackageLabelClicked packageName)
@@ -308,6 +314,9 @@ makeCallbacks :: Maybe (HS.Listener Action) -> BubblePackBeeswarm.Callbacks
 makeCallbacks mListener =
   { onPackageClick: \packageName -> case mListener of
       Just listener -> HS.notify listener (HandlePackageClick packageName)
+      Nothing -> pure unit
+  , onPackageModifierClick: \packageName -> case mListener of
+      Just listener -> HS.notify listener (HandlePackageModifierClick packageName)
       Nothing -> pure unit
   , onPackageLabelClick: \packageName -> case mListener of
       Just listener -> HS.notify listener (HandlePackageLabelClick packageName)
