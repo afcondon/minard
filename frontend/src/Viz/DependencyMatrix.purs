@@ -6,6 +6,7 @@ module CE2.Viz.DependencyMatrix
   ( DependencyData
   , buildFromModuleImports
   , buildFromPackageDependencies
+  , buildFromPackageDepends
   , filterToNames
   ) where
 
@@ -126,6 +127,28 @@ buildFromPackageDependencies packages modules moduleImports =
 
     -- Count total connections
     totalConnections = Map.size $ Map.filter (_ > 0) countImports
+  in
+    { names, matrix, totalConnections }
+
+-- | Build dependency matrix from V2Package.depends field
+-- | Uses the package-level dependency declarations directly, which is reliable
+-- | even when module-level import data isn't available for library packages.
+buildFromPackageDepends :: Array V2Package -> DependencyData
+buildFromPackageDepends packages =
+  let
+    names = packages <#> _.name
+    nameSet = Set.fromFoldable names
+
+    -- Build the matrix: matrix[i][j] = 1 if package i depends on package j
+    -- Only count deps that are within the scoped set
+    matrix = packages <#> \pkg ->
+      let pkgDeps = Set.fromFoldable pkg.depends
+      in names <#> \colName ->
+        if colName /= pkg.name && Set.member colName pkgDeps && Set.member colName nameSet
+          then 1.0
+          else 0.0
+
+    totalConnections = foldl (\acc row -> acc + foldl (\a v -> if v > 0.0 then a + 1 else a) 0 row) 0 matrix
   in
     { names, matrix, totalConnections }
 

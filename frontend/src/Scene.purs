@@ -63,7 +63,7 @@ parentScene = case _ of
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
 
 -- | A segment in the breadcrumb trail
-type BreadcrumbSegment = { label :: String, scene :: Scene }
+type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
 
 -- | Build breadcrumb trail for a scene
 -- | The last segment is the current scene (displayed bold, not clickable).
@@ -73,15 +73,16 @@ sceneBreadcrumbs = case _ of
   GalaxyTreemap       -> [reg]
   GalaxyBeeswarm      -> [reg]
   TypeClassGrid       -> [reg]
-  SolarSwarm          -> [reg, { label: "Packages", scene: SolarSwarm }]
-  PkgTreemap pkg      -> [reg, { label: pkg, scene: PkgTreemap pkg }]
-  PkgModuleBeeswarm p -> [reg, { label: p, scene: PkgTreemap p }]
-  ModuleOverview p m  -> [reg, { label: p, scene: PkgTreemap p }
-                              , { label: shortModuleName m, scene: ModuleOverview p m }]
-  DeclarationDetail p m d -> [reg, { label: p, scene: PkgTreemap p }
-                                  , { label: shortModuleName m, scene: ModuleOverview p m }
-                                  , { label: d, scene: DeclarationDetail p m d }]
-  where reg = { label: "Registry", scene: GalaxyTreemap }
+  SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
+  PkgTreemap pkg      -> [reg, pkgSeg pkg]
+  PkgModuleBeeswarm p -> [reg, pkgSeg p]
+  ModuleOverview p m  -> [reg, pkgSeg p, modSeg p m]
+  DeclarationDetail p m d -> [reg, pkgSeg p, modSeg p m
+                                  , { kind: "Decl", label: d, scene: DeclarationDetail p m d }]
+  where
+    reg = { kind: "", label: "Registry", scene: GalaxyTreemap }
+    pkgSeg pkg = { kind: "Package", label: pkg, scene: PkgTreemap pkg }
+    modSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleOverview p m }
 
 -- | Human-readable label for display in navigation UI
 sceneLabel :: Scene -> String

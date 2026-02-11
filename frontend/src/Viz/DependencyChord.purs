@@ -240,7 +240,7 @@ renderLabel config names idx group =
       , staticStr "transform" $ "rotate(" <> show finalRotation <> "," <> show x <> "," <> show y <> ")"
       , staticStr "text-anchor" anchor
       , staticStr "dominant-baseline" "middle"
-      , staticStr "fill" "#ddd"
+      , staticStr "fill" "#333"
       , staticStr "font-size" "10px"
       , staticStr "font-family" "system-ui, sans-serif"
       , staticStr "textContent" (shortenName name)

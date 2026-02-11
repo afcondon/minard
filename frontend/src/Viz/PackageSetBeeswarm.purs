@@ -90,6 +90,7 @@ type Config =
   , onPackageClick :: Maybe (String -> Effect Unit)  -- Circle click: packageName -> Effect
   , onPackageLabelClick :: Maybe (String -> Effect Unit)  -- Label click: packageName -> Effect
   , enableHighlighting :: Boolean  -- Enable coordinated highlighting on hover
+  , infraLayerThreshold :: Int     -- Hide highlight links to packages with topoLayer < threshold (0 = show all)
   }
 
 -- | Package as a simulation node
@@ -229,11 +230,12 @@ setScope handle packages = do
 -- | Prepare packages with target positions, radii, and colors
 prepareNodes :: Config -> DateRange -> Array PackageSetPackage -> Array PackageNode
 prepareNodes config dateRange packages =
-  Array.mapWithIndex (prepareNode config dateRange layerInfo dependedOnByMap) packages
+  Array.mapWithIndex (prepareNode config dateRange layerInfo topoMap dependedOnByMap) packages
   where
   layerCounts = countByLayer packages config.maxTopoLayer
   layerInfo = computeLayerPositions layerCounts config.width
-  dependedOnByMap = buildDependedOnByMap packages
+  topoMap = Map.fromFoldable $ packages <#> \p -> Tuple p.name p.topoLayer
+  dependedOnByMap = buildDependedOnByMap packages config.infraLayerThreshold topoMap
 
 -- | Prepare nodes at specific initial positions (for hero transition)
 prepareNodesAtPositions
@@ -243,11 +245,12 @@ prepareNodesAtPositions
   -> Array PackageSetPackage
   -> Array PackageNode
 prepareNodesAtPositions config dateRange positionMap packages =
-  Array.mapWithIndex (prepareNodeAtPosition config dateRange layerInfo positionMap dependedOnByMap) packages
+  Array.mapWithIndex (prepareNodeAtPosition config dateRange layerInfo positionMap topoMap dependedOnByMap) packages
   where
   layerCounts = countByLayer packages config.maxTopoLayer
   layerInfo = computeLayerPositions layerCounts config.width
-  dependedOnByMap = buildDependedOnByMap packages
+  topoMap = Map.fromFoldable $ packages <#> \p -> Tuple p.name p.topoLayer
+  dependedOnByMap = buildDependedOnByMap packages config.infraLayerThreshold topoMap
 
 -- | Prepare a single node, using initial position from map if available
 prepareNodeAtPosition
@@ -255,11 +258,12 @@ prepareNodeAtPosition
   -> DateRange
   -> Array Number
   -> Map String { x :: Number, y :: Number, r :: Number }
+  -> Map String Int
   -> Map String (Array String)
   -> Int
   -> PackageSetPackage
   -> PackageNode
-prepareNodeAtPosition config dateRange cumulativeX positionMap dependedOnByMap idx pkg =
+prepareNodeAtPosition config dateRange cumulativeX positionMap topoMap dependedOnByMap idx pkg =
   let
     padding = 60.0
     -- Low topo layer (prelude) LEFT, high topo layer (apps) RIGHT
@@ -288,8 +292,10 @@ prepareNodeAtPosition config dateRange cumulativeX positionMap dependedOnByMap i
         let pseudoRandom = toNumber ((idx * 17 + 31) `mod` 100) / 100.0 - 0.5
         in { x: targetX, y: pseudoRandom * config.height * 0.6 }
 
-    -- Dependency relationships
-    dependsOn = pkg.depends
+    -- Dependency relationships (filtered by infraLayerThreshold)
+    dependsOn = Array.filter (\dep ->
+      (fromMaybe 0 (Map.lookup dep topoMap)) >= config.infraLayerThreshold
+    ) pkg.depends
     dependedOnBy = fromMaybe [] $ Map.lookup pkg.name dependedOnByMap
   in
     { id: pkg.id
@@ -312,8 +318,8 @@ prepareNodeAtPosition config dateRange cumulativeX positionMap dependedOnByMap i
     }
 
 -- | Prepare a single package as a simulation node
-prepareNode :: Config -> DateRange -> Array Number -> Map String (Array String) -> Int -> PackageSetPackage -> PackageNode
-prepareNode config dateRange cumulativeX dependedOnByMap idx pkg =
+prepareNode :: Config -> DateRange -> Array Number -> Map String Int -> Map String (Array String) -> Int -> PackageSetPackage -> PackageNode
+prepareNode config dateRange cumulativeX topoMap dependedOnByMap idx pkg =
   let
     padding = 60.0
     -- Low topo layer (prelude) LEFT, high topo layer (apps) RIGHT
@@ -337,8 +343,10 @@ prepareNode config dateRange cumulativeX dependedOnByMap idx pkg =
     x = targetX
     y = pseudoRandom * config.height * 0.6
 
-    -- Dependency relationships
-    dependsOn = pkg.depends
+    -- Dependency relationships (filtered by infraLayerThreshold)
+    dependsOn = Array.filter (\dep ->
+      (fromMaybe 0 (Map.lookup dep topoMap)) >= config.infraLayerThreshold
+    ) pkg.depends
     dependedOnBy = fromMaybe [] $ Map.lookup pkg.name dependedOnByMap
   in
     { id: pkg.id
@@ -394,13 +402,17 @@ scanl f initial arr = Array.foldl go { acc: initial, result: [initial] } arr # _
     in { acc: newAcc, result: Array.snoc result newAcc }
 
 -- | Build reverse dependency map: package name -> packages that depend on it
-buildDependedOnByMap :: Array PackageSetPackage -> Map String (Array String)
-buildDependedOnByMap packages =
+-- | When infraThreshold > 0, excludes relationships where the depended-on package has topoLayer < threshold
+buildDependedOnByMap :: Array PackageSetPackage -> Int -> Map String Int -> Map String (Array String)
+buildDependedOnByMap packages infraThreshold topoMap =
   let
     -- For each package, create pairs (dependency, packageName) for each of its dependencies
+    -- Filter out deps to low-layer packages
     pairs :: Array (Tuple String String)
     pairs = packages # Array.concatMap \pkg ->
-      pkg.depends <#> \dep -> Tuple dep pkg.name
+      pkg.depends
+        # Array.filter (\dep -> (fromMaybe 0 (Map.lookup dep topoMap)) >= infraThreshold)
+        <#> \dep -> Tuple dep pkg.name
   in
     -- Group by dependency name
     foldl (\acc (Tuple dep dependedOnBy) ->

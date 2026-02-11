@@ -52,6 +52,7 @@ type Input =
   , colorMode :: ColorMode
   , gitStatus :: Maybe PackageGitStatus  -- Package-level git status for GitStatus color mode
   , initialPositions :: Maybe (Array InitialPosition)  -- For Treemap → Beeswarm transition
+  , infraLayerThreshold :: Int  -- Hide highlight links to packages with topoLayer < threshold (0 = show all)
   }
 
 -- | Output to parent
@@ -185,6 +186,7 @@ handleAction = case _ of
         themeChanged = input.theme /= lastInput.theme
         colorModeChanged = input.colorMode /= lastInput.colorMode
         gitStatusChanged = input.gitStatus /= lastInput.gitStatus
+        thresholdChanged = input.infraLayerThreshold /= lastInput.infraLayerThreshold
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
@@ -208,9 +210,9 @@ handleAction = case _ of
           -- No handle - this shouldn't happen but recover by re-initializing
           log "[GalaxyBeeswarmViz] WARNING: No handle for scope change, re-initializing"
           startVisualization input
-    else if colorModeChanged || gitStatusChanged then do
-      -- Git status mode change requires full re-render (colors baked into nodes)
-      log $ "[GalaxyBeeswarmViz] Color/git status changed, re-rendering"
+    else if colorModeChanged || gitStatusChanged || thresholdChanged then do
+      -- Color/git/threshold change requires full re-render (baked into nodes)
+      log $ "[GalaxyBeeswarmViz] Color/git/threshold changed, re-rendering"
       startVisualization input
     else if themeChanged then do
       -- Theme change can update colors in place
@@ -274,7 +276,7 @@ startVisualization input = do
 
   -- Render beeswarm with filtered packages
   let filteredPkgs = filterPackagesByScope input.scope input.packages
-  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.gitStatus input.initialPositions circleClickHandler labelClickHandler
+  handle <- liftEffect $ renderBeeswarmWithPositions input.packages filteredPkgs input.colorMode input.gitStatus input.infraLayerThreshold input.initialPositions circleClickHandler labelClickHandler
 
   -- Store handle (initialPositions consumed from input, not stored in state)
   H.modify_ _ { handle = Just handle, initialized = true }
@@ -309,6 +311,7 @@ renderTreemap theme packages _heroMode onRectClick = do
         , transitivePackages: Set.empty
         , onRectClick: onRectClick
         , onCircleClick: Nothing  -- No circles in this layer (they're in beeswarm layer)
+        , infraLayerThreshold: 0  -- Beeswarm background treemap doesn't use highlighting
         }
   Treemap.render config packages
 
@@ -319,11 +322,12 @@ renderBeeswarmWithPositions
   -> Array Loader.PackageSetPackage
   -> ColorMode
   -> Maybe PackageGitStatus  -- Package-level git status
+  -> Int                     -- infraLayerThreshold
   -> Maybe (Array InitialPosition)
   -> Maybe (String -> Effect Unit)  -- Circle click handler (neighborhood view)
   -> Maybe (String -> Effect Unit)  -- Label click handler (treemap view)
   -> Effect Beeswarm.BeeswarmHandle
-renderBeeswarmWithPositions allPackages filteredPackages colorMode gitStatus mInitialPositions mCircleClick mLabelClick = do
+renderBeeswarmWithPositions allPackages filteredPackages colorMode gitStatus infraThreshold mInitialPositions mCircleClick mLabelClick = do
   let maxLayer = Array.foldl (\acc pkg -> max acc pkg.topoLayer) 0 allPackages
       config :: Beeswarm.Config
       config =
@@ -337,6 +341,7 @@ renderBeeswarmWithPositions allPackages filteredPackages colorMode gitStatus mIn
         , onPackageClick: mCircleClick           -- Circle → neighborhood
         , onPackageLabelClick: mLabelClick       -- Label → treemap
         , enableHighlighting: true
+        , infraLayerThreshold: infraThreshold
         }
 
   case mInitialPositions of

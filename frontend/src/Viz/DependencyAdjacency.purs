@@ -163,7 +163,7 @@ buildMatrixTree config matrixLayout =
     -- Matrix-mode colors (green on black) vs default (blue on dark)
     bgColor = if config.matrixMode then "#000000" else "#1a2744"
     strokeColor = if config.matrixMode then "#003300" else "#2a3754"
-    labelColor = if config.matrixMode then "#00ff00" else "#ddd"
+    labelColor = if config.matrixMode then "#00ff00" else "#333"
   in
     elem SVG
       [ staticStr "id" "adjacency-svg"

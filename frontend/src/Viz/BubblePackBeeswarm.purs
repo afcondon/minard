@@ -743,7 +743,7 @@ moduleLinkPath from to fromName toName =
         , staticStr "fill" "none"
         , staticStr "stroke" "#f59e0b"
         , staticStr "stroke-width" "0.75"
-        , staticStr "stroke-opacity" "0.25"
+        , staticStr "stroke-opacity" "0"  -- Invisible until hover (matches treemap pattern)
         , staticStr "class" "dependency-link"
         ]
         []

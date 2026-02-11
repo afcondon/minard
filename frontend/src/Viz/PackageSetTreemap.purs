@@ -59,6 +59,7 @@ type Config =
   , cellContents :: CellContents     -- What to render in cells (Circle/Text/Empty)
   , onRectClick :: Maybe (String -> Effect Unit)    -- Click handler for rect → package treemap
   , onCircleClick :: Maybe (String -> Effect Unit)  -- Click handler for circle → neighborhood/SolarSwarm
+  , infraLayerThreshold :: Int       -- Hide deps to packages with topoLayer < threshold (0 = show all, 2 = hide layers 0-1)
   }
 
 -- | Package with computed treemap position
@@ -116,10 +117,10 @@ renderWithHighlighting config packages = do
   -- Clear existing content
   clearContainer config.containerSelector
 
-  -- Build dependency maps
+  -- Build dependency maps (filtered by infraLayerThreshold)
   let pkgNames = Set.fromFoldable $ map _.name packages
-      dependsOnMap = buildDependsOnMap packages pkgNames
-      dependedByMap = buildDependedByMap packages pkgNames
+      dependsOnMap = buildDependsOnMap packages pkgNames config.infraLayerThreshold
+      dependedByMap = buildDependedByMap packages pkgNames config.infraLayerThreshold
 
   -- Compute treemap layout and render with dependency data
   let positioned = computeTreemapPositions config packages
@@ -251,20 +252,30 @@ toPositionedPackage (TNode n) =
 -- =============================================================================
 
 -- | Build a map from package name to the packages it depends on
-buildDependsOnMap :: Array PackageSetPackage -> Set String -> Map String (Array String)
-buildDependsOnMap packages pkgNames =
-  Map.fromFoldable $ packages <#> \pkg ->
-    Tuple pkg.name (Array.filter (\dep -> Set.member dep pkgNames) pkg.depends)
+-- | When infraThreshold > 0, dependencies on packages with topoLayer < threshold are excluded
+buildDependsOnMap :: Array PackageSetPackage -> Set String -> Int -> Map String (Array String)
+buildDependsOnMap packages pkgNames infraThreshold =
+  let topoMap = Map.fromFoldable $ packages <#> \p -> Tuple p.name p.topoLayer
+  in Map.fromFoldable $ packages <#> \pkg ->
+    Tuple pkg.name (Array.filter (\dep ->
+      Set.member dep pkgNames
+      && (fromMaybe 0 (Map.lookup dep topoMap)) >= infraThreshold
+    ) pkg.depends)
 
 -- | Build a reverse map: package name to packages that depend on it
-buildDependedByMap :: Array PackageSetPackage -> Set String -> Map String (Array String)
-buildDependedByMap packages pkgNames =
+-- | When infraThreshold > 0, links to packages with topoLayer < threshold are excluded
+buildDependedByMap :: Array PackageSetPackage -> Set String -> Int -> Map String (Array String)
+buildDependedByMap packages pkgNames infraThreshold =
   let
+    topoMap = Map.fromFoldable $ packages <#> \p -> Tuple p.name p.topoLayer
     -- For each package's dependencies, record the reverse relationship
+    -- Filter out deps to low-layer packages
     pairs :: Array (Tuple String String)
     pairs = packages >>= \pkg ->
       pkg.depends
-        # Array.filter (\dep -> Set.member dep pkgNames)
+        # Array.filter (\dep ->
+            Set.member dep pkgNames
+            && (fromMaybe 0 (Map.lookup dep topoMap)) >= infraThreshold)
         <#> \dep -> Tuple dep pkg.name  -- dep is depended on by pkg
   in foldl (\acc (Tuple depended depender) ->
       Map.alter (Just <<< Array.cons depender <<< fromMaybe []) depended acc
@@ -414,6 +425,7 @@ buildSVGTree config packageData enableHighlighting =
     , staticStr "height" "100%"
     , staticStr "style" $ "background: " <> colors.background <> "; display: block;"
     , staticStr "preserveAspectRatio" "xMidYMid meet"
+    , thunkedStr "data-infra-threshold" (show config.infraLayerThreshold)
     ]
     [ -- Package rectangles group with data join
       elem Group
