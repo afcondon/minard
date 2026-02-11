@@ -56,6 +56,9 @@ module CE2.Data.Loader
     -- Git Status
   , GitStatusData
   , fetchGitStatus
+    -- Combined Search
+  , UnifiedSearchResult
+  , searchAll
   ) where
 
 import Prelude
@@ -1963,3 +1966,31 @@ fetchGitStatus :: Aff (Either String GitStatusData)
 fetchGitStatus = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/git/status")
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- =============================================================================
+-- Combined Search (declarations + modules + packages)
+-- =============================================================================
+
+-- | Unified search result from combined search endpoint
+type UnifiedSearchResult =
+  { entityType :: String    -- "declaration" | "module" | "package"
+  , id :: Int
+  , name :: String
+  , kind :: Maybe String
+  , typeSignature :: Maybe String
+  , moduleName :: Maybe String
+  , packageName :: String
+  , packageVersion :: String
+  }
+
+type UnifiedSearchResponse = { results :: Array UnifiedSearchResult, count :: Int }
+
+-- | Search across declarations, modules, and packages
+-- | Supports prefix sugar: class:, module:, package:, type:
+searchAll :: String -> Aff (Either String (Array UnifiedSearchResult))
+searchAll query = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/search/" <> query)
+  pure $ do
+    json <- result
+    response :: UnifiedSearchResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.results

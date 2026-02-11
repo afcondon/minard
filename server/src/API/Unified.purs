@@ -25,6 +25,8 @@ module API.Unified
   , getNamespace
   -- Declarations
   , searchDeclarations
+  -- Combined search
+  , searchAll
   -- Polyglot
   , getPolyglotSummary
   -- Type system analysis
@@ -36,6 +38,8 @@ module API.Unified
 import Prelude
 
 import Data.Maybe (Maybe(..))
+import Data.String.Common (toLower)
+import Data.String.CodeUnits as SCU
 import Database.DuckDB (Database, queryAll, queryAllParams, firstRow)
 import Effect (Effect)
 import Effect.Aff (Aff)
@@ -436,6 +440,119 @@ searchDeclarations db query = do
   ok' jsonHeaders json
 
 foreign import buildSearchResultsJson :: Array Foreign -> String
+
+-- =============================================================================
+-- GET /api/v2/search/:query
+-- =============================================================================
+
+-- | Combined search across declarations, modules, and packages
+-- | Supports prefix sugar: class:, module:, package:, type:
+searchAll :: Database -> String -> Aff Response
+searchAll db rawQuery = do
+  let { filter, term } = parseSearchPrefix rawQuery
+      searchPattern = "%" <> term <> "%"
+      prefixPattern = term <> "%"
+  rows <- case filter of
+    FilterPackage ->
+      queryAllParams db """
+        SELECT 'package' as entity_type, pv.id, pv.name, NULL as kind, NULL as type_signature,
+               NULL as module_name, pv.name as package_name, pv.version as package_version
+        FROM package_versions pv
+        WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+          AND pv.name LIKE ?
+        ORDER BY CASE WHEN pv.name LIKE ? THEN 0 ELSE 1 END, pv.name
+        LIMIT 12
+      """ [unsafeToForeign searchPattern, unsafeToForeign prefixPattern]
+
+    FilterModule ->
+      queryAllParams db """
+        SELECT 'module' as entity_type, m.id, m.name, NULL as kind, NULL as type_signature,
+               m.name as module_name, pv.name as package_name, pv.version as package_version
+        FROM modules m
+        JOIN package_versions pv ON m.package_version_id = pv.id
+        WHERE m.name LIKE ?
+        ORDER BY CASE WHEN m.name LIKE ? THEN 0 ELSE 1 END, m.name
+        LIMIT 12
+      """ [unsafeToForeign searchPattern, unsafeToForeign prefixPattern]
+
+    FilterClass ->
+      queryAllParams db """
+        SELECT 'declaration' as entity_type, d.id, d.name, d.kind, d.type_signature,
+               m.name as module_name, pv.name as package_name, pv.version as package_version
+        FROM declarations d
+        JOIN modules m ON d.module_id = m.id
+        JOIN package_versions pv ON m.package_version_id = pv.id
+        WHERE d.kind = 'type_class' AND d.name LIKE ?
+        ORDER BY CASE WHEN d.name LIKE ? THEN 0 ELSE 1 END, d.name
+        LIMIT 12
+      """ [unsafeToForeign searchPattern, unsafeToForeign prefixPattern]
+
+    FilterType ->
+      queryAllParams db """
+        SELECT 'declaration' as entity_type, d.id, d.name, d.kind, d.type_signature,
+               m.name as module_name, pv.name as package_name, pv.version as package_version
+        FROM declarations d
+        JOIN modules m ON d.module_id = m.id
+        JOIN package_versions pv ON m.package_version_id = pv.id
+        WHERE d.type_signature LIKE ?
+        ORDER BY d.name
+        LIMIT 12
+      """ [unsafeToForeign searchPattern]
+
+    FilterNone ->
+      queryAllParams db """
+        SELECT * FROM (
+          SELECT 'declaration' as entity_type, d.id, d.name, d.kind, d.type_signature,
+                 m.name as module_name, pv.name as package_name, pv.version as package_version
+          FROM declarations d
+          JOIN modules m ON d.module_id = m.id
+          JOIN package_versions pv ON m.package_version_id = pv.id
+          WHERE d.name LIKE ? OR d.type_signature LIKE ?
+          ORDER BY CASE WHEN d.name LIKE ? THEN 0 ELSE 1 END, d.name
+          LIMIT 6
+        )
+        UNION ALL
+        SELECT * FROM (
+          SELECT 'module' as entity_type, m.id, m.name, NULL as kind, NULL as type_signature,
+                 m.name as module_name, pv.name as package_name, pv.version as package_version
+          FROM modules m
+          JOIN package_versions pv ON m.package_version_id = pv.id
+          WHERE m.name LIKE ?
+          ORDER BY CASE WHEN m.name LIKE ? THEN 0 ELSE 1 END, m.name
+          LIMIT 3
+        )
+        UNION ALL
+        SELECT * FROM (
+          SELECT 'package' as entity_type, pv.id, pv.name, NULL as kind, NULL as type_signature,
+                 NULL as module_name, pv.name as package_name, pv.version as package_version
+          FROM package_versions pv
+          WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+            AND pv.name LIKE ?
+          ORDER BY CASE WHEN pv.name LIKE ? THEN 0 ELSE 1 END, pv.name
+          LIMIT 3
+        )
+      """ [ unsafeToForeign searchPattern, unsafeToForeign searchPattern, unsafeToForeign prefixPattern
+          , unsafeToForeign searchPattern, unsafeToForeign prefixPattern
+          , unsafeToForeign searchPattern, unsafeToForeign prefixPattern
+          ]
+
+  let json = buildSearchAllJson rows
+  ok' jsonHeaders json
+
+foreign import buildSearchAllJson :: Array Foreign -> String
+
+-- | Search prefix filter types
+data SearchFilter = FilterNone | FilterPackage | FilterModule | FilterClass | FilterType
+
+-- | Parse prefix sugar from search query
+parseSearchPrefix :: String -> { filter :: SearchFilter, term :: String }
+parseSearchPrefix q =
+  let lower = toLower q
+  in if SCU.take 8 lower == "package:" then { filter: FilterPackage, term: SCU.drop 8 q }
+     else if SCU.take 7 lower == "module:" then { filter: FilterModule, term: SCU.drop 7 q }
+     else if SCU.take 6 lower == "class:" then { filter: FilterClass, term: SCU.drop 6 q }
+     else if SCU.take 5 lower == "type:" then { filter: FilterType, term: SCU.drop 5 q }
+     else { filter: FilterNone, term: q }
 
 -- =============================================================================
 -- GET /api/v2/all-imports

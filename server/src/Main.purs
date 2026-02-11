@@ -37,6 +37,7 @@ data Route
   | V2GetNamespace String
   -- Search
   | V2SearchDeclarations String
+  | V2Search String
   -- Polyglot
   | V2PolyglotSummary
   -- Type system analysis
@@ -64,6 +65,7 @@ route = root $ sum
   , "V2ListNamespaces": path "api/v2/namespaces" noArgs
   , "V2GetNamespace": path "api/v2/namespaces" segment
   , "V2SearchDeclarations": path "api/v2/declarations/search" segment
+  , "V2Search": path "api/v2/search" segment
   , "V2PolyglotSummary": path "api/v2/polyglot-summary" noArgs
   , "V2TypeClassStats": path "api/v2/type-class-stats" noArgs
   , "V2GitStatus": path "api/v2/git/status" noArgs
@@ -101,6 +103,7 @@ main = launchAff_ do
     log "  GET /api/v2/namespaces                   - List top-level namespaces"
     log "  GET /api/v2/namespaces/:path             - Get namespace with children"
     log "  GET /api/v2/declarations/search/:query   - Search declarations"
+    log "  GET /api/v2/search/:query               - Combined search (decl+module+pkg)"
     log "  GET /api/v2/polyglot-summary             - Polyglot project summary"
     log "  GET /api/v2/type-class-stats            - Type class method/instance counts"
     log "  GET /api/v2/git/status                   - Live git status (modified/staged)"
@@ -121,6 +124,7 @@ main = launchAff_ do
     V2ListNamespaces -> Unified.listNamespaces db
     V2GetNamespace nsPath -> Unified.getNamespace db nsPath
     V2SearchDeclarations query -> Unified.searchDeclarations db query
+    V2Search query -> Unified.searchAll db query
     V2PolyglotSummary -> Unified.getPolyglotSummary db
     V2TypeClassStats -> Unified.getTypeClassStats db
     V2GitStatus -> Unified.getGitStatus

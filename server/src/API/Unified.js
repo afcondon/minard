@@ -240,6 +240,24 @@ export const buildSearchResultsJson = (rows) => {
 };
 
 // =============================================================================
+// Combined Search (declarations + modules + packages)
+// =============================================================================
+
+export const buildSearchAllJson = (rows) => {
+  const results = (rows || []).map(row => ({
+    entityType: row.entity_type,
+    id: Number(row.id),
+    name: row.name,
+    kind: row.kind || null,
+    typeSignature: row.type_signature || null,
+    moduleName: row.module_name || null,
+    packageName: row.package_name,
+    packageVersion: row.package_version
+  }));
+  return JSON.stringify({ results, count: results.length });
+};
+
+// =============================================================================
 // Module Declaration Stats (bulk)
 // =============================================================================
 

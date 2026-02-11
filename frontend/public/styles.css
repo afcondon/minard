@@ -890,12 +890,44 @@ line.fn-highlight-dimmed {
 /* Keyboard-selected state (takes precedence over hover) */
 .module-search-result--selected {
   background-color: var(--color-beige-light);
-  outline: 2px solid var(--color-olive);
+  outline: 2px solid var(--color-teal);
   outline-offset: -2px;
 }
 
 .module-search-result--selected:hover {
   background-color: var(--color-beige-light);
+}
+
+/* =============================================================================
+   Header Search Overrides (compact input for header bar context)
+   ============================================================================= */
+
+.header-search-wrapper {
+  position: relative;
+  width: 200px;
+}
+
+.header-search-wrapper .module-search-input {
+  height: 24px;
+  padding: 2px 8px;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.header-search-wrapper .module-search-input:focus {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.header-search-wrapper .module-search-dropdown {
+  width: 380px;
+  right: auto;
+  font-size: 11px;
+  z-index: 1000;
+}
+
+.header-search-wrapper .module-search-result {
+  padding: 5px 8px;
 }
 
 /* =============================================================================

@@ -28,8 +28,11 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set (Set)
 import Data.Set as Set
+import Data.String as String
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
+import Effect.Aff (Milliseconds(..))
+import Effect.Aff as Aff
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
@@ -39,6 +42,8 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 import Type.Proxy (Proxy(..))
+import Web.Event.Event as WE
+import Web.UIEvent.KeyboardEvent (KeyboardEvent, toEvent, key)
 
 -- PSD3 Imports
 import Hylograph.Render (runD3, clear)
@@ -250,6 +255,13 @@ type State =
 
     -- Browser history integration
   , historyCleanup :: Maybe (Effect Unit)  -- Cleanup function for popstate listener
+
+    -- Search typeahead
+  , searchQuery :: String
+  , searchResults :: Array Loader.UnifiedSearchResult
+  , searchSelectedIndex :: Int
+  , searchOpen :: Boolean
+  , searchSeqId :: Int  -- Monotonic counter for debounce (ignore stale responses)
   }
 
 -- | Actions - streamlined
@@ -272,6 +284,12 @@ data Action
   | OpenPackagePanel String               -- packageName - opens panel with first module
   | ToggleGitMode                         -- Toggle between GitStatus color mode and previous mode
   | ToggleTidyMode                        -- Toggle infrastructure link filtering
+  -- Search typeahead
+  | SearchInput String                    -- User typed in search box
+  | SearchResultsReceived Int (Array Loader.UnifiedSearchResult)  -- Results arrived (seqId, results)
+  | SearchKeyDown KeyboardEvent           -- Keyboard event on search input
+  | SearchConfirmIndex Int                -- Mouse click on specific result
+  | SearchDismiss                         -- Escape or blur
 
 -- =============================================================================
 -- Component
@@ -314,6 +332,11 @@ initialState input =
   , gitStatus: Nothing
   , hideInfraLinks: false
   , historyCleanup: Nothing
+  , searchQuery: ""
+  , searchResults: []
+  , searchSelectedIndex: 0
+  , searchOpen: false
+  , searchSeqId: 0
   }
 
 -- =============================================================================
@@ -422,10 +445,12 @@ renderHeaderBar state =
           <> Array.concat (Array.mapWithIndex renderSegment crumbs)
         )
 
-      -- Right: Types + Git toggle + state code (debug)
+      -- Right: Search + Types + Git toggle + state code (debug)
     , HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ HH.button
+        [ HP.style "display: flex; align-items: center; gap: 8px;" ]
+        [ -- Search input with dropdown
+          renderSearchInput state
+        , HH.button
             [ HE.onClick \_ -> NavigateTo TypeClassGrid
             , HP.style $ toggleButtonStyle (state.scene == TypeClassGrid) textColor
             ]
@@ -538,6 +563,98 @@ renderDeclarationLegend =
             []
         , HH.span_ [ HH.text label ]
         ]
+
+-- =============================================================================
+-- Search Typeahead
+-- =============================================================================
+
+-- | Render the search input with dropdown overlay
+renderSearchInput :: forall m. State -> H.ComponentHTML Action Slots m
+renderSearchInput state =
+  HH.div
+    [ HP.class_ (HH.ClassName "header-search-wrapper") ]
+    [ HH.input
+        [ HP.type_ HP.InputText
+        , HP.class_ (HH.ClassName "module-search-input")
+        , HP.placeholder "search..."
+        , HP.value state.searchQuery
+        , HE.onValueInput SearchInput
+        , HE.onKeyDown SearchKeyDown
+        , HE.onBlur \_ -> SearchDismiss
+        ]
+    , if state.searchOpen && Array.length state.searchResults > 0
+        then renderSearchDropdown state
+        else HH.text ""
+    ]
+
+-- | Render the search results dropdown
+renderSearchDropdown :: forall m. State -> H.ComponentHTML Action Slots m
+renderSearchDropdown state =
+  HH.div
+    [ HP.class_ (HH.ClassName "module-search-dropdown") ]
+    (Array.mapWithIndex renderResult state.searchResults)
+  where
+  renderResult :: Int -> Loader.UnifiedSearchResult -> H.ComponentHTML Action Slots m
+  renderResult idx result =
+    let
+      isSelected = idx == state.searchSelectedIndex
+      entityIcon = case result.entityType of
+        "package" -> "pkg"
+        "module" -> "mod"
+        _ -> fromMaybe "val" (result.kind <#> kindAbbrev)
+      contextText = case result.entityType of
+        "package" -> result.packageVersion
+        "module" -> result.packageName
+        "declaration" -> fromMaybe "" result.moduleName <> " / " <> result.packageName
+        _ -> ""
+      typeSigSnippet = case result.typeSignature of
+        Just sig -> " :: " <> String.take 50 sig
+        Nothing -> ""
+    in
+      HH.div
+        [ HP.classes
+            [ HH.ClassName "module-search-result"
+            , HH.ClassName (if isSelected then "module-search-result--selected" else "")
+            ]
+        , HE.onMouseDown \_ -> SearchConfirmIndex idx
+        ]
+        [ HH.div
+            [ HP.style "display: flex; align-items: baseline; gap: 6px;" ]
+            [ HH.span
+                [ HP.style $ "font-size: 8px; padding: 1px 3px; border-radius: 2px; background: " <> entityColor result.entityType <> "; color: #fff;" ]
+                [ HH.text entityIcon ]
+            , HH.span
+                [ HP.style "font-weight: bold;" ]
+                [ HH.text result.name ]
+            , HH.span
+                [ HP.style "opacity: 0.5; font-size: 10px;" ]
+                [ HH.text contextText ]
+            ]
+        , if typeSigSnippet /= ""
+            then HH.div
+              [ HP.style "font-size: 9px; opacity: 0.4; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" ]
+              [ HH.text typeSigSnippet ]
+            else HH.text ""
+        ]
+
+  -- Abbreviate declaration kind for the tag
+  kindAbbrev :: String -> String
+  kindAbbrev = case _ of
+    "value" -> "val"
+    "data" -> "dat"
+    "newtype" -> "new"
+    "type_synonym" -> "syn"
+    "type_class" -> "cls"
+    "foreign" -> "ffi"
+    other -> String.take 3 other
+
+  -- Color for entity type badge
+  entityColor :: String -> String
+  entityColor = case _ of
+    "package" -> "#7c3aed"    -- purple
+    "module" -> "#0891b2"     -- cyan
+    "declaration" -> "#4e79a7" -- blue
+    _ -> "#666"
 
 -- | Footer controls (view mode, scope)
 renderFooterControls :: forall m. State -> H.ComponentHTML Action Slots m
@@ -1067,6 +1184,65 @@ handleAction = case _ of
     newState <- H.get
     prepareSceneData newState
 
+  -- =========================================================================
+  -- Search Typeahead Actions
+  -- =========================================================================
+
+  SearchInput query -> do
+    state <- H.get
+    let seqId = state.searchSeqId + 1
+    if String.length query < 2
+      then
+        H.modify_ _ { searchQuery = query, searchResults = [], searchOpen = false, searchSeqId = seqId }
+      else do
+        H.modify_ _ { searchQuery = query, searchOpen = true, searchSelectedIndex = 0, searchSeqId = seqId }
+        -- Fork async search with simple debounce: delay then check if seqId still matches
+        void $ H.fork do
+          liftAff $ Aff.delay (Milliseconds 150.0)
+          currentState <- H.get
+          when (currentState.searchSeqId == seqId) do
+            result <- liftAff $ Loader.searchAll query
+            case result of
+              Right results ->
+                -- Only apply if seqId still matches (user hasn't typed more)
+                H.modify_ _ { searchResults = results, searchSelectedIndex = 0 }
+              Left err ->
+                log $ "[SceneCoordinator] Search error: " <> err
+
+  SearchResultsReceived seqId results -> do
+    state <- H.get
+    when (state.searchSeqId == seqId) do
+      H.modify_ _ { searchResults = results, searchSelectedIndex = 0 }
+
+  SearchKeyDown evt -> do
+    state <- H.get
+    case key evt of
+      "ArrowDown" -> do
+        liftEffect $ WE.preventDefault (toEvent evt)
+        let maxIdx = Array.length state.searchResults - 1
+            newIdx = min maxIdx (state.searchSelectedIndex + 1)
+        H.modify_ _ { searchSelectedIndex = newIdx }
+      "ArrowUp" -> do
+        liftEffect $ WE.preventDefault (toEvent evt)
+        let newIdx = max 0 (state.searchSelectedIndex - 1)
+        H.modify_ _ { searchSelectedIndex = newIdx }
+      "Enter" -> do
+        liftEffect $ WE.preventDefault (toEvent evt)
+        confirmSearchSelection state state.searchSelectedIndex
+      "Escape" -> do
+        H.modify_ _ { searchQuery = "", searchResults = [], searchOpen = false }
+      _ -> pure unit
+
+  SearchConfirmIndex idx -> do
+    state <- H.get
+    confirmSearchSelection state idx
+
+  SearchDismiss -> do
+    -- Small delay to allow mousedown events on results to fire first
+    void $ H.fork do
+      liftAff $ Aff.delay (Milliseconds 200.0)
+      H.modify_ _ { searchOpen = false }
+
   HandleSlideOutPanelOutput output -> case output of
     SlideOutPanel.PanelClosed -> do
       log "[SceneCoordinator] Panel closed"
@@ -1477,6 +1653,29 @@ ensurePackageDeclarationsLoaded state pkgName =
             log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
     Nothing ->
       log "[SceneCoordinator] No v2Data available for declaration loading"
+
+-- =============================================================================
+-- Search Helpers
+-- =============================================================================
+
+-- | Confirm selection of a search result and navigate
+confirmSearchSelection :: forall m. MonadAff m => State -> Int -> H.HalogenM State Action Slots Output m Unit
+confirmSearchSelection state idx =
+  case Array.index state.searchResults idx of
+    Nothing -> pure unit
+    Just result -> do
+      let targetScene = sceneForResult result
+      log $ "[SceneCoordinator] Search navigation to: " <> show targetScene
+      H.modify_ _ { searchQuery = "", searchResults = [], searchOpen = false }
+      handleAction (NavigateTo targetScene)
+
+-- | Derive target scene from a search result
+sceneForResult :: Loader.UnifiedSearchResult -> Scene
+sceneForResult r = case r.entityType of
+  "package" -> PkgTreemap r.packageName
+  "module" -> ModuleOverview r.packageName (fromMaybe r.name r.moduleName)
+  "declaration" -> DeclarationDetail r.packageName (fromMaybe "" r.moduleName) r.name
+  _ -> GalaxyTreemap
 
 -- =============================================================================
 -- Module Import Maps (for coordinated hover highlighting)
