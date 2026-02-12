@@ -33,7 +33,7 @@
   /* Light beige for cards and dropdowns */
 
   /* Typography */
-  --font-mono: 'Courier New', 'Courier', Monaco, monospace;
+  --font-mono: 'Fira Code', 'Courier New', 'Courier', Monaco, monospace;
   --font-size-tiny: 0.5rem;
   --font-size-small: 0.5625rem;
   --font-size-label: 0.6875rem;
@@ -2397,4 +2397,25 @@ svg [data-tooltip]::before {
   bottom: auto;
   top: -6px;
   transform: translate(-50%, -100%);
+}
+
+/* =============================================================================
+   Dependency Neighborhood Overlay (DeclarationDetail left panel)
+   ============================================================================= */
+
+.neighborhood-node circle {
+  transition: opacity 0.2s ease, stroke-width 0.2s ease;
+}
+
+.neighborhood-node:hover circle {
+  stroke-width: 2.5px;
+  filter: brightness(1.2);
+}
+
+.neighborhood-link {
+  transition: opacity 0.2s ease;
+}
+
+.neighborhood-node text {
+  pointer-events: none;
 }

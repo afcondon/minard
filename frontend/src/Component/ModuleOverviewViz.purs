@@ -222,6 +222,7 @@ renderDeclarationTreemap input = do
     , packageName: input.packageName
     , moduleName: input.moduleName
     , onDeclarationClick: Just onDeclClick
+    , focusedDeclaration: Nothing
     }
     input.declarations
     input.functionCalls

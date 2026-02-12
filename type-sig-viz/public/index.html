@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PureScript Type Signature Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>Type Signature Visualizer</h1>
+    <p class="subtitle">Visual grammar for PureScript type signatures — powered by the real CST parser</p>
+  </header>
+
+  <nav id="category-nav"></nav>
+
+  <main id="gallery"></main>
+
+  <script src="signatures.js"></script>
+  <script src="renderer.js"></script>
+  <script src="app.js"></script>
+  <!-- PureScript bundle: parses signatures, then triggers app init -->
+  <script src="bundle.js"></script>
+</body>
+</html>

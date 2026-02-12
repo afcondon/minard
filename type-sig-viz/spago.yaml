@@ -1,0 +1,20 @@
+package:
+  name: type-sig-viz
+  description: "Type Signature Visualizer: Visual grammar for PureScript type signatures"
+  bundle:
+    module: TypeSigViz.Main
+    outfile: public/bundle.js
+    platform: browser
+  dependencies:
+    - arrays: ">=7.3.0 <8.0.0"
+    - console: ">=6.1.0 <7.0.0"
+    - effect: ">=4.0.0 <5.0.0"
+    - either: ">=6.1.0 <7.0.0"
+    - foldable-traversable: ">=6.0.0 <7.0.0"
+    - integers: ">=6.0.0 <7.0.0"
+    - language-cst-parser: ">=0.14.1 <0.15.0"
+    - maybe: ">=6.0.0 <7.0.0"
+    - newtype: ">=5.0.0 <6.0.0"
+    - prelude: ">=6.0.2 <7.0.0"
+    - strings: ">=6.0.1 <7.0.0"
+    - tuples: ">=7.0.0 <8.0.0"

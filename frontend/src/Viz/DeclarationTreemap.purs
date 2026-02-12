@@ -49,6 +49,7 @@ type Config =
   , packageName :: String
   , moduleName :: String
   , onDeclarationClick :: Maybe (String -> String -> String -> Effect Unit)  -- pkg -> mod -> decl
+  , focusedDeclaration :: Maybe String  -- When Just, dimmed background mode with one cell highlighted
   }
 
 -- | Declaration with computed treemap position and packed children
@@ -276,19 +277,27 @@ buildPositionMap positioned =
 
 buildTreemapSVG :: Config -> Array PositionedDeclaration -> Map String AbsolutePosition -> Tree
 buildTreemapSVG config positioned posMap =
-  elem SVG
-    [ staticStr "id" "declaration-treemap"
-    , staticStr "viewBox" $ "0 0 " <> show config.width <> " " <> show config.height
-    , staticStr "width" "100%"
-    , staticStr "height" "100%"
-    , staticStr "preserveAspectRatio" "xMidYMid meet"
-    , staticStr "style" "background: transparent; display: block; border-radius: 4px;"
-    ]
-    [ -- Declaration cells (behind)
-      forEach "decls" Group positioned (\pd -> pd.decl.name) (declarationCell config)
-      -- Dependency links (on top, pointer-events: none)
-    , renderDependencyLinks config positioned posMap
-    ]
+  let
+    isFocusedMode = case config.focusedDeclaration of
+      Just _ -> true
+      Nothing -> false
+
+    children =
+      [ forEach "decls" Group positioned (\pd -> pd.decl.name) (declarationCell config)
+      ] <>
+        -- Skip dependency links in focused mode (the neighborhood overlay shows them)
+        if isFocusedMode then []
+        else [ renderDependencyLinks config positioned posMap ]
+  in
+    elem SVG
+      [ staticStr "id" "declaration-treemap"
+      , staticStr "viewBox" $ "0 0 " <> show config.width <> " " <> show config.height
+      , staticStr "width" "100%"
+      , staticStr "height" "100%"
+      , staticStr "preserveAspectRatio" "xMidYMid meet"
+      , staticStr "style" "background: transparent; display: block; border-radius: 4px;"
+      ]
+      children
 
 -- | Render a single declaration cell with packed child circles
 declarationCell :: Config -> PositionedDeclaration -> Tree
@@ -309,9 +318,15 @@ declarationCell config pd =
     centerY = stripHeight + (cellHeight - stripHeight) / 2.0
 
     hasChildren = not (Array.null pd.packedChildren)
-  in
-    withBehaviors
-      ( [ onCoordinatedHighlightWithTooltip
+
+    -- In focused mode, use static highlight classes instead of coordinated highlighting
+    behaviors = case config.focusedDeclaration of
+      Just _ ->
+        -- Static mode: focused cell is Primary, all others Dimmed
+        clickBehavior
+      Nothing ->
+        -- Interactive mode: coordinated highlighting with tooltip
+        [ onCoordinatedHighlightWithTooltip
             { identify: fullName
             , classify: \hoveredId ->
                 if fullName == hoveredId then Primary
@@ -322,10 +337,18 @@ declarationCell config pd =
             , tooltip: Just { content: tooltipText, showWhen: OnHover }
             }
         ] <> clickBehavior
-      )
+
+    -- Static highlight class for focused mode
+    highlightClass = case config.focusedDeclaration of
+      Just focusName
+        | focusName == pd.decl.name -> " highlight-primary"
+        | otherwise -> " highlight-dimmed"
+      Nothing -> ""
+  in
+    withBehaviors behaviors
     $ elem Group
         [ thunkedStr "transform" ("translate(" <> show pd.x <> "," <> show pd.y <> ")")
-        , staticStr "class" "treemap-declaration"
+        , staticStr "class" ("treemap-declaration" <> highlightClass)
         , staticStr "cursor" "pointer"
         ]
         ( [ -- Background rect with muted kind tint

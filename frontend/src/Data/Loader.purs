@@ -92,10 +92,8 @@ import Data.Foldable (maximum) as Foldable
 import CE2.Types (SimNode, SimLink, NodeType(..), LinkType(..), Package)
 
 -- | API base URL for ce-server
--- | TODO: Make this configurable via environment or runtime config
-apiBaseUrl :: String
--- apiBaseUrl = "/code"  -- Routes through edge layer to ce-backend (production)
-apiBaseUrl = "http://localhost:3000"  -- Direct to ce-server (local dev)
+-- | Detected at runtime: "/code" when served behind the edge router, "http://localhost:3000" for local dev
+foreign import apiBaseUrl :: String
 
 -- =============================================================================
 -- Types

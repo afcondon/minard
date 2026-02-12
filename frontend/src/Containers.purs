@@ -88,6 +88,14 @@ module CE2.Containers
     -- DeclarationDetail (bubble pack panel)
   , declarationDetailBubbleContainerId
   , declarationDetailBubbleContainer
+    -- DeclarationDetail (treemap + neighborhood overlay)
+  , declarationDetailTreemapContainerId
+  , declarationDetailTreemapContainer
+  , dependencyNeighborhoodContainerId
+  , dependencyNeighborhoodContainer
+    -- Type Signature Visualization
+  , typeSigContainerId
+  , typeSigContainer
   ) where
 
 import Prelude
@@ -344,3 +352,31 @@ declarationDetailBubbleContainerId = "declaration-detail-bubble-container"
 
 declarationDetailBubbleContainer :: Selector
 declarationDetailBubbleContainer = toSelector declarationDetailBubbleContainerId
+
+-- =============================================================================
+-- DeclarationDetail Scene (treemap background + neighborhood overlay)
+-- =============================================================================
+
+-- Treemap layer (behind, dimmed)
+declarationDetailTreemapContainerId :: ElementId
+declarationDetailTreemapContainerId = "declaration-detail-treemap-container"
+
+declarationDetailTreemapContainer :: Selector
+declarationDetailTreemapContainer = toSelector declarationDetailTreemapContainerId
+
+-- Neighborhood overlay (above, interactive)
+dependencyNeighborhoodContainerId :: ElementId
+dependencyNeighborhoodContainerId = "dependency-neighborhood-container"
+
+dependencyNeighborhoodContainer :: Selector
+dependencyNeighborhoodContainer = toSelector dependencyNeighborhoodContainerId
+
+-- =============================================================================
+-- Type Signature Visualization
+-- =============================================================================
+
+typeSigContainerId :: ElementId
+typeSigContainerId = "type-sig-container"
+
+typeSigContainer :: Selector
+typeSigContainer = toSelector typeSigContainerId

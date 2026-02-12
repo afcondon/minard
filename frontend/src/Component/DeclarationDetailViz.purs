@@ -1,8 +1,9 @@
 -- | Declaration Detail Visualization Component
 -- |
--- | Split-panel view: focused bubble pack (left) + declaration detail (right).
+-- | Split-panel view: dimmed treemap + force neighborhood (left) + declaration detail (right).
 -- | Shows a single declaration "unfolded" with full type signature, doc comments,
--- | and child declarations.
+-- | and child declarations. The left panel layers a dimmed declaration treemap
+-- | (background) with a force-directed dependency neighborhood (overlay).
 module CE2.Component.DeclarationDetailViz
   ( component
   , Input
@@ -14,11 +15,10 @@ module CE2.Component.DeclarationDetailViz
 import Prelude
 
 import Data.Array as Array
-import Data.Int as Data.Int
 import Data.Map (Map)
-import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.String as String
+import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
@@ -29,11 +29,12 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, kindColor, childKindColor, childCircleElem, packDeclarations)
+import CE2.Viz.DeclarationTreemap as DeclarationTreemap
+import CE2.Viz.TypeSignature as TypeSignature
+import CE2.Viz.DependencyNeighborhood as DependencyNeighborhood
+import CE2.Viz.ModuleTreemapEnriched (kindColor, childKindColor)
 
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onClick)
-import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.HATS.InterpreterTick (clearContainer)
 
 -- =============================================================================
 -- Types
@@ -43,7 +44,7 @@ type Input =
   { packageName :: String
   , moduleName :: String
   , declarationName :: String
-  , declarations :: Array Loader.V2Declaration  -- All module declarations (for bubble pack)
+  , declarations :: Array Loader.V2Declaration  -- All module declarations (for treemap)
   , functionCalls :: Map Int (Array Loader.V2FunctionCall)
   }
 
@@ -59,6 +60,7 @@ type State =
   { initialized :: Boolean
   , actionListener :: Maybe (HS.Listener Action)
   , lastInput :: Input
+  , neighborhoodHandle :: Maybe DependencyNeighborhood.NeighborhoodHandle
   }
 
 data Action
@@ -88,6 +90,7 @@ initialState input =
   { initialized: false
   , actionListener: Nothing
   , lastInput: input
+  , neighborhoodHandle: Nothing
   }
 
 -- =============================================================================
@@ -104,13 +107,20 @@ render state =
     [ HP.class_ (HH.ClassName "declaration-detail-viz")
     , HP.style "display: flex; width: 100%; height: 100%;"
     ]
-    [ -- Left panel: SVG bubble pack (target declaration highlighted)
+    [ -- Left panel: two layers (treemap background + neighborhood overlay)
       HH.div
         [ HP.style "width: 38%; height: 100%; position: relative; border-right: 1px solid #e0e0e0;"
         ]
-        [ HH.div
-            [ HP.id C.declarationDetailBubbleContainerId
-            , HP.style "width: 100%; height: 100%;"
+        [ -- Layer 1: Dimmed declaration treemap (background)
+          HH.div
+            [ HP.id C.declarationDetailTreemapContainerId
+            , HP.style "position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1;"
+            ]
+            []
+        -- Layer 2: Force-directed neighborhood (overlay)
+        , HH.div
+            [ HP.id C.dependencyNeighborhoodContainerId
+            , HP.style "position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;"
             ]
             []
         ]
@@ -151,16 +161,12 @@ renderDeclarationDetail input decl =
             [ HH.text $ input.moduleName <> " (" <> input.packageName <> ")" ]
         ]
 
-    -- Type signature (larger, prominent)
-    , case decl.typeSignature of
-        Just sig ->
-          HH.div
-            [ HP.style "margin-bottom: 16px; padding: 12px; background: #f0f4f8; border-radius: 4px; border-left: 3px solid #0E4C8A;" ]
-            [ HH.pre
-                [ HP.style "margin: 0; font-size: 13px; color: #0E4C8A; white-space: pre-wrap; word-break: break-all; font-family: 'Courier New', Courier, monospace;" ]
-                [ HH.text $ decl.name <> " :: " <> sig ]
-            ]
-        Nothing -> HH.text ""
+    -- Type signature (SVG visualization)
+    , HH.div
+        [ HP.id C.typeSigContainerId
+        , HP.style "margin-bottom: 16px; min-height: 36px; overflow-x: auto;"
+        ]
+        []
 
     -- Doc comments
     , case decl.comments of
@@ -259,7 +265,13 @@ handleAction = case _ of
     void $ H.subscribe emitter
     H.modify_ _ { actionListener = Just listener, initialized = true }
 
-    renderBubblePack input
+    renderDetailLayers input listener
+
+    -- Render type signature visualization
+    let mDecl = Array.find (\d -> d.name == input.declarationName) input.declarations
+    case mDecl of
+      Just decl -> liftEffect $ TypeSignature.renderInto C.typeSigContainerId decl.name decl.typeSignature
+      Nothing -> pure unit
 
   Receive input -> do
     state <- H.get
@@ -267,7 +279,20 @@ handleAction = case _ of
               || input.moduleName /= state.lastInput.moduleName
     H.modify_ _ { lastInput = input }
     when (changed && state.initialized) do
-      renderBubblePack input
+      -- Stop old neighborhood simulation
+      case state.neighborhoodHandle of
+        Just handle -> liftEffect handle.stop
+        Nothing -> pure unit
+      H.modify_ _ { neighborhoodHandle = Nothing }
+      case state.actionListener of
+        Just listener -> do
+          renderDetailLayers input listener
+          -- Render type signature visualization
+          let mDecl = Array.find (\d -> d.name == input.declarationName) input.declarations
+          case mDecl of
+            Just decl -> liftEffect $ TypeSignature.renderInto C.typeSigContainerId decl.name decl.typeSignature
+            Nothing -> pure unit
+        Nothing -> pure unit
 
   HandleDeclarationClick pkgName modName declName -> do
     log $ "[DeclarationDetailViz] Declaration clicked: " <> declName
@@ -276,115 +301,50 @@ handleAction = case _ of
   HandleBackClick -> do
     H.raise BackToModuleOverview
 
--- | Render the bubble pack SVG with the target declaration highlighted
-renderBubblePack :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
-renderBubblePack input = do
-  state <- H.get
+-- | Render both layers: dimmed treemap + neighborhood overlay
+renderDetailLayers :: forall m. MonadAff m => Input -> HS.Listener Action -> H.HalogenM State Action () Output m Unit
+renderDetailLayers input listener = do
   let decls = input.declarations
-  when (Array.length decls > 0) do
-    let { declarations: circles } = packDeclarations decls input.moduleName 500.0 500.0 Map.empty Map.empty
-        svgTree = buildFocusedBubblePackSVG input circles state.actionListener
-    liftEffect do
-      clearContainer C.declarationDetailBubbleContainer
-      _ <- rerender C.declarationDetailBubbleContainer svgTree
-      pure unit
+      declKind = case Array.find (\d -> d.name == input.declarationName) decls of
+        Just d -> d.kind
+        Nothing -> "value"
 
--- | Build the bubble pack SVG with one declaration highlighted, others dimmed
-buildFocusedBubblePackSVG :: Input -> Array DeclarationCircle -> Maybe (HS.Listener Action) -> Tree
-buildFocusedBubblePackSVG input circles mListener =
-  elem SVG
-    [ staticStr "viewBox" "-260 -260 520 520"
-    , staticStr "width" "100%"
-    , staticStr "height" "100%"
-    , staticStr "preserveAspectRatio" "xMidYMid meet"
-    , staticStr "style" "display: block;"
-    ]
-    [ forEach "decls" Group circles _.name (focusedBubbleCircle input mListener) ]
+  -- Click callback for both layers
+  let onDeclClick :: String -> String -> String -> Effect Unit
+      onDeclClick pkg mod_ decl_ = HS.notify listener (HandleDeclarationClick pkg mod_ decl_)
 
--- | Render a circle: primary highlight if focused, dimmed otherwise
-focusedBubbleCircle :: Input -> Maybe (HS.Listener Action) -> DeclarationCircle -> Tree
-focusedBubbleCircle input mListener decl =
-  let
-    isFocused = decl.name == input.declarationName
-    opacity = if isFocused then "0.9" else "0.25"
-    outerOpacity = if isFocused then "0.3" else "0.15"
-    strokeColor = if isFocused then kindColor decl.kind else "white"
-    strokeWidth = if isFocused then "2.5" else "0.5"
-    labelColor = if isFocused then "#fff" else "rgba(255,255,255,0.5)"
-    clickBehavior = case mListener of
-      Nothing -> []
-      Just listener -> [ onClick (HS.notify listener (HandleDeclarationClick input.packageName input.moduleName decl.name)) ]
-  in
-  withBehaviors clickBehavior
-  $ if Array.null decl.children
-    then
-      -- Simple circle for childless declarations
-      elem Group
-        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
-        , staticStr "cursor" "pointer"
-        ]
-        [ elem Circle
-            [ staticStr "cx" "0"
-            , staticStr "cy" "0"
-            , thunkedNum "r" decl.r
-            , thunkedStr "fill" (kindColor decl.kind)
-            , thunkedStr "fill-opacity" opacity
-            , thunkedStr "stroke" strokeColor
-            , thunkedStr "stroke-width" strokeWidth
-            ]
-            []
-        , elem Text
-            [ staticStr "x" "0"
-            , staticStr "y" "0"
-            , staticStr "text-anchor" "middle"
-            , staticStr "dominant-baseline" "central"
-            , thunkedStr "font-size" (if decl.r > 15.0 then "8" else if decl.r > 10.0 then "6" else "0")
-            , thunkedStr "fill" labelColor
-            , staticStr "font-family" "system-ui, sans-serif"
-            , staticStr "font-weight" "600"
-            , staticStr "pointer-events" "none"
-            , thunkedStr "textContent" (truncateLabel decl.r decl.name)
-            ]
-            []
-        ]
-    else
-      -- Group with outer ring and nested child circles
-      elem Group
-        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
-        , staticStr "cursor" "pointer"
-        , staticStr "class" "detail-decl-with-children"
-        ]
-        [ -- Outer circle (lighter container)
-          elem Circle
-            [ staticStr "cx" "0"
-            , staticStr "cy" "0"
-            , thunkedNum "r" decl.r
-            , thunkedStr "fill" (kindColor decl.kind)
-            , thunkedStr "fill-opacity" outerOpacity
-            , thunkedStr "stroke" strokeColor
-            , thunkedStr "stroke-width" strokeWidth
-            , staticStr "stroke-opacity" "0.8"
-            ]
-            []
-        -- Nested child circles
-        , elem Group
-            [ staticStr "class" "detail-children" ]
-            (map (childCircleElem decl.kind) decl.children)
-        -- Label near the bottom
-        , elem Text
-            [ staticStr "x" "0"
-            , thunkedStr "y" (show (decl.r - 6.0))
-            , staticStr "text-anchor" "middle"
-            , staticStr "dominant-baseline" "central"
-            , thunkedStr "font-size" (if decl.r > 20.0 then "7" else if decl.r > 12.0 then "5" else "0")
-            , thunkedStr "fill" (kindColor decl.kind)
-            , staticStr "font-family" "system-ui, sans-serif"
-            , staticStr "font-weight" "600"
-            , staticStr "pointer-events" "none"
-            , thunkedStr "textContent" (truncateLabel decl.r decl.name)
-            ]
-            []
-        ]
+  nhHandle <- liftEffect do
+    -- Clear both containers
+    clearContainer C.declarationDetailTreemapContainer
+    clearContainer C.dependencyNeighborhoodContainer
+
+    -- Layer 1: Dimmed declaration treemap
+    DeclarationTreemap.render
+      { containerSelector: C.declarationDetailTreemapContainer
+      , width: 600.0
+      , height: 900.0
+      , packageName: input.packageName
+      , moduleName: input.moduleName
+      , onDeclarationClick: Just onDeclClick
+      , focusedDeclaration: Just input.declarationName
+      }
+      decls
+      input.functionCalls
+
+    -- Layer 2: Dependency neighborhood overlay
+    DependencyNeighborhood.render
+      { containerSelector: C.dependencyNeighborhoodContainer
+      , width: 600.0
+      , height: 900.0
+      , packageName: input.packageName
+      , moduleName: input.moduleName
+      , declarationName: input.declarationName
+      , declarationKind: declKind
+      , onDeclarationClick: Just onDeclClick
+      }
+      input.functionCalls
+
+  H.modify_ _ { neighborhoodHandle = Just nhHandle }
 
 -- =============================================================================
 -- Utilities
@@ -407,10 +367,3 @@ childKindLabel = case _ of
   "newtype"    -> "Constructors"
   "type_class" -> "Members"
   _            -> "Children"
-
-truncateLabel :: Number -> String -> String
-truncateLabel r name =
-  let maxLen = Data.Int.floor (r / 3.5)
-  in if String.length name > maxLen
-     then String.take maxLen name <> "…"
-     else name
