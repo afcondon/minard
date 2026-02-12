@@ -216,17 +216,33 @@ computeDeclarationPositions config declarations callsTo calledByMap =
         { children: packed, packRadius } =
           packChildren effectiveChildren config.moduleName child.data_.name child.data_.kind
 
+        -- Fallback: if no children at all, create a single "self" circle
+        -- so every cell has some visual content
+        selfCircleFallback :: Array ChildCircle
+        selfCircleFallback =
+          [ { name: child.data_.name
+            , fullName: fullName
+            , kind: child.data_.kind
+            , typeSignature: child.data_.typeSignature
+            , x: 0.0
+            , y: 0.0
+            , r: 5.0
+            } ]
+
+        finalChildren = if Array.null packed then selfCircleFallback else packed
+        finalPackRadius = if Array.null packed then 5.0 else packRadius
+
         -- Scale children to fit within the cell, leaving room for strip + label
         stripHeight = 3.0
         labelSpace = 14.0  -- bottom label area
         availW = cellWidth * 0.85
         availH = (cellHeight - stripHeight - labelSpace) * 0.85
         fitRadius = Number.min (availW / 2.0) (availH / 2.0)
-        scaleFactor = if packRadius > 0.0 && fitRadius > 0.0
-                      then min (fitRadius / packRadius) 3.0  -- cap upscale
+        scaleFactor = if finalPackRadius > 0.0 && fitRadius > 0.0
+                      then min (fitRadius / finalPackRadius) 3.0  -- cap upscale
                       else 1.0
 
-        scaledChildren = packed <#> \c -> c
+        scaledChildren = finalChildren <#> \c -> c
           { x = c.x * scaleFactor
           , y = c.y * scaleFactor
           , r = c.r * scaleFactor
@@ -240,7 +256,7 @@ computeDeclarationPositions config declarations callsTo calledByMap =
         , calls: fromMaybe [] $ Map.lookup fullName callsTo
         , calledBy: fromMaybe [] $ Map.lookup fullName calledByMap
         , packedChildren: scaledChildren
-        , packRadius: packRadius * scaleFactor
+        , packRadius: finalPackRadius * scaleFactor
         }
 
 -- =============================================================================

@@ -482,7 +482,7 @@ syntheticArityChildren mTypeSig = case mTypeSig of
       -- Simplified: count " -> " occurrences, but be careful about nested types
       arity = countFunctionArity typeSig
     in
-      if arity <= 1 then []  -- Don't show for simple values or single-arg functions
+      if arity < 1 then []  -- Don't show for simple values (no arrows)
       else Array.range 1 arity <#> \i ->
         { id: 0  -- Synthetic, no real ID
         , name: "arg" <> show i
