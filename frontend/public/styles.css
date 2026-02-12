@@ -1963,6 +1963,75 @@ select.project-dropdown:focus {
   fill: #3a4a6a !important;
 }
 
+/* Rect hover affordance - subtle lightening on dark midnight theme */
+.treemap-package .package-rect:hover {
+  fill: rgba(255, 255, 255, 0.06) !important;
+  stroke: rgba(255, 255, 255, 0.8) !important;
+  stroke-width: 1.5px !important;
+  cursor: pointer;
+}
+
+/* =============================================================================
+   Module Treemap Enriched Rect Hover Affordance
+   ============================================================================= */
+
+/* Subtle lightening on steel/blueprint background */
+.treemap-module-enriched:hover .module-rect {
+  fill: rgba(255, 255, 255, 0.08) !important;
+  stroke: rgba(255, 255, 255, 0.6) !important;
+  stroke-width: 1.5px !important;
+}
+
+/* =============================================================================
+   Declaration Treemap Highlighting (ModuleOverview left panel)
+   ============================================================================= */
+
+/* Base transitions */
+.treemap-declaration {
+  transition: opacity 0.15s ease-out;
+}
+
+.treemap-declaration rect {
+  transition: fill 0.15s ease-out, stroke 0.15s ease-out, stroke-width 0.15s ease-out;
+}
+
+/* Rect hover affordance */
+.treemap-declaration .declaration-rect:hover {
+  stroke: rgba(255, 255, 255, 0.5) !important;
+  stroke-width: 1.5px !important;
+}
+
+/* Primary: The hovered declaration - blue border */
+.treemap-declaration.highlight-primary .declaration-rect {
+  stroke: #2563eb !important;
+  stroke-width: 2px !important;
+}
+
+.treemap-declaration.highlight-primary .declaration-strip {
+  opacity: 1 !important;
+}
+
+/* Related: Declarations with call relationships - amber border */
+.treemap-declaration.highlight-related .declaration-rect {
+  stroke: #f59e0b !important;
+  stroke-width: 1.5px !important;
+}
+
+/* Dimmed: Unrelated declarations - faded */
+.treemap-declaration.highlight-dimmed {
+  opacity: 0.25;
+}
+
+/* Dependency links - glow when related */
+.dependency-link.highlight-related {
+  stroke-opacity: 0.8 !important;
+  stroke-width: 1.5px !important;
+}
+
+.dependency-link.highlight-dimmed {
+  stroke-opacity: 0.05 !important;
+}
+
 /* =============================================================================
    Package Set Swarm Highlighting (Beeswarm View)
    Note: Highlight classes are applied to .package-group (the <g> element),

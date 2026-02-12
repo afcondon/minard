@@ -1,6 +1,6 @@
 -- | Module Overview Visualization Component
 -- |
--- | Split-panel view: bubble pack (left) + declaration listing (right).
+-- | Split-panel view: declaration treemap (left) + declaration listing (right).
 -- | Shows all declarations in a module at a glance ("folded code" view).
 module CE2.Component.ModuleOverviewViz
   ( component
@@ -13,11 +13,9 @@ module CE2.Component.ModuleOverviewViz
 import Prelude
 
 import Data.Array as Array
-import Data.Int as Data.Int
 import Data.Map (Map)
-import Data.Map as Map
 import Data.Maybe (Maybe(..))
-import Data.String as String
+import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
@@ -29,11 +27,8 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, kindColor, childCircleElem, packDeclarations)
-
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onClick)
-import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import CE2.Viz.ModuleTreemapEnriched (kindColor)
+import CE2.Viz.DeclarationTreemap as DeclarationTreemap
 
 -- =============================================================================
 -- Types
@@ -105,12 +100,12 @@ render state =
     [ HP.class_ (HH.ClassName "module-overview-viz")
     , HP.style "display: flex; width: 100%; height: 100%;"
     ]
-    [ -- Left panel: SVG bubble pack
+    [ -- Left panel: Declaration treemap
       HH.div
-        [ HP.style "width: 38%; height: 100%; position: relative; border-right: 1px solid #e0e0e0;"
+        [ HP.style "width: 38%; height: 100%; position: relative; border-right: 1px solid rgba(255,255,255,0.1);"
         ]
         [ HH.div
-            [ HP.id C.moduleOverviewBubbleContainerId
+            [ HP.id C.declarationTreemapContainerId
             , HP.style "width: 100%; height: 100%;"
             ]
             []
@@ -197,7 +192,7 @@ handleAction = case _ of
     void $ H.subscribe emitter
     H.modify_ _ { actionListener = Just listener, initialized = true }
 
-    renderBubblePack input Nothing
+    renderDeclarationTreemap input
 
   Receive input -> do
     state <- H.get
@@ -205,7 +200,7 @@ handleAction = case _ of
               || Array.length input.declarations /= Array.length state.lastInput.declarations
     H.modify_ _ { lastInput = input }
     when (changed && state.initialized) do
-      renderBubblePack input state.hoveredDeclaration
+      renderDeclarationTreemap input
 
   HandleDeclarationClick pkgName modName declName -> do
     log $ "[ModuleOverviewViz] Declaration clicked: " <> declName
@@ -215,110 +210,27 @@ handleAction = case _ of
     H.modify_ _ { hoveredDeclaration = mName }
     H.raise (DeclarationHovered mName)
 
--- | Render the bubble pack SVG into the container
-renderBubblePack :: forall m. MonadAff m => Input -> Maybe String -> H.HalogenM State Action () Output m Unit
-renderBubblePack input _hoveredDecl = do
+-- | Render the declaration treemap into the left panel container
+renderDeclarationTreemap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
+renderDeclarationTreemap input = do
   state <- H.get
-  let decls = input.declarations
-  when (Array.length decls > 0) do
-    let { declarations: circles } = packDeclarations decls input.moduleName 500.0 500.0 Map.empty Map.empty
-        svgTree = buildBubblePackSVG input circles state.actionListener
-    liftEffect do
-      clearContainer C.moduleOverviewBubbleContainer
-      _ <- rerender C.moduleOverviewBubbleContainer svgTree
-      pure unit
+  let onDeclClick = makeDeclarationClickCallback state.actionListener
+  liftEffect $ DeclarationTreemap.render
+    { containerSelector: C.declarationTreemapContainer
+    , width: 600.0
+    , height: 900.0
+    , packageName: input.packageName
+    , moduleName: input.moduleName
+    , onDeclarationClick: Just onDeclClick
+    }
+    input.declarations
+    input.functionCalls
 
--- | Build the bubble pack SVG tree
-buildBubblePackSVG :: Input -> Array DeclarationCircle -> Maybe (HS.Listener Action) -> Tree
-buildBubblePackSVG input circles mListener =
-  elem SVG
-    [ staticStr "viewBox" "-260 -260 520 520"
-    , staticStr "width" "100%"
-    , staticStr "height" "100%"
-    , staticStr "preserveAspectRatio" "xMidYMid meet"
-    , staticStr "style" "display: block;"
-    ]
-    [ forEach "decls" Group circles _.name (bubbleCircle input mListener) ]
-
--- | Render a single declaration circle in the bubble pack
-bubbleCircle :: Input -> Maybe (HS.Listener Action) -> DeclarationCircle -> Tree
-bubbleCircle input mListener decl =
-  let
-    clickBehavior = case mListener of
-      Nothing -> []
-      Just listener -> [ onClick (HS.notify listener (HandleDeclarationClick input.packageName input.moduleName decl.name)) ]
-  in
-  withBehaviors clickBehavior
-  $ if Array.null decl.children
-    then
-      -- Simple circle for childless declarations
-      elem Group
-        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
-        , staticStr "cursor" "pointer"
-        , staticStr "class" "overview-decl-circle"
-        ]
-        [ elem Circle
-            [ staticStr "cx" "0"
-            , staticStr "cy" "0"
-            , thunkedNum "r" decl.r
-            , thunkedStr "fill" (kindColor decl.kind)
-            , staticStr "fill-opacity" "0.8"
-            , staticStr "stroke" "white"
-            , staticStr "stroke-width" "1"
-            ]
-            []
-        , elem Text
-            [ staticStr "x" "0"
-            , staticStr "y" "0"
-            , staticStr "text-anchor" "middle"
-            , staticStr "dominant-baseline" "central"
-            , thunkedStr "font-size" (if decl.r > 15.0 then "8" else if decl.r > 10.0 then "6" else "0")
-            , staticStr "fill" "#fff"
-            , staticStr "font-family" "system-ui, sans-serif"
-            , staticStr "font-weight" "600"
-            , staticStr "pointer-events" "none"
-            , thunkedStr "textContent" (truncateBubbleLabel decl.r decl.name)
-            ]
-            []
-        ]
-    else
-      -- Group with outer ring and nested child circles
-      elem Group
-        [ thunkedStr "transform" ("translate(" <> show decl.x <> "," <> show decl.y <> ")")
-        , staticStr "class" "overview-decl-with-children"
-        , staticStr "cursor" "pointer"
-        ]
-        [ -- Outer circle (lighter container)
-          elem Circle
-            [ staticStr "cx" "0"
-            , staticStr "cy" "0"
-            , thunkedNum "r" decl.r
-            , thunkedStr "fill" (kindColor decl.kind)
-            , staticStr "fill-opacity" "0.3"
-            , thunkedStr "stroke" (kindColor decl.kind)
-            , staticStr "stroke-width" "1.5"
-            , staticStr "stroke-opacity" "0.8"
-            ]
-            []
-        -- Nested child circles
-        , elem Group
-            [ staticStr "class" "overview-children" ]
-            (map (childCircleElem decl.kind) decl.children)
-        -- Label
-        , elem Text
-            [ staticStr "x" "0"
-            , thunkedStr "y" (show (decl.r - 6.0))
-            , staticStr "text-anchor" "middle"
-            , staticStr "dominant-baseline" "central"
-            , thunkedStr "font-size" (if decl.r > 20.0 then "7" else if decl.r > 12.0 then "5" else "0")
-            , thunkedStr "fill" (kindColor decl.kind)
-            , staticStr "font-family" "system-ui, sans-serif"
-            , staticStr "font-weight" "600"
-            , staticStr "pointer-events" "none"
-            , thunkedStr "textContent" (truncateBubbleLabel decl.r decl.name)
-            ]
-            []
-        ]
+-- | Create a declaration click callback that notifies the Halogen listener
+makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit
+makeDeclarationClickCallback mListener pkgName modName declName = case mListener of
+  Just listener -> HS.notify listener (HandleDeclarationClick pkgName modName declName)
+  Nothing -> log $ "[ModuleOverviewViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
 
 -- =============================================================================
 -- Utilities
@@ -368,10 +280,3 @@ kindColorLight = case _ of
   "foreign"      -> "rgba(225,87,89,0.08)"
   "alias"        -> "rgba(176,122,161,0.08)"
   _              -> "rgba(0,0,0,0.04)"
-
-truncateBubbleLabel :: Number -> String -> String
-truncateBubbleLabel r name =
-  let maxLen = Data.Int.floor (r / 3.5)
-  in if String.length name > maxLen
-     then String.take maxLen name <> "…"
-     else name

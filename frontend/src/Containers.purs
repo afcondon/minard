@@ -82,6 +82,9 @@ module CE2.Containers
     -- ModuleOverview (bubble pack panel)
   , moduleOverviewBubbleContainerId
   , moduleOverviewBubbleContainer
+    -- ModuleOverview (declaration treemap panel)
+  , declarationTreemapContainerId
+  , declarationTreemapContainer
     -- DeclarationDetail (bubble pack panel)
   , declarationDetailBubbleContainerId
   , declarationDetailBubbleContainer
@@ -324,6 +327,13 @@ moduleOverviewBubbleContainerId = "module-overview-bubble-container"
 
 moduleOverviewBubbleContainer :: Selector
 moduleOverviewBubbleContainer = toSelector moduleOverviewBubbleContainerId
+
+-- Declaration Treemap (replaces bubble pack in left panel)
+declarationTreemapContainerId :: ElementId
+declarationTreemapContainerId = "declaration-treemap-container"
+
+declarationTreemapContainer :: Selector
+declarationTreemapContainer = toSelector declarationTreemapContainerId
 
 -- =============================================================================
 -- DeclarationDetail Scene (focused declaration with bubble pack)

@@ -23,6 +23,8 @@ module CE2.Viz.ModuleTreemapEnriched
   , childKindColor
   , childCircleElem
   , packDeclarations
+  , packChildren
+  , syntheticArityChildren
   , shortModuleName
   ) where
 
