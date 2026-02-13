@@ -367,16 +367,20 @@ const TypeSigRenderer = (() => {
   function renderSignature(name, sig, ast, options) {
     const className = options && options.className;
     const classInfo = parseClassName(className);
+    const typeParams = (options && options.typeParams) || [];
 
     const { forallVars, constraints, body } = unwrapType(ast);
 
-    // Collect all vars including nested foralls and class params
+    // Collect all vars including nested foralls, class params, and explicit type params
     const classParams = classInfo ? classInfo.params : [];
-    const allVars = [...classParams, ...collectAllVars(ast)];
+    const allVars = [...typeParams, ...classParams, ...collectAllVars(ast)];
     // Top-level forall vars go after class params for consistent ordering
-    _varColors = assignVarColors([...classParams, ...forallVars, ...allVars]);
+    _varColors = assignVarColors([...typeParams, ...classParams, ...forallVars, ...allVars]);
 
-    const nameW = textWidth(name + ' :: ');
+    // Account for type param pills width in layout
+    const pillW = typeParams.length > 0
+      ? typeParams.reduce((w, p) => w + textWidth(p) + 14 + 3, 4) : 0;
+    const nameW = textWidth(name) + pillW + textWidth(' :: ');
     const bodyM = measure(body);
 
     // Vertical layout: class row → constraint pile → name+body → forall (under name)
@@ -429,8 +433,18 @@ const TypeSigRenderer = (() => {
     g.appendChild(textEl(0, curY + LINE_HEIGHT / 2, name,
       `fill:${COLORS.name};font-weight:700;`));
 
+    // Type parameter pills (for type synonyms / data types)
+    let nameEndX = textWidth(name);
+    if (typeParams.length > 0) {
+      nameEndX += 4;
+      for (const p of typeParams) {
+        nameEndX += renderSmallPill(g, nameEndX, curY, p, curY + LINE_HEIGHT / 2);
+        nameEndX += 3;
+      }
+    }
+
     // ::
-    g.appendChild(textEl(textWidth(name), curY + LINE_HEIGHT / 2, ' :: ',
+    g.appendChild(textEl(nameEndX, curY + LINE_HEIGHT / 2, ' :: ',
       `fill:${COLORS.separator};`));
 
     // Body

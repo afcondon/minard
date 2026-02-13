@@ -259,7 +259,7 @@ handleAction = case _ of
     -- Render type signature visualization
     let mDecl = Array.find (\d -> d.name == input.declarationName) input.declarations
     case mDecl of
-      Just decl -> liftEffect $ TypeSignature.renderInto C.typeSigContainerId decl.name decl.typeSignature
+      Just decl -> liftEffect $ TypeSignature.renderIntoWithKind C.typeSigContainerId decl.name decl.kind decl.typeSignature
       Nothing -> pure unit
 
   Receive input -> do
@@ -274,7 +274,7 @@ handleAction = case _ of
           -- Render type signature visualization
           let mDecl = Array.find (\d -> d.name == input.declarationName) input.declarations
           case mDecl of
-            Just decl -> liftEffect $ TypeSignature.renderInto C.typeSigContainerId decl.name decl.typeSignature
+            Just decl -> liftEffect $ TypeSignature.renderIntoWithKind C.typeSigContainerId decl.name decl.kind decl.typeSignature
             Nothing -> pure unit
         Nothing -> pure unit
 
