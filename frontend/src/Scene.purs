@@ -36,6 +36,7 @@ data Scene
   | PkgModuleBeeswarm String        -- Module beeswarm overlay on treemap
   | ModuleOverview String String    -- Module overview: bubble pack + declaration listing (pkg, module)
   | DeclarationDetail String String String  -- Single declaration detail (pkg, module, decl)
+  | ModuleSignatureMap String String -- Full-screen signature treemap (pkg, module)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
 
 derive instance eqScene :: Eq Scene
@@ -48,6 +49,7 @@ instance showScene :: Show Scene where
   show (PkgModuleBeeswarm pkg) = "PkgModuleBeeswarm(" <> pkg <> ")"
   show (ModuleOverview pkg mod) = "ModuleOverview(" <> pkg <> "," <> mod <> ")"
   show (DeclarationDetail pkg mod decl) = "DeclarationDetail(" <> pkg <> "," <> mod <> "," <> decl <> ")"
+  show (ModuleSignatureMap pkg mod) = "ModuleSignatureMap(" <> pkg <> "," <> mod <> ")"
   show TypeClassGrid = "TypeClassGrid"
 
 -- | Get the parent scene for back navigation
@@ -60,6 +62,7 @@ parentScene = case _ of
   PkgModuleBeeswarm pkg -> PkgTreemap pkg  -- Back to same package's treemap
   ModuleOverview pkg _ -> PkgTreemap pkg   -- Back to package treemap
   DeclarationDetail pkg mod _ -> ModuleOverview pkg mod  -- Back to module overview
+  ModuleSignatureMap pkg mod -> ModuleOverview pkg mod   -- Back to module overview
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
 
 -- | A segment in the breadcrumb trail
@@ -79,6 +82,8 @@ sceneBreadcrumbs = case _ of
   ModuleOverview p m  -> [reg, pkgSeg p, modSeg p m]
   DeclarationDetail p m d -> [reg, pkgSeg p, modSeg p m
                                   , { kind: "Decl", label: d, scene: DeclarationDetail p m d }]
+  ModuleSignatureMap p m -> [reg, pkgSeg p, modSeg p m
+                                  , { kind: "", label: "Signatures", scene: ModuleSignatureMap p m }]
   where
     reg = { kind: "", label: "Registry", scene: GalaxyTreemap }
     pkgSeg pkg = { kind: "Package", label: pkg, scene: PkgTreemap pkg }
@@ -94,6 +99,7 @@ sceneLabel = case _ of
   PkgModuleBeeswarm pkg -> pkg <> " Module Flow"
   ModuleOverview _ mod -> shortModuleName mod
   DeclarationDetail _ _ decl -> decl
+  ModuleSignatureMap _ mod -> shortModuleName mod <> " Signatures"
   TypeClassGrid -> "Type Classes"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
@@ -118,6 +124,7 @@ isModuleScene :: Scene -> Boolean
 isModuleScene (PkgModuleBeeswarm _) = true
 isModuleScene (ModuleOverview _ _) = true
 isModuleScene (DeclarationDetail _ _ _) = true
+isModuleScene (ModuleSignatureMap _ _) = true
 isModuleScene _ = false
 
 -- | Serialize scene to string for browser history state
@@ -162,6 +169,15 @@ sceneFromString str
                       decl = String.drop (idx2 + 1) rest
                   in Just (DeclarationDetail pkg mod decl)
                 Nothing -> Nothing
+          Nothing -> Nothing
+  | String.take 19 str == "ModuleSignatureMap(" =
+      let inner = String.drop 19 str
+          content = String.take (String.length inner - 1) inner
+      in case String.indexOf (String.Pattern ",") content of
+          Just idx ->
+            let pkg = String.take idx content
+                mod = String.drop (idx + 1) content
+            in Just (ModuleSignatureMap pkg mod)
           Nothing -> Nothing
   | otherwise = Nothing
 

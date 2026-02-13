@@ -58,6 +58,7 @@ import CE2.Component.DeclarationDetailViz as DeclarationDetailViz
 import CE2.Component.GalaxyTreemapViz as GalaxyTreemapViz
 import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
+import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
@@ -137,6 +138,7 @@ type Slots =
   , declarationDetailViz :: DeclarationDetailViz.Slot Unit
   , pkgModuleBeeswarmViz :: PkgModuleBeeswarmViz.Slot Unit
   , typeClassGridViz :: TypeClassGridViz.Slot Unit
+  , moduleSignatureMapViz :: ModuleSignatureMapViz.Slot Unit
   , dependencyChordViz :: DependencyChordViz.Slot String
   , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
   , slideOutPanel :: SlideOutPanel.Slot Unit
@@ -165,6 +167,9 @@ _pkgModuleBeeswarmViz = Proxy
 
 _typeClassGridViz :: Proxy "typeClassGridViz"
 _typeClassGridViz = Proxy
+
+_moduleSignatureMapViz :: Proxy "moduleSignatureMapViz"
+_moduleSignatureMapViz = Proxy
 
 _dependencyChordViz :: Proxy "dependencyChordViz"
 _dependencyChordViz = Proxy
@@ -276,6 +281,7 @@ data Action
   | HandleModuleTreemapOutput ModuleTreemapEnrichedViz.Output
   | HandleModuleOverviewOutput ModuleOverviewViz.Output
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
+  | HandleModuleSignatureMapOutput ModuleSignatureMapViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -521,6 +527,7 @@ renderSelectionInfo state =
     PkgTreemap _ -> renderDeclarationLegend
     ModuleOverview _ _ -> renderDeclarationLegend
     DeclarationDetail _ _ _ -> renderDeclarationLegend
+    ModuleSignatureMap _ _ -> renderDeclarationLegend
     _ -> renderHoverInfo state
 
 -- | Default hover info display
@@ -665,26 +672,45 @@ renderFooterControls state =
       <> "background: " <> (if isActive then "rgba(255,255,255,0.2)" else "transparent") <> "; "
       <> "color: inherit;"
   in
-    if state.scene == SolarSwarm || isPackageTreemap state.scene
-      then HH.div
-        [ HP.style "display: flex; gap: 4px;" ]
-        [ HH.button
-            [ HE.onClick \_ -> SetViewMode PrimaryView
-            , HP.style $ btnStyle (state.viewMode == PrimaryView)
-            ]
-            [ HH.text "Primary" ]
-        , HH.button
-            [ HE.onClick \_ -> SetViewMode ChordView
-            , HP.style $ btnStyle (state.viewMode == ChordView)
-            ]
-            [ HH.text "Chord" ]
-        , HH.button
-            [ HE.onClick \_ -> SetViewMode MatrixView
-            , HP.style $ btnStyle (state.viewMode == MatrixView)
-            ]
-            [ HH.text "Matrix" ]
-        ]
-      else HH.text ""
+    case state.scene of
+      _ | state.scene == SolarSwarm || isPackageTreemap state.scene ->
+        HH.div
+          [ HP.style "display: flex; gap: 4px;" ]
+          [ HH.button
+              [ HE.onClick \_ -> SetViewMode PrimaryView
+              , HP.style $ btnStyle (state.viewMode == PrimaryView)
+              ]
+              [ HH.text "Primary" ]
+          , HH.button
+              [ HE.onClick \_ -> SetViewMode ChordView
+              , HP.style $ btnStyle (state.viewMode == ChordView)
+              ]
+              [ HH.text "Chord" ]
+          , HH.button
+              [ HE.onClick \_ -> SetViewMode MatrixView
+              , HP.style $ btnStyle (state.viewMode == MatrixView)
+              ]
+              [ HH.text "Matrix" ]
+          ]
+      ModuleOverview pkg mod ->
+        HH.div
+          [ HP.style "display: flex; gap: 4px;" ]
+          [ HH.button
+              [ HE.onClick \_ -> NavigateTo (ModuleSignatureMap pkg mod)
+              , HP.style $ btnStyle false
+              ]
+              [ HH.text "Sig Map" ]
+          ]
+      ModuleSignatureMap pkg mod ->
+        HH.div
+          [ HP.style "display: flex; gap: 4px;" ]
+          [ HH.button
+              [ HE.onClick \_ -> NavigateTo (ModuleOverview pkg mod)
+              , HP.style $ btnStyle false
+              ]
+              [ HH.text "Overview" ]
+          ]
+      _ -> HH.text ""
 
 -- | Render the current scene using child component slots
 -- | Streamlined to 6 scenes for teaser navigation
@@ -907,6 +933,20 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading declaration data..." ]
 
+  ModuleSignatureMap pkgName modName ->
+    case lookupModuleDeclarations state pkgName modName of
+      Just decls ->
+        HH.slot _moduleSignatureMapViz unit ModuleSignatureMapViz.component
+          { packageName: pkgName
+          , moduleName: modName
+          , declarations: decls
+          }
+          HandleModuleSignatureMapOutput
+      Nothing ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading module declarations..." ]
+
   TypeClassGrid ->
     case state.typeClassStats of
       Just stats ->
@@ -1107,6 +1147,11 @@ handleAction = case _ of
       handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
     ModuleOverviewViz.DeclarationHovered _ ->
       pure unit
+
+  HandleModuleSignatureMapOutput output -> case output of
+    ModuleSignatureMapViz.DeclarationClicked pkgName modName declName -> do
+      log $ "[SceneCoordinator] Declaration clicked in signature map: " <> declName
+      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
 
   HandleDeclarationDetailOutput output -> case output of
     DeclarationDetailViz.BackToModuleOverview -> do
@@ -1440,6 +1485,11 @@ prepareSceneData state = case state.scene of
     ensurePackageDeclarationsLoaded state pkgName
     log "[SceneCoordinator] DeclarationDetail: rendering handled by slot"
 
+  ModuleSignatureMap pkgName _modName -> do
+    -- Ensure declarations are loaded for this package
+    ensurePackageDeclarationsLoaded state pkgName
+    log "[SceneCoordinator] ModuleSignatureMap: rendering handled by slot"
+
   PkgModuleBeeswarm pkgName -> do
     case state.v2Data of
       Just v2 -> do
@@ -1559,6 +1609,7 @@ themeForScene = case _ of
   PkgModuleBeeswarm _ -> SteelTheme
   ModuleOverview _ _ -> MistTheme
   DeclarationDetail _ _ _ -> DaylightTheme
+  ModuleSignatureMap _ _ -> DaylightTheme
   TypeClassGrid -> MidnightTheme
 
 -- | Canonical state code for precise communication
@@ -1590,6 +1641,8 @@ canonicalStateCode state = case state.scene of
   ModuleOverview pkg mod -> "G(" <> pkg <> "," <> mod <> ")"
 
   DeclarationDetail pkg mod decl -> "H(" <> pkg <> "," <> mod <> "," <> decl <> ")"
+
+  ModuleSignatureMap pkg mod -> "S(" <> pkg <> "," <> mod <> ")"
 
   TypeClassGrid -> "T"       -- Type class grid view
 
