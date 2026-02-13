@@ -177,12 +177,17 @@ renderDeclaration decl sig
       rendered <- TS.renderADTSVG decl.name typeParams constructors
       pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
 
-  | decl.kind == "type_class" && not (Array.null decl.children) = do
+  | decl.kind == "type_class" = do
       let
         methods = decl.children
           # Array.filter (\c -> c.kind == "class_member" || c.kind == "" || c.kind == "")
           # map (\c -> { name: c.name, ast: c.typeSignature >>= parseToRenderType })
-      rendered <- TS.renderClassDefSVG decl.name [] [] methods
+        superclasses = decl.superclasses
+          # map (\sc -> { name: sc.name
+                        , methods: sc.methods # map (\m -> { name: m.name, ast: m.typeSignature >>= parseToRenderType })
+                        })
+        typeParams = decl.typeArguments
+      rendered <- TS.renderClassDefSVG decl.name typeParams superclasses methods
       pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
 
   | otherwise = do

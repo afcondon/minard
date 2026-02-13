@@ -114,7 +114,7 @@ export const buildModuleJson = (mod) => {
 // Declarations
 // =============================================================================
 
-export const buildDeclarationsJson = (declarations) => (children) => {
+export const buildDeclarationsJson = (declarations) => (children) => (superMethods) => {
   // Group children by declaration_id
   const childrenByDecl = {};
   for (const child of (children || [])) {
@@ -131,8 +131,48 @@ export const buildDeclarationsJson = (declarations) => (children) => {
     });
   }
 
+  // Group superclass methods by class name
+  const superMethodsByClass = {};
+  for (const sm of (superMethods || [])) {
+    const cls = sm.sc_class_name;
+    if (!superMethodsByClass[cls]) {
+      superMethodsByClass[cls] = [];
+    }
+    superMethodsByClass[cls].push({
+      name: sm.method_name,
+      typeSignature: sm.method_sig || null
+    });
+  }
+
   const decls = (declarations || []).map(d => {
     const declId = Number(d.id);
+
+    // Extract superclass names and attach methods
+    let superclasses = [];
+    if (d.superclasses) {
+      try {
+        const scArray = typeof d.superclasses === 'string'
+          ? JSON.parse(d.superclasses) : d.superclasses;
+        superclasses = (scArray || []).map(sc => {
+          const name = sc.constraintClass ? sc.constraintClass[1] : null;
+          return {
+            name,
+            methods: name && superMethodsByClass[name] ? superMethodsByClass[name] : []
+          };
+        }).filter(sc => sc.name);
+      } catch (e) { /* ignore parse errors */ }
+    }
+
+    // Extract type argument names for type classes (e.g. [["m", null]] → ["m"])
+    let typeArguments = [];
+    if (d.type_arguments) {
+      try {
+        const taArray = typeof d.type_arguments === 'string'
+          ? JSON.parse(d.type_arguments) : d.type_arguments;
+        typeArguments = (taArray || []).map(ta => Array.isArray(ta) ? ta[0] : ta).filter(Boolean);
+      } catch (e) { /* ignore */ }
+    }
+
     return {
       id: declId,
       name: d.name,
@@ -142,6 +182,8 @@ export const buildDeclarationsJson = (declarations) => (children) => {
       dataDeclType: d.data_decl_type || null,
       sourceSpan: d.source_span ? JSON.parse(d.source_span) : null,
       sourceCode: d.source_code || null,
+      superclasses,
+      typeArguments,
       children: childrenByDecl[declId] || []
     };
   });

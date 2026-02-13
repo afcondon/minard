@@ -79,7 +79,7 @@ pub enum DeclarationInfo {
     },
     #[serde(rename = "typeClass")]
     TypeClass {
-        #[serde(rename = "typeArguments", default)]
+        #[serde(alias = "typeArguments", alias = "arguments", default)]
         type_arguments: Vec<TypeArgument>,
         #[serde(default)]
         superclasses: Vec<Value>,

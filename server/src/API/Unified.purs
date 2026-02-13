@@ -265,7 +265,9 @@ getModuleDeclarations db moduleId = do
       d.comments,
       d.data_decl_type,
       d.source_span,
-      d.source_code
+      d.source_code,
+      d.superclasses,
+      d.type_arguments
     FROM declarations d
     WHERE d.module_id = ?
     ORDER BY
@@ -296,10 +298,27 @@ getModuleDeclarations db moduleId = do
     ORDER BY cd.declaration_id, cd.name
   """ [unsafeToForeign moduleId]
 
-  let json = buildDeclarationsJson rows children
+  -- Superclass methods: for type_class declarations, find methods of their superclasses
+  superMethods <- queryAllParams db """
+    SELECT DISTINCT
+      sc_name.sc_class_name,
+      cd.name as method_name,
+      cd.type_signature as method_sig
+    FROM declarations d,
+    LATERAL (
+      SELECT json_extract_string(sc.value, '$.constraintClass[1]') as sc_class_name
+      FROM json_each(d.superclasses) sc
+    ) sc_name
+    JOIN declarations d2 ON d2.name = sc_name.sc_class_name AND d2.kind = 'type_class'
+    JOIN child_declarations cd ON cd.declaration_id = d2.id AND cd.kind = 'class_member'
+    WHERE d.module_id = ? AND d.kind = 'type_class' AND d.superclasses IS NOT NULL
+    ORDER BY sc_name.sc_class_name, cd.name
+  """ [unsafeToForeign moduleId]
+
+  let json = buildDeclarationsJson rows children superMethods
   ok' jsonHeaders json
 
-foreign import buildDeclarationsJson :: Array Foreign -> Array Foreign -> String
+foreign import buildDeclarationsJson :: Array Foreign -> Array Foreign -> Array Foreign -> String
 
 -- =============================================================================
 -- GET /api/v2/modules/:id/imports

@@ -25,7 +25,7 @@ import Effect (Effect)
 import Web.DOM (Element)
 
 import Hylograph.Sigil (layoutSignature, layoutADT, layoutClassDef, layoutSparkline, emit, emitNode)
-import Hylograph.Sigil.Types (RenderType)
+import Hylograph.Sigil.Types (RenderType, SuperclassInfo)
 import CE2.Viz.TypeSignature.TypeAST (parseToRenderType, collectTypeVars)
 
 -- =============================================================================
@@ -82,7 +82,7 @@ renderADTSVG name typeParams constructors = do
 
 -- | Render a class definition to SVG element + dimensions.
 renderClassDefSVG
-  :: String -> Array String -> Array String
+  :: String -> Array String -> Array SuperclassInfo
   -> Array { name :: String, ast :: Maybe RenderType }
   -> Effect RenderedSVG
 renderClassDefSVG name typeParams superclasses methods = do

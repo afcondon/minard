@@ -21,6 +21,7 @@ module CE2.Data.Loader
   , V2ModuleImports
   , V2ModuleDeclarationStats
   , V2Declaration
+  , V2Superclass
   , V2ChildDeclaration
   , V2Namespace
   , V2SearchResult
@@ -1274,6 +1275,12 @@ type V2ModuleListItem =
   , declarationCount :: Int
   }
 
+-- | Superclass info for type class declarations
+type V2Superclass =
+  { name :: String
+  , methods :: Array { name :: String, typeSignature :: Maybe String }
+  }
+
 -- | Declaration from unified schema
 type V2Declaration =
   { id :: Int
@@ -1284,6 +1291,8 @@ type V2Declaration =
   , dataDeclType :: Maybe String
   , sourceSpan :: Maybe { start :: Array Int, end :: Array Int, name :: String }
   , sourceCode :: Maybe String
+  , superclasses :: Array V2Superclass
+  , typeArguments :: Array String
   , children :: Array V2ChildDeclaration
   }
 

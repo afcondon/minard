@@ -190,6 +190,8 @@ computeDeclarationPositions config declarations callsTo calledByMap =
       , dataDeclType: Nothing
       , sourceSpan: Nothing
       , sourceCode: Nothing
+      , superclasses: []
+      , typeArguments: []
       , children: []
       }
 

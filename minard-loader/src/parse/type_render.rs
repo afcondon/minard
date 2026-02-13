@@ -109,22 +109,16 @@ fn render_type_app(type_ast: &Value, in_app_right: bool) -> String {
             let right = &arr[1];
 
             // Special case: Function application (a -> b)
+            // AST: TypeApp(TypeApp(Function, argType), returnType)
+            // left = TypeApp(Function, argType), right = returnType
             if is_function(left) {
-                let l = render_type_inner(right, false);
-                // Look for nested function to get the return type
-                if let Some(ret_arr) = left.get("contents").and_then(|c| c.as_array()) {
-                    if ret_arr.len() >= 2 {
-                        let r = render_type_inner(&ret_arr[1], true);
-                        return format!("{} -> {}", l, r);
+                if let Some(fn_arr) = left.get("contents").and_then(|c| c.as_array()) {
+                    if fn_arr.len() >= 2 {
+                        let arg = render_type_inner(&fn_arr[1], false);
+                        let ret = render_type_inner(right, false);
+                        return format!("{} -> {}", arg, ret);
                     }
                 }
-            }
-
-            // Check if this is the right side of a function app
-            if is_function_right_side(type_ast) {
-                let l = render_type_inner(left, false);
-                let r = render_type_inner(right, true);
-                return format!("{} -> {}", l, r);
             }
 
             let l = render_type_inner(left, false);
@@ -183,18 +177,6 @@ fn is_function_constructor(type_ast: &Value) -> bool {
                         return mod_parts == ["Prim"] && name == "Function";
                     }
                 }
-            }
-        }
-    }
-    false
-}
-
-fn is_function_right_side(type_ast: &Value) -> bool {
-    let tag = type_ast.get("tag").and_then(|t| t.as_str()).unwrap_or("");
-    if tag == "TypeApp" {
-        if let Some(arr) = type_ast.get("contents").and_then(|c| c.as_array()) {
-            if !arr.is_empty() {
-                return is_function(&arr[0]);
             }
         }
     }
