@@ -138,6 +138,9 @@
               "hylograph-selection": ">=0.1.1 <0.2.0"
             },
             {
+              "hylograph-sigil": "*"
+            },
+            {
               "hylograph-simulation": ">=0.1.0 <0.2.0"
             },
             {
@@ -311,7 +314,11 @@
         }
       }
     },
-    "extra_packages": {}
+    "extra_packages": {
+      "hylograph-sigil": {
+        "path": "../../purescript-hylograph-libs/purescript-hylograph-sigil"
+      }
+    }
   },
   "packages": {
     "aff": {
@@ -1083,6 +1090,22 @@
         "web-html",
         "web-pointerevents",
         "web-uievents"
+      ]
+    },
+    "hylograph-sigil": {
+      "type": "local",
+      "path": "../../purescript-hylograph-libs/purescript-hylograph-sigil",
+      "dependencies": [
+        "arrays",
+        "effect",
+        "foldable-traversable",
+        "integers",
+        "maybe",
+        "numbers",
+        "ordered-collections",
+        "prelude",
+        "strings",
+        "web-dom"
       ]
     },
     "hylograph-simulation": {

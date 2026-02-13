@@ -21,6 +21,7 @@ package:
     - halogen: ">=7.0.0 <8.0.0"
     - hylograph-layout: ">=0.1.0 <0.2.0"
     - hylograph-selection: ">=0.1.1 <0.2.0"
+    - hylograph-sigil: "*"
     - hylograph-simulation: ">=0.1.0 <0.2.0"
     - hylograph-simulation-halogen: ">=0.1.0 <0.2.0"
     - integers: ">=6.0.0 <7.0.0"

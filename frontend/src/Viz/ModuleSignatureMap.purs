@@ -2,7 +2,7 @@
 -- |
 -- | Category-lane layout of a module's type signatures.
 -- | Each declaration cell is sized to its rendered SVG bounding box.
--- | All layout logic is pure PureScript; SVG rendering is via TypeSignature FFI.
+-- | SVG rendering is via hylograph-sigil (layoutXxx + emit).
 module CE2.Viz.ModuleSignatureMap
   ( Config
   , Lane
@@ -17,17 +17,17 @@ module CE2.Viz.ModuleSignatureMap
   ) where
 
 import Prelude
+import Prim hiding (Constraint, Row)
 
 import Data.Array as Array
 import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Nullable (toMaybe)
 import Data.Set as Set
 import Effect (Effect)
 import Web.DOM (Element)
 
 import CE2.Data.Loader (V2Declaration, V2ChildDeclaration)
 import CE2.Viz.TypeSignature as TS
-import CE2.Viz.TypeSignature.TypeAST (parseAndExport, parseToRenderType, extractCtorArgs, collectTypeVars)
+import CE2.Viz.TypeSignature.TypeAST (parseToRenderType, extractCtorRenderTypes, collectTypeVars)
 
 -- =============================================================================
 -- Types
@@ -165,6 +165,7 @@ prepareOneCell config decl = do
     maxCellW = 1160.0  -- containerW - 40, assuming ~1200
 
 -- | Render a declaration to an SVG element based on its kind.
+-- | Uses hylograph-sigil layout + emit — dimensions come from the layout step.
 renderDeclaration :: V2Declaration -> String -> Effect { svg :: Maybe Element, width :: Number, height :: Number }
 renderDeclaration decl sig
   | (decl.kind == "data" || decl.kind == "newtype") && not (Array.null decl.children) = do
@@ -172,47 +173,29 @@ renderDeclaration decl sig
         typeParams = inferTypeParams decl.children
         constructors = decl.children
           # Array.filter (\c -> c.kind == "constructor" || c.kind == "" || c.kind == "")
-          # map (\c -> { name: c.name, args: extractCtorArgs (fromMaybe "" c.typeSignature) })
-      nullableEl <- TS.renderADTElement decl.name typeParams constructors parseAndExport
-      case toMaybe nullableEl of
-        Just el -> do
-          dims <- TS.measureSVGElement el
-          pure { svg: Just el, width: dims.width, height: dims.height }
-        Nothing -> pure { svg: Nothing, width: 0.0, height: 0.0 }
+          # map (\c -> { name: c.name, args: extractCtorRenderTypes (fromMaybe "" c.typeSignature) })
+      rendered <- TS.renderADTSVG decl.name typeParams constructors
+      pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
 
   | decl.kind == "type_class" && not (Array.null decl.children) = do
       let
         methods = decl.children
           # Array.filter (\c -> c.kind == "class_member" || c.kind == "" || c.kind == "")
-          # map (\c -> { name: c.name, sig: fromMaybe "" c.typeSignature })
-      nullableEl <- TS.renderClassDefElement decl.name [] [] methods parseAndExport
-      case toMaybe nullableEl of
-        Just el -> do
-          dims <- TS.measureSVGElement el
-          pure { svg: Just el, width: dims.width, height: dims.height }
-        Nothing -> pure { svg: Nothing, width: 0.0, height: 0.0 }
+          # map (\c -> { name: c.name, ast: c.typeSignature >>= parseToRenderType })
+      rendered <- TS.renderClassDefSVG decl.name [] [] methods
+      pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
 
   | otherwise = do
-      let
-        ast = case decl.typeSignature of
-          Just s  -> parseAndExport s
-          Nothing -> parseAndExport ""
-        -- For type synonyms and childless data types, extract type vars from the
-        -- signature body so they render as styled pills in the header.
-        showTypeParams = decl.kind == "type_synonym" || decl.kind == "data" || decl.kind == "newtype"
-        typeVars = if showTypeParams then
-          case decl.typeSignature >>= parseToRenderType of
-            Just rt -> Set.toUnfoldable (collectTypeVars rt)
-            Nothing -> []
-          else []
-      nullableEl <- if Array.null typeVars
-        then TS.renderSignatureElement decl.name sig ast
-        else TS.renderSignatureWithParamsElement decl.name sig ast typeVars
-      case toMaybe nullableEl of
-        Just el -> do
-          dims <- TS.measureSVGElement el
-          pure { svg: Just el, width: dims.width, height: dims.height }
+      case decl.typeSignature >>= parseToRenderType of
         Nothing -> pure { svg: Nothing, width: 0.0, height: 0.0 }
+        Just ast -> do
+          let
+            showTypeParams = decl.kind == "type_synonym" || decl.kind == "data" || decl.kind == "newtype"
+            typeVars = if showTypeParams
+              then Set.toUnfoldable (collectTypeVars ast)
+              else []
+          rendered <- TS.renderSignatureSVG decl.name sig ast typeVars Nothing
+          pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
 
 -- | Infer type parameters from constructor children signatures
 inferTypeParams :: Array V2ChildDeclaration -> Array String

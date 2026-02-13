@@ -300,6 +300,7 @@ fn render_constraint(constraint: &Value) -> String {
 
 fn render_row(type_ast: &Value) -> String {
     let mut fields = Vec::new();
+    let mut tail: Option<String> = None;
     let mut current = type_ast;
 
     loop {
@@ -319,14 +320,19 @@ fn render_row(type_ast: &Value) -> String {
             }
             "REmpty" => break,
             _ => {
-                // Row tail
-                fields.push(format!("| {}", render_type_inner(current, false)));
+                // Row tail variable — handle separately to avoid ", |"
+                tail = Some(render_type_inner(current, false));
                 break;
             }
         }
     }
 
-    format!("( {} )", fields.join(", "))
+    let fields_str = fields.join(", ");
+    match tail {
+        Some(t) if !fields.is_empty() => format!("( {} | {} )", fields_str, t),
+        Some(t) => format!("( | {} )", t),
+        None => format!("( {} )", fields_str),
+    }
 }
 
 fn render_type_op(type_ast: &Value) -> String {
