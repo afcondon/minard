@@ -179,6 +179,29 @@ export const buildCallsJson = (rows) => {
 };
 
 // =============================================================================
+// Re-exports
+// =============================================================================
+
+export const buildReexportsJson = (rows) => {
+  // Group re-exports by source module
+  const byModule = new Map();
+  for (const row of (rows || [])) {
+    const mod = row.source_module;
+    if (!byModule.has(mod)) {
+      byModule.set(mod, []);
+    }
+    byModule.get(mod).push(row.declaration_name);
+  }
+
+  const reExports = Array.from(byModule.entries()).map(([sourceModule, declarations]) => ({
+    sourceModule,
+    declarations
+  }));
+
+  return JSON.stringify({ reExports, count: rows ? rows.length : 0 });
+};
+
+// =============================================================================
 // Namespaces
 // =============================================================================
 

@@ -85,6 +85,9 @@ module CE2.Containers
     -- ModuleOverview (declaration treemap panel)
   , declarationTreemapContainerId
   , declarationTreemapContainer
+    -- ModuleOverview (declaration force graph panel)
+  , declarationForceGraphContainerId
+  , declarationForceGraphContainer
     -- DeclarationDetail (bubble pack panel)
   , declarationDetailBubbleContainerId
   , declarationDetailBubbleContainer
@@ -342,6 +345,13 @@ declarationTreemapContainerId = "declaration-treemap-container"
 
 declarationTreemapContainer :: Selector
 declarationTreemapContainer = toSelector declarationTreemapContainerId
+
+-- Declaration Force Graph (replaces treemap in left panel)
+declarationForceGraphContainerId :: ElementId
+declarationForceGraphContainerId = "declaration-force-graph-container"
+
+declarationForceGraphContainer :: Selector
+declarationForceGraphContainer = toSelector declarationForceGraphContainerId
 
 -- =============================================================================
 -- DeclarationDetail Scene (focused declaration with bubble pack)

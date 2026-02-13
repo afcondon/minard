@@ -3,11 +3,13 @@ module Server.Main where
 import Prelude
 
 import Data.Generic.Rep (class Generic)
+import Data.Int (fromString) as Int
 import Database.DuckDB as DB
 import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Console (log)
+import Foreign.Object as Object
 import HTTPurple (serve, ok)
 import Routing.Duplex (RouteDuplex', root, path, int, segment)
 import Routing.Duplex.Generic (noArgs, sum)
@@ -29,6 +31,7 @@ data Route
   | V2GetModuleDeclarations Int
   | V2GetModuleImports Int
   | V2GetModuleCalls Int
+  | V2GetModuleReexports Int
   | V2GetAllImports
   | V2GetAllCalls
   | V2GetModuleDeclarationStats
@@ -59,6 +62,7 @@ route = root $ sum
   , "V2GetModuleDeclarations": path "api/v2/module-declarations" (int segment)
   , "V2GetModuleImports": path "api/v2/module-imports" (int segment)
   , "V2GetModuleCalls": path "api/v2/module-calls" (int segment)
+  , "V2GetModuleReexports": path "api/v2/module-reexports" (int segment)
   , "V2GetAllImports": path "api/v2/all-imports" noArgs
   , "V2GetAllCalls": path "api/v2/all-calls" noArgs
   , "V2GetModuleDeclarationStats": path "api/v2/module-declaration-stats" noArgs
@@ -90,13 +94,14 @@ main = launchAff_ do
     log ""
     log "Endpoints:"
     log "  GET /api/v2/stats                        - Database statistics"
-    log "  GET /api/v2/packages                     - List all packages"
+    log "  GET /api/v2/packages[?project=N]          - List packages (scoped to project)"
     log "  GET /api/v2/packages/:id                 - Get package with modules"
-    log "  GET /api/v2/modules                      - List all modules"
+    log "  GET /api/v2/modules[?project=N]           - List modules (scoped to project)"
     log "  GET /api/v2/modules/:id                  - Get module details"
     log "  GET /api/v2/module-declarations/:id      - Get module declarations"
     log "  GET /api/v2/module-imports/:id           - Get module imports"
     log "  GET /api/v2/module-calls/:id             - Get function calls"
+    log "  GET /api/v2/module-reexports/:id         - Get module re-exports"
     log "  GET /api/v2/all-imports                  - Get all module imports (bulk)"
     log "  GET /api/v2/all-calls                    - Get all function calls (bulk)"
     log "  GET /api/v2/module-declaration-stats     - Declaration stats by module"
@@ -109,22 +114,25 @@ main = launchAff_ do
     log "  GET /api/v2/git/status                   - Live git status (modified/staged)"
     log "  GET /health                              - Health check"
   where
-  mkRouter db { route: r } = case r of
+  mkRouter db { route: r, query } =
+    let mProject = Object.lookup "project" query >>= Int.fromString
+    in case r of
     V2Stats -> Unified.getStats db
-    V2ListPackages -> Unified.listPackages db
+    V2ListPackages -> Unified.listPackages db mProject
     V2GetPackage pkgId -> Unified.getPackage db pkgId
-    V2ListModules -> Unified.listModules db
+    V2ListModules -> Unified.listModules db mProject
     V2GetModule modId -> Unified.getModule db modId
     V2GetModuleDeclarations modId -> Unified.getModuleDeclarations db modId
     V2GetModuleImports modId -> Unified.getModuleImports db modId
     V2GetModuleCalls modId -> Unified.getModuleCalls db modId
+    V2GetModuleReexports modId -> Unified.getModuleReexports db modId
     V2GetAllImports -> Unified.getAllImports db
     V2GetAllCalls -> Unified.getAllCalls db
     V2GetModuleDeclarationStats -> Unified.getModuleDeclarationStats db
     V2ListNamespaces -> Unified.listNamespaces db
     V2GetNamespace nsPath -> Unified.getNamespace db nsPath
-    V2SearchDeclarations query -> Unified.searchDeclarations db query
-    V2Search query -> Unified.searchAll db query
+    V2SearchDeclarations q -> Unified.searchDeclarations db q
+    V2Search q -> Unified.searchAll db q
     V2PolyglotSummary -> Unified.getPolyglotSummary db
     V2TypeClassStats -> Unified.getTypeClassStats db
     V2GitStatus -> Unified.getGitStatus

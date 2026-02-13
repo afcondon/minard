@@ -2,7 +2,7 @@
 # Static PureScript app served via nginx
 #
 # Build:   docker build -t psd3-site-explorer .
-# Run:     docker run -p 8093:80 psd3-site-explorer
+# Run:     docker run -p 3003:80 psd3-site-explorer
 
 FROM nginx:alpine
 

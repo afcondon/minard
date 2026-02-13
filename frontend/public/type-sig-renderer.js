@@ -1155,6 +1155,60 @@ const TypeSigRenderer = (() => {
     return svg;
   }
 
-  return { renderSignature, renderADT, renderClassDef, measure, typeToText };
+  // ── Sparkline: miniature type signature for treemap cells ──
+
+  function renderSparkline(ast, maxWidth, maxHeight) {
+    const { forallVars, constraints, body } = unwrapType(ast);
+    const allVars = collectAllVars(ast);
+    _varColors = assignVarColors([...forallVars, ...allVars]);
+
+    // Measure full-size body
+    const bodyM = measure(body);
+    const constraintH = constraints.length > 0 ? Math.min(constraints.length, 3) * 24 + 10 : 0;
+    const forallH = forallVars.length > 0 ? 22 : 0;
+    const bodyH = Math.max(bodyM.height, LINE_HEIGHT);
+    const fullW = bodyM.width + 10;
+    const fullH = constraintH + bodyH + forallH + 4;
+
+    if (fullW <= 0 || fullH <= 0) { _varColors = {}; return null; }
+
+    const scaleX = maxWidth / fullW;
+    const scaleY = maxHeight / fullH;
+    const scale = Math.min(scaleX, scaleY, 1.0);
+
+    const g = svgEl('g', {});
+    const inner = svgEl('g', { transform: `scale(${scale})` });
+    g.appendChild(inner);
+
+    let curY = 0;
+
+    // Constraint pills
+    if (constraints.length > 0) {
+      renderConstraintPile(inner, 0, curY, constraints);
+      curY += constraintH;
+    }
+
+    // Body — reuses existing renderNode
+    renderNode(inner, 0, curY, body);
+    curY += bodyH;
+
+    // Forall annotation
+    if (forallVars.length > 0) {
+      curY += 2;
+      let fx = 0;
+      inner.appendChild(textEl(fx, curY + 9, FORALL,
+        `fill:${COLORS.keyword};font-weight:700;font-size:14px;`));
+      fx += CHAR_WIDTH * 1.4 + 3;
+      for (let i = 0; i < forallVars.length; i++) {
+        if (i > 0) fx += 3;
+        fx += renderSmallPill(inner, fx, curY + 1, forallVars[i], curY + 9);
+      }
+    }
+
+    _varColors = {};
+    return { element: g, scaledWidth: fullW * scale, scaledHeight: fullH * scale };
+  }
+
+  return { renderSignature, renderADT, renderClassDef, renderSparkline, measure, typeToText };
 
 })();

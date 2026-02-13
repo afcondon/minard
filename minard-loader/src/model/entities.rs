@@ -159,6 +159,7 @@ pub struct ParsedModule {
     pub module: Module,
     pub declarations: Vec<Declaration>,
     pub child_declarations: Vec<ChildDeclaration>,
+    pub re_exports: Vec<(String, String)>, // (source_module, declaration_name)
 }
 
 /// Statistics from a load operation

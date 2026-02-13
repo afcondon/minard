@@ -36,6 +36,8 @@ import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreema
 
 import CE2.Data.Loader (V2Declaration, V2FunctionCall)
 import CE2.Viz.ModuleTreemapEnriched (ChildCircle, kindColor, childCircleElem, packChildren, syntheticArityChildren)
+import CE2.Viz.TypeSignature as TypeSignature
+import CE2.Viz.TypeSignature.TypeAST (parseAndExport)
 
 -- =============================================================================
 -- Types
@@ -96,7 +98,20 @@ render config declarations callsMap = do
     -- Render SVG
     let svgTree = buildTreemapSVG config positioned posMap
     _ <- rerender config.containerSelector svgTree
-    pure unit
+
+    -- Inject sparkline type signature visualizations into treemap cells
+    let sparkCells = Array.mapMaybe (\pd ->
+          case pd.decl.typeSignature of
+            Just sig -> Just
+              { ast: parseAndExport sig
+              , x: pd.x
+              , y: pd.y
+              , width: pd.width
+              , height: pd.height
+              }
+            Nothing -> Nothing
+        ) positioned
+    TypeSignature.injectSparklines config.containerSelector sparkCells
 
 -- | Clean up
 cleanup :: String -> Effect Unit

@@ -16,6 +16,8 @@ module API.Unified
   , getModuleDeclarations
   , getModuleImports
   , getModuleCalls
+  -- Re-exports
+  , getModuleReexports
   -- Bulk data
   , getAllImports
   , getAllCalls
@@ -38,6 +40,7 @@ module API.Unified
 import Prelude
 
 import Data.Maybe (Maybe(..))
+import Data.Nullable (toNullable)
 import Data.String.Common (toLower)
 import Data.String.CodeUnits as SCU
 import Database.DuckDB (Database, queryAll, queryAllParams, firstRow)
@@ -81,11 +84,13 @@ foreign import buildStatsJson :: Array Foreign -> String
 -- =============================================================================
 
 -- | List all package versions with module counts, LOC, and dependencies
--- | Only returns packages in the transitive closure (those with topo_layer data)
--- | This excludes packages loaded from tarball cache that aren't used by any project
-listPackages :: Database -> Aff Response
-listPackages db = do
-  rows <- queryAll db """
+-- | Scoped to a project via ?project=<id>. Defaults to first project when unspecified.
+listPackages :: Database -> Maybe Int -> Aff Response
+listPackages db mProject = do
+  rows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    )
     SELECT
       pv.id,
       pv.name,
@@ -100,14 +105,22 @@ listPackages db = do
       (SELECT STRING_AGG(pd.dependency_name, ',')
        FROM package_dependencies pd
        WHERE pd.dependent_id = pv.id) as depends,
-      (SELECT MAX(sp.topo_layer) FROM snapshot_packages sp WHERE sp.package_version_id = pv.id) as topo_layer
+      (SELECT MAX(sp.topo_layer) FROM snapshot_packages sp
+       JOIN snapshots s ON s.id = sp.snapshot_id
+       WHERE sp.package_version_id = pv.id
+       AND s.project_id = (SELECT project_id FROM target)) as topo_layer
     FROM package_versions pv
     LEFT JOIN modules m ON m.package_version_id = pv.id
     LEFT JOIN declarations d ON d.module_id = m.id
-    WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+    WHERE EXISTS (
+      SELECT 1 FROM snapshot_packages sp
+      JOIN snapshots s ON s.id = sp.snapshot_id
+      WHERE sp.package_version_id = pv.id
+      AND s.project_id = (SELECT project_id FROM target)
+    )
     GROUP BY pv.id, pv.name, pv.version, pv.description, pv.license, pv.repository, pv.source
     ORDER BY pv.source DESC, pv.name, pv.version
-  """
+  """ [unsafeToForeign (toNullable mProject)]
   let json = buildPackagesJson rows
   ok' jsonHeaders json
 
@@ -166,10 +179,13 @@ foreign import buildPackageWithModulesJson :: Foreign -> Array Foreign -> String
 -- GET /api/v2/modules
 -- =============================================================================
 
--- | List modules with package info (paginated)
-listModules :: Database -> Aff Response
-listModules db = do
-  rows <- queryAll db """
+-- | List modules with package info, scoped to a project
+listModules :: Database -> Maybe Int -> Aff Response
+listModules db mProject = do
+  rows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    )
     SELECT
       m.id,
       m.name as module_name,
@@ -185,9 +201,15 @@ listModules db = do
     JOIN package_versions pv ON m.package_version_id = pv.id
     LEFT JOIN module_namespaces ns ON m.namespace_id = ns.id
     LEFT JOIN declarations d ON d.module_id = m.id
+    WHERE EXISTS (
+      SELECT 1 FROM snapshot_packages sp
+      JOIN snapshots s ON s.id = sp.snapshot_id
+      WHERE sp.package_version_id = pv.id
+      AND s.project_id = (SELECT project_id FROM target)
+    )
     GROUP BY m.id, m.name, m.path, m.loc, pv.id, pv.name, pv.version, pv.source, ns.path
     ORDER BY pv.source DESC, m.name
-  """
+  """ [unsafeToForeign (toNullable mProject)]
   let json = buildModulesJson rows
   ok' jsonHeaders json
 
@@ -325,6 +347,26 @@ getModuleCalls db moduleId = do
   ok' jsonHeaders json
 
 foreign import buildCallsJson :: Array Foreign -> String
+
+-- =============================================================================
+-- GET /api/v2/module-reexports/:id
+-- =============================================================================
+
+-- | Get re-exports for a module
+getModuleReexports :: Database -> Int -> Aff Response
+getModuleReexports db moduleId = do
+  rows <- queryAllParams db """
+    SELECT
+      mr.source_module,
+      mr.declaration_name
+    FROM module_reexports mr
+    WHERE mr.module_id = ?
+    ORDER BY mr.source_module, mr.declaration_name
+  """ [unsafeToForeign moduleId]
+  let json = buildReexportsJson rows
+  ok' jsonHeaders json
+
+foreign import buildReexportsJson :: Array Foreign -> String
 
 -- =============================================================================
 -- GET /api/v2/namespaces

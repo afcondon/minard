@@ -28,7 +28,7 @@ import Halogen.Subscription as HS
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
 import CE2.Viz.ModuleTreemapEnriched (kindColor)
-import CE2.Viz.DeclarationTreemap as DeclarationTreemap
+import CE2.Viz.DeclarationForceGraph as DeclarationForceGraph
 
 -- =============================================================================
 -- Types
@@ -54,6 +54,7 @@ type State =
   , actionListener :: Maybe (HS.Listener Action)
   , lastInput :: Input
   , hoveredDeclaration :: Maybe String
+  , forceGraphHandle :: Maybe DeclarationForceGraph.ForceGraphHandle
   }
 
 data Action
@@ -84,6 +85,7 @@ initialState input =
   , actionListener: Nothing
   , lastInput: input
   , hoveredDeclaration: Nothing
+  , forceGraphHandle: Nothing
   }
 
 -- =============================================================================
@@ -100,12 +102,12 @@ render state =
     [ HP.class_ (HH.ClassName "module-overview-viz")
     , HP.style "display: flex; width: 100%; height: 100%;"
     ]
-    [ -- Left panel: Declaration treemap
+    [ -- Left panel: Declaration force graph
       HH.div
-        [ HP.style "width: 38%; height: 100%; position: relative; border-right: 1px solid rgba(255,255,255,0.1);"
+        [ HP.style "width: 38%; height: 100%; position: relative; border-right: 1px solid rgba(0,0,0,0.08);"
         ]
         [ HH.div
-            [ HP.id C.declarationTreemapContainerId
+            [ HP.id C.declarationForceGraphContainerId
             , HP.style "width: 100%; height: 100%;"
             ]
             []
@@ -192,7 +194,7 @@ handleAction = case _ of
     void $ H.subscribe emitter
     H.modify_ _ { actionListener = Just listener, initialized = true }
 
-    renderDeclarationTreemap input
+    renderDeclarationForceGraph input
 
   Receive input -> do
     state <- H.get
@@ -200,7 +202,12 @@ handleAction = case _ of
               || Array.length input.declarations /= Array.length state.lastInput.declarations
     H.modify_ _ { lastInput = input }
     when (changed && state.initialized) do
-      renderDeclarationTreemap input
+      -- Stop previous simulation before starting new one
+      case state.forceGraphHandle of
+        Just handle -> liftEffect handle.stop
+        Nothing -> pure unit
+      H.modify_ _ { forceGraphHandle = Nothing }
+      renderDeclarationForceGraph input
 
   HandleDeclarationClick pkgName modName declName -> do
     log $ "[ModuleOverviewViz] Declaration clicked: " <> declName
@@ -210,22 +217,22 @@ handleAction = case _ of
     H.modify_ _ { hoveredDeclaration = mName }
     H.raise (DeclarationHovered mName)
 
--- | Render the declaration treemap into the left panel container
-renderDeclarationTreemap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
-renderDeclarationTreemap input = do
+-- | Render the declaration force graph into the left panel container
+renderDeclarationForceGraph :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
+renderDeclarationForceGraph input = do
   state <- H.get
   let onDeclClick = makeDeclarationClickCallback state.actionListener
-  liftEffect $ DeclarationTreemap.render
-    { containerSelector: C.declarationTreemapContainer
+  handle <- liftEffect $ DeclarationForceGraph.render
+    { containerSelector: C.declarationForceGraphContainer
     , width: 600.0
     , height: 900.0
     , packageName: input.packageName
     , moduleName: input.moduleName
     , onDeclarationClick: Just onDeclClick
-    , focusedDeclaration: Nothing
     }
     input.declarations
     input.functionCalls
+  H.modify_ _ { forceGraphHandle = Just handle }
 
 -- | Create a declaration click callback that notifies the Halogen listener
 makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit

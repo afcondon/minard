@@ -17,8 +17,19 @@ pub struct DocsJson {
 
 #[derive(Debug, Deserialize)]
 pub struct ReExport {
-    pub module: Option<String>,
-    pub declarations: Option<Vec<String>>,
+    /// Module name segments, e.g. ["Data", "Array"] for Data.Array
+    #[serde(rename = "moduleName")]
+    pub module_name: Vec<String>,
+    /// Full declaration objects (same structure as top-level declarations)
+    #[serde(default)]
+    pub declarations: Vec<Declaration>,
+}
+
+impl ReExport {
+    /// Join module name segments into a dotted string
+    pub fn module_name_string(&self) -> String {
+        self.module_name.join(".")
+    }
 }
 
 #[derive(Debug, Deserialize)]

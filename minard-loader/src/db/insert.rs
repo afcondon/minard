@@ -403,6 +403,22 @@ pub fn insert_child_declarations(conn: &Connection, children: &[ChildDeclaration
     Ok(())
 }
 
+/// Insert re-exports for a module
+pub fn insert_reexports(
+    conn: &Connection,
+    module_id: i64,
+    re_exports: &[(String, String)],
+) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "INSERT OR IGNORE INTO module_reexports (module_id, source_module, declaration_name)
+         VALUES (?, ?, ?)",
+    )?;
+    for (source_module, decl_name) in re_exports {
+        stmt.execute(params![module_id, source_module, decl_name])?;
+    }
+    Ok(())
+}
+
 /// Max IDs from the database
 #[derive(Debug, Default)]
 pub struct MaxIds {

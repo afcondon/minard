@@ -1,9 +1,8 @@
 -- | Declaration Detail Visualization Component
 -- |
--- | Split-panel view: dimmed treemap + force neighborhood (left) + declaration detail (right).
--- | Shows a single declaration "unfolded" with full type signature, doc comments,
--- | and child declarations. The left panel layers a dimmed declaration treemap
--- | (background) with a force-directed dependency neighborhood (overlay).
+-- | Split-panel view: interactive declaration treemap (left) + declaration detail (right).
+-- | Shows a single declaration "unfolded" with SVG type signature, doc comments,
+-- | and child declarations. Clicking a treemap rect navigates to that declaration.
 module CE2.Component.DeclarationDetailViz
   ( component
   , Input
@@ -31,7 +30,6 @@ import CE2.Containers as C
 import CE2.Data.Loader as Loader
 import CE2.Viz.DeclarationTreemap as DeclarationTreemap
 import CE2.Viz.TypeSignature as TypeSignature
-import CE2.Viz.DependencyNeighborhood as DependencyNeighborhood
 import CE2.Viz.ModuleTreemapEnriched (kindColor, childKindColor)
 
 import Hylograph.HATS.InterpreterTick (clearContainer)
@@ -60,7 +58,6 @@ type State =
   { initialized :: Boolean
   , actionListener :: Maybe (HS.Listener Action)
   , lastInput :: Input
-  , neighborhoodHandle :: Maybe DependencyNeighborhood.NeighborhoodHandle
   }
 
 data Action
@@ -90,7 +87,6 @@ initialState input =
   { initialized: false
   , actionListener: Nothing
   , lastInput: input
-  , neighborhoodHandle: Nothing
   }
 
 -- =============================================================================
@@ -107,20 +103,13 @@ render state =
     [ HP.class_ (HH.ClassName "declaration-detail-viz")
     , HP.style "display: flex; width: 100%; height: 100%;"
     ]
-    [ -- Left panel: two layers (treemap background + neighborhood overlay)
+    [ -- Left panel: Interactive declaration treemap
       HH.div
         [ HP.style "width: 38%; height: 100%; position: relative; border-right: 1px solid #e0e0e0;"
         ]
-        [ -- Layer 1: Dimmed declaration treemap (background)
-          HH.div
+        [ HH.div
             [ HP.id C.declarationDetailTreemapContainerId
-            , HP.style "position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1;"
-            ]
-            []
-        -- Layer 2: Force-directed neighborhood (overlay)
-        , HH.div
-            [ HP.id C.dependencyNeighborhoodContainerId
-            , HP.style "position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;"
+            , HP.style "width: 100%; height: 100%;"
             ]
             []
         ]
@@ -265,7 +254,7 @@ handleAction = case _ of
     void $ H.subscribe emitter
     H.modify_ _ { actionListener = Just listener, initialized = true }
 
-    renderDetailLayers input listener
+    renderTreemap input listener
 
     -- Render type signature visualization
     let mDecl = Array.find (\d -> d.name == input.declarationName) input.declarations
@@ -279,14 +268,9 @@ handleAction = case _ of
               || input.moduleName /= state.lastInput.moduleName
     H.modify_ _ { lastInput = input }
     when (changed && state.initialized) do
-      -- Stop old neighborhood simulation
-      case state.neighborhoodHandle of
-        Just handle -> liftEffect handle.stop
-        Nothing -> pure unit
-      H.modify_ _ { neighborhoodHandle = Nothing }
       case state.actionListener of
         Just listener -> do
-          renderDetailLayers input listener
+          renderTreemap input listener
           -- Render type signature visualization
           let mDecl = Array.find (\d -> d.name == input.declarationName) input.declarations
           case mDecl of
@@ -301,24 +285,15 @@ handleAction = case _ of
   HandleBackClick -> do
     H.raise BackToModuleOverview
 
--- | Render both layers: dimmed treemap + neighborhood overlay
-renderDetailLayers :: forall m. MonadAff m => Input -> HS.Listener Action -> H.HalogenM State Action () Output m Unit
-renderDetailLayers input listener = do
-  let decls = input.declarations
-      declKind = case Array.find (\d -> d.name == input.declarationName) decls of
-        Just d -> d.kind
-        Nothing -> "value"
-
-  -- Click callback for both layers
+-- | Render the interactive declaration treemap in the left panel
+renderTreemap :: forall m. MonadAff m => Input -> HS.Listener Action -> H.HalogenM State Action () Output m Unit
+renderTreemap input listener = do
   let onDeclClick :: String -> String -> String -> Effect Unit
       onDeclClick pkg mod_ decl_ = HS.notify listener (HandleDeclarationClick pkg mod_ decl_)
 
-  nhHandle <- liftEffect do
-    -- Clear both containers
+  liftEffect do
     clearContainer C.declarationDetailTreemapContainer
-    clearContainer C.dependencyNeighborhoodContainer
 
-    -- Layer 1: Dimmed declaration treemap
     DeclarationTreemap.render
       { containerSelector: C.declarationDetailTreemapContainer
       , width: 600.0
@@ -328,23 +303,8 @@ renderDetailLayers input listener = do
       , onDeclarationClick: Just onDeclClick
       , focusedDeclaration: Just input.declarationName
       }
-      decls
+      input.declarations
       input.functionCalls
-
-    -- Layer 2: Dependency neighborhood overlay
-    DependencyNeighborhood.render
-      { containerSelector: C.dependencyNeighborhoodContainer
-      , width: 600.0
-      , height: 900.0
-      , packageName: input.packageName
-      , moduleName: input.moduleName
-      , declarationName: input.declarationName
-      , declarationKind: declKind
-      , onDeclarationClick: Just onDeclClick
-      }
-      input.functionCalls
-
-  H.modify_ _ { neighborhoodHandle = Just nhHandle }
 
 -- =============================================================================
 -- Utilities

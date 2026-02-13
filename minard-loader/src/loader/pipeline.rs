@@ -8,7 +8,7 @@ use std::time::Instant;
 use crate::db::{
     get_max_ids, get_or_create_namespace, get_or_create_project, insert_child_declarations,
     insert_declarations, insert_modules, insert_package_dependencies,
-    insert_package_versions_with_ids, insert_snapshot, insert_snapshot_packages,
+    insert_package_versions_with_ids, insert_reexports, insert_snapshot, insert_snapshot_packages,
     package_has_modules, update_package_ffi_stats, IdGenerator,
 };
 use super::postload::{
@@ -282,6 +282,7 @@ impl LoadPipeline {
         let mut all_modules = Vec::new();
         let mut all_declarations = Vec::new();
         let mut all_children = Vec::new();
+        let mut all_reexports: Vec<(i64, Vec<(String, String)>)> = Vec::new();
 
         // Collect all unique namespace paths
         let mut namespace_paths: HashSet<String> = HashSet::new();
@@ -307,6 +308,11 @@ impl LoadPipeline {
             // Set namespace_id on the module
             parsed.module.namespace_id = namespace_map.get(&parsed.module.name).copied();
 
+            // Collect re-exports with module ID
+            if !parsed.re_exports.is_empty() {
+                all_reexports.push((parsed.module.id, parsed.re_exports));
+            }
+
             all_modules.push(parsed.module);
             all_declarations.extend(parsed.declarations);
             all_children.extend(parsed.child_declarations);
@@ -320,6 +326,11 @@ impl LoadPipeline {
 
         insert_child_declarations(conn, &all_children)?;
         stats.child_declarations_loaded = all_children.len();
+
+        // Insert re-exports
+        for (module_id, re_exports) in &all_reexports {
+            insert_reexports(conn, *module_id, re_exports)?;
+        }
 
         // Phase 6b: Load registry packages from output directory
         progress.set_message("Loading registry packages...");
@@ -688,10 +699,23 @@ impl LoadPipeline {
             }
         }
 
+        // Extract re-exports
+        let re_exports: Vec<(String, String)> = docs
+            .re_exports
+            .iter()
+            .flat_map(|re| {
+                let source_mod = re.module_name_string();
+                re.declarations
+                    .iter()
+                    .map(move |d| (source_mod.clone(), d.title.clone()))
+            })
+            .collect();
+
         Ok(ParsedModule {
             module,
             declarations,
             child_declarations,
+            re_exports,
         })
     }
 }
