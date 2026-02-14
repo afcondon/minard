@@ -35,12 +35,16 @@ module API.Unified
   , getTypeClassStats
   -- Git
   , getGitStatus
+  -- Declaration usage
+  , getDeclarationUsage
+  -- Module source
+  , getModuleSource
   ) where
 
 import Prelude
 
 import Data.Maybe (Maybe(..))
-import Data.Nullable (toNullable)
+import Data.Nullable (Nullable, toMaybe, toNullable)
 import Data.String.Common (toLower)
 import Data.String.CodeUnits as SCU
 import Database.DuckDB (Database, queryAll, queryAllParams, firstRow)
@@ -794,6 +798,58 @@ getTypeClassStats db = do
 foreign import buildTypeClassStatsJson :: Array Foreign -> String
 
 -- =============================================================================
+-- GET /api/v2/declaration-usage?module=&decl=
+-- =============================================================================
+
+-- | Get cross-module usage for a declaration (callers + callees, transitive to depth 3)
+getDeclarationUsage :: Database -> String -> String -> Aff Response
+getDeclarationUsage db moduleName declName = do
+  -- Callees: what this declaration calls (transitive, depth 3)
+  callees <- queryAllParams db """
+    WITH RECURSIVE callees AS (
+      SELECT fc.callee_module as module_name, fc.callee_name as decl_name, 1 as hop
+      FROM function_calls fc
+      JOIN modules m ON fc.caller_module_id = m.id
+      WHERE m.name = ? AND fc.caller_name = ?
+
+      UNION
+
+      SELECT fc2.callee_module, fc2.callee_name, c.hop + 1
+      FROM callees c
+      JOIN modules m2 ON m2.name = c.module_name
+      JOIN function_calls fc2 ON fc2.caller_module_id = m2.id AND fc2.caller_name = c.decl_name
+      WHERE c.hop < 3
+    )
+    SELECT DISTINCT 'callee' as direction, module_name, decl_name, MIN(hop) as hop
+    FROM callees GROUP BY module_name, decl_name
+  """ [unsafeToForeign moduleName, unsafeToForeign declName]
+
+  -- Callers: who calls this declaration (transitive, depth 3)
+  callers <- queryAllParams db """
+    WITH RECURSIVE callers AS (
+      SELECT m.name as module_name, fc.caller_name as decl_name, 1 as hop
+      FROM function_calls fc
+      JOIN modules m ON fc.caller_module_id = m.id
+      WHERE fc.callee_module = ? AND fc.callee_name = ?
+
+      UNION
+
+      SELECT m2.name, fc2.caller_name, c.hop + 1
+      FROM callers c
+      JOIN function_calls fc2 ON fc2.callee_module = c.module_name AND fc2.callee_name = c.decl_name
+      JOIN modules m2 ON fc2.caller_module_id = m2.id
+      WHERE c.hop < 3
+    )
+    SELECT DISTINCT 'caller' as direction, module_name, decl_name, MIN(hop) as hop
+    FROM callers GROUP BY module_name, decl_name
+  """ [unsafeToForeign moduleName, unsafeToForeign declName]
+
+  let json = buildDeclarationUsageJson callers callees
+  ok' jsonHeaders json
+
+foreign import buildDeclarationUsageJson :: Array Foreign -> Array Foreign -> String
+
+-- =============================================================================
 -- GET /api/v2/git/status
 -- =============================================================================
 
@@ -806,3 +862,32 @@ getGitStatus = do
   ok' jsonHeaders json
 
 foreign import getGitStatusJson :: Effect String
+
+-- =============================================================================
+-- GET /api/v2/module-source?module=<name>
+-- =============================================================================
+
+-- | Read a module's .purs source file from disk
+-- | Looks up the file path via source_span in the DB, then reads the file
+getModuleSource :: Database -> String -> Aff Response
+getModuleSource db moduleName = do
+  rows <- queryAllParams db """
+    SELECT d.source_span, pr.repo_path
+    FROM declarations d
+    JOIN modules m ON d.module_id = m.id
+    JOIN package_versions pv ON m.package_version_id = pv.id
+    JOIN snapshot_packages sp ON sp.package_version_id = pv.id
+    JOIN snapshots s ON s.id = sp.snapshot_id
+    JOIN projects pr ON pr.id = s.project_id
+    WHERE m.name = ? AND d.source_span IS NOT NULL
+    LIMIT 1
+  """ [unsafeToForeign moduleName]
+  case firstRow rows of
+    Nothing -> notFound
+    Just row -> do
+      json <- liftEffect $ buildModuleSourceJson row
+      case toMaybe json of
+        Nothing -> notFound
+        Just j -> ok' jsonHeaders j
+
+foreign import buildModuleSourceJson :: Foreign -> Effect (Nullable String)

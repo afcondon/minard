@@ -4,6 +4,7 @@ import Prelude
 
 import Data.Generic.Rep (class Generic)
 import Data.Int (fromString) as Int
+import Data.Maybe (Maybe(..))
 import Database.DuckDB as DB
 import Effect (Effect)
 import Effect.Aff (launchAff_)
@@ -47,6 +48,10 @@ data Route
   | V2TypeClassStats
   -- Git
   | V2GitStatus
+  -- Declaration usage (cross-module call graph)
+  | V2GetDeclarationUsage
+  -- Module source (read .purs file from disk)
+  | V2GetModuleSource
   -- Health
   | Health
 
@@ -73,6 +78,8 @@ route = root $ sum
   , "V2PolyglotSummary": path "api/v2/polyglot-summary" noArgs
   , "V2TypeClassStats": path "api/v2/type-class-stats" noArgs
   , "V2GitStatus": path "api/v2/git/status" noArgs
+  , "V2GetDeclarationUsage": path "api/v2/declaration-usage" noArgs
+  , "V2GetModuleSource": path "api/v2/module-source" noArgs
   , "Health": path "health" noArgs
   }
 
@@ -112,6 +119,8 @@ main = launchAff_ do
     log "  GET /api/v2/polyglot-summary             - Polyglot project summary"
     log "  GET /api/v2/type-class-stats            - Type class method/instance counts"
     log "  GET /api/v2/git/status                   - Live git status (modified/staged)"
+    log "  GET /api/v2/declaration-usage?module=&decl= - Cross-module usage graph"
+    log "  GET /api/v2/module-source?module=         - Read module .purs source file"
     log "  GET /health                              - Health check"
   where
   mkRouter db { route: r, query } =
@@ -136,4 +145,14 @@ main = launchAff_ do
     V2PolyglotSummary -> Unified.getPolyglotSummary db
     V2TypeClassStats -> Unified.getTypeClassStats db
     V2GitStatus -> Unified.getGitStatus
+    V2GetDeclarationUsage ->
+      let mModule = Object.lookup "module" query
+          mDecl = Object.lookup "decl" query
+      in case mModule, mDecl of
+        Just moduleName, Just declName -> Unified.getDeclarationUsage db moduleName declName
+        _, _ -> ok "{ \"error\": \"module and decl query params required\" }"
+    V2GetModuleSource ->
+      case Object.lookup "module" query of
+        Just moduleName -> Unified.getModuleSource db moduleName
+        Nothing -> ok "{ \"error\": \"module query param required\" }"
     Health -> ok "OK"

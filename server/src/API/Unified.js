@@ -568,11 +568,37 @@ export const buildTypeClassStatsJson = (rows) => {
 };
 
 // =============================================================================
+// Declaration Usage (cross-module call graph)
+// =============================================================================
+
+export const buildDeclarationUsageJson = (callerRows) => (calleeRows) => {
+  const callers = (callerRows || []).map(row => ({
+    moduleName: row.module_name,
+    declName: row.decl_name,
+    hop: Number(row.hop) || 1
+  }));
+
+  const callees = (calleeRows || []).map(row => ({
+    moduleName: row.module_name,
+    declName: row.decl_name,
+    hop: Number(row.hop) || 1
+  }));
+
+  return JSON.stringify({
+    callers,
+    callees,
+    callerCount: callers.length,
+    calleeCount: callees.length
+  });
+};
+
+// =============================================================================
 // Git Status (live query)
 // =============================================================================
 
 import { execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
+import { resolve, join } from 'path';
 
 /**
  * Get current git status and map file paths to module names.
@@ -708,3 +734,52 @@ function mulberry32(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
+
+// =============================================================================
+// Module Source (read .purs file from disk)
+// =============================================================================
+
+/**
+ * Build module source JSON by reading the .purs file from disk.
+ * Uses source_span from the DB to determine the file path,
+ * and repo_path from the project to resolve relative paths.
+ *
+ * Returns Nothing (null) if the file cannot be found.
+ * PureScript FFI: Foreign -> Effect (Maybe String)
+ */
+export const buildModuleSourceJson = (row) => () => {
+  try {
+    // Parse source_span JSON to extract the file path
+    const sourceSpan = typeof row.source_span === 'string'
+      ? JSON.parse(row.source_span) : row.source_span;
+
+    if (!sourceSpan || !sourceSpan.name) {
+      return null;
+    }
+
+    const filePath = sourceSpan.name;
+    const repoPath = row.repo_path || '.';
+
+    // The server runs from the minard/ directory.
+    // For workspace packages, repo_path is relative to minard/ (e.g. "." for the main project).
+    // For .spago packages, paths are like ".spago/p/package-version/src/Module.purs"
+    // The source_span.name contains the path relative to the repo root.
+    const projectRoot = process.cwd().replace(/\/server$/, '');
+    const fullPath = resolve(projectRoot, repoPath, filePath);
+
+    if (!existsSync(fullPath)) {
+      // Try without repo_path (some paths are already absolute or relative to cwd)
+      const altPath = resolve(projectRoot, filePath);
+      if (!existsSync(altPath)) {
+        return null;
+      }
+      const source = readFileSync(altPath, 'utf8');
+      return JSON.stringify({ source, path: filePath });
+    }
+
+    const source = readFileSync(fullPath, 'utf8');
+    return JSON.stringify({ source, path: filePath });
+  } catch (error) {
+    return null;
+  }
+};

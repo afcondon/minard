@@ -168,13 +168,18 @@ prepareOneCell config decl = do
 -- | Uses hylograph-sigil layout + emit — dimensions come from the layout step.
 renderDeclaration :: V2Declaration -> String -> Effect { svg :: Maybe Element, width :: Number, height :: Number }
 renderDeclaration decl sig
-  | (decl.kind == "data" || decl.kind == "newtype") && not (Array.null decl.children) = do
+  | decl.kind == "data" || decl.kind == "newtype" = do
       let
-        typeParams = inferTypeParams decl.children
+        typeParams = if Array.null decl.children
+          then decl.typeArguments
+          else inferTypeParams decl.children
         constructors = decl.children
           # Array.filter (\c -> c.kind == "constructor" || c.kind == "" || c.kind == "")
           # map (\c -> { name: c.name, args: extractCtorRenderTypes (fromMaybe "" c.typeSignature) })
-      rendered <- TS.renderADTSVG decl.name typeParams constructors
+        keyword = case decl.dataDeclType of
+          Just "newtype" -> Just "newtype"
+          _ -> Nothing
+      rendered <- TS.renderADTSVG decl.name typeParams constructors keyword
       pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
 
   | decl.kind == "type_class" = do

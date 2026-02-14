@@ -61,8 +61,8 @@ parentScene = case _ of
   PkgTreemap _pkg -> SolarSwarm            -- Back to SolarSwarm (may have focal set)
   PkgModuleBeeswarm pkg -> PkgTreemap pkg  -- Back to same package's treemap
   ModuleOverview pkg _ -> PkgTreemap pkg   -- Back to package treemap
-  DeclarationDetail pkg mod _ -> ModuleOverview pkg mod  -- Back to module overview
-  ModuleSignatureMap pkg mod -> ModuleOverview pkg mod   -- Back to module overview
+  DeclarationDetail pkg mod _ -> ModuleSignatureMap pkg mod  -- Back to signature map (primary module view)
+  ModuleSignatureMap pkg _ -> PkgTreemap pkg                -- Back to package treemap
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
 
 -- | A segment in the breadcrumb trail
@@ -79,15 +79,15 @@ sceneBreadcrumbs = case _ of
   SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
   PkgTreemap pkg      -> [reg, pkgSeg pkg]
   PkgModuleBeeswarm p -> [reg, pkgSeg p]
-  ModuleOverview p m  -> [reg, pkgSeg p, modSeg p m]
+  ModuleOverview p m  -> [reg, pkgSeg p, modSeg p m
+                                  , { kind: "", label: "Overview", scene: ModuleOverview p m }]
   DeclarationDetail p m d -> [reg, pkgSeg p, modSeg p m
                                   , { kind: "Decl", label: d, scene: DeclarationDetail p m d }]
-  ModuleSignatureMap p m -> [reg, pkgSeg p, modSeg p m
-                                  , { kind: "", label: "Signatures", scene: ModuleSignatureMap p m }]
+  ModuleSignatureMap p m -> [reg, pkgSeg p, modSeg p m]
   where
     reg = { kind: "", label: "Registry", scene: GalaxyTreemap }
     pkgSeg pkg = { kind: "Package", label: pkg, scene: PkgTreemap pkg }
-    modSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleOverview p m }
+    modSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleSignatureMap p m }
 
 -- | Human-readable label for display in navigation UI
 sceneLabel :: Scene -> String
@@ -99,7 +99,7 @@ sceneLabel = case _ of
   PkgModuleBeeswarm pkg -> pkg <> " Module Flow"
   ModuleOverview _ mod -> shortModuleName mod
   DeclarationDetail _ _ decl -> decl
-  ModuleSignatureMap _ mod -> shortModuleName mod <> " Signatures"
+  ModuleSignatureMap _ mod -> shortModuleName mod
   TypeClassGrid -> "Type Classes"
 
 -- | Check if scene is at the Galaxy level (registry-wide)

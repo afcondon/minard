@@ -67,6 +67,7 @@ import CE2.Containers as C
 import CE2.Data.Loader as Loader
 import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
+import CE2.Viz.SourceCode as SourceCode
 import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus)
 
 -- FFI declarations for browser history integration
@@ -917,7 +918,7 @@ renderScene state =
           [ HH.text "Loading module declarations..." ]
 
   DeclarationDetail pkgName modName declName ->
-    -- Declaration detail: focused bubble pack + expanded info
+    -- Declaration detail: usage graph + expanded info
     case lookupModuleDeclarations state pkgName modName of
       Just decls ->
         HH.slot _declarationDetailViz unit DeclarationDetailViz.component
@@ -925,7 +926,7 @@ renderScene state =
           , moduleName: modName
           , declarationName: declName
           , declarations: decls
-          , functionCalls: state.packageCalls
+          , knownDeclarations: buildKnownDeclarations state
           }
           HandleDeclarationDetailOutput
       Nothing ->
@@ -1134,7 +1135,7 @@ handleAction = case _ of
   HandleModuleTreemapOutput output -> case output of
     ModuleTreemapEnrichedViz.ModuleClicked pkgName modName -> do
       log $ "[SceneCoordinator] Module treemap clicked: " <> pkgName <> "/" <> modName
-      handleAction (NavigateTo (ModuleOverview pkgName modName))
+      handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
     ModuleTreemapEnrichedViz.ModuleHovered _mModName ->
       pure unit  -- Future: coordinated hover
     ModuleTreemapEnrichedViz.DeclarationClicked pkgName modName declName -> do
@@ -1158,7 +1159,7 @@ handleAction = case _ of
       state <- H.get
       case state.scene of
         DeclarationDetail pkg mod _ ->
-          handleAction (NavigateTo (ModuleOverview pkg mod))
+          handleAction (NavigateTo (ModuleSignatureMap pkg mod))
         _ ->
           pure unit  -- Shouldn't happen
     DeclarationDetailViz.DeclarationClicked pkgName modName declName -> do
@@ -1609,7 +1610,7 @@ themeForScene = case _ of
   PkgModuleBeeswarm _ -> SteelTheme
   ModuleOverview _ _ -> MistTheme
   DeclarationDetail _ _ _ -> DaylightTheme
-  ModuleSignatureMap _ _ -> DaylightTheme
+  ModuleSignatureMap _ _ -> MistTheme
   TypeClassGrid -> MidnightTheme
 
 -- | Canonical state code for precise communication
@@ -1671,6 +1672,27 @@ lookupModuleDeclarations state pkgName modName = do
   mod <- Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
   Map.lookup mod.id state.packageDeclarations
 
+-- | Build cross-reference index of all loaded declarations for source code navigation
+buildKnownDeclarations :: State -> Array SourceCode.KnownDeclaration
+buildKnownDeclarations state =
+  case state.v2Data of
+    Nothing -> []
+    Just v2 ->
+      let
+        -- Build module ID → { moduleName, packageName } lookup
+        moduleInfo = Map.fromFoldable $ map (\m -> Tuple m.id { moduleName: m.name, packageName: m.package.name }) v2.modules
+      in
+        Array.concatMap (\(Tuple modId decls) ->
+          case Map.lookup modId moduleInfo of
+            Nothing -> []
+            Just info -> map (\d ->
+              { name: d.name
+              , moduleName: info.moduleName
+              , packageName: info.packageName
+              , kind: d.kind
+              }) decls
+        ) (Map.toUnfoldable state.packageDeclarations)
+
 -- | Ensure declarations are loaded for a package's modules
 ensurePackageDeclarationsLoaded :: forall m. MonadAff m => State -> String -> H.HalogenM State Action Slots Output m Unit
 ensurePackageDeclarationsLoaded state pkgName =
@@ -1726,7 +1748,7 @@ confirmSearchSelection state idx =
 sceneForResult :: Loader.UnifiedSearchResult -> Scene
 sceneForResult r = case r.entityType of
   "package" -> PkgTreemap r.packageName
-  "module" -> ModuleOverview r.packageName (fromMaybe r.name r.moduleName)
+  "module" -> ModuleSignatureMap r.packageName (fromMaybe r.name r.moduleName)
   "declaration" -> DeclarationDetail r.packageName (fromMaybe "" r.moduleName) r.name
   _ -> GalaxyTreemap
 

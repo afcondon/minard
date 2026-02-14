@@ -72,11 +72,13 @@ renderSignatureSVG name sig ast typeParams className = do
   pure { svg: el, width: result.dimensions.width, height: result.dimensions.height }
 
 -- | Render an ADT to SVG element + dimensions.
+-- | The keyword parameter overrides the default "data" label (e.g. "newtype").
 renderADTSVG
   :: String -> Array String -> Array { name :: String, args :: Array RenderType }
+  -> Maybe String
   -> Effect RenderedSVG
-renderADTSVG name typeParams constructors = do
-  let result = layoutADT { name, typeParams, constructors }
+renderADTSVG name typeParams constructors keyword = do
+  let result = layoutADT { name, typeParams, constructors, keyword }
   el <- emit result.layout result.dimensions
   pure { svg: el, width: result.dimensions.width, height: result.dimensions.height }
 

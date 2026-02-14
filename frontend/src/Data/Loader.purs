@@ -60,6 +60,13 @@ module CE2.Data.Loader
     -- Combined Search
   , UnifiedSearchResult
   , searchAll
+    -- Declaration Usage
+  , UsageNode
+  , DeclarationUsage
+  , fetchDeclarationUsage
+    -- Module Source
+  , ModuleSource
+  , fetchModuleSource
   ) where
 
 import Prelude
@@ -2001,3 +2008,44 @@ searchAll query = do
     json <- result
     response :: UnifiedSearchResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right response.results
+
+-- =============================================================================
+-- Declaration Usage (cross-module call graph)
+-- =============================================================================
+
+-- | A node in the usage graph (caller or callee)
+type UsageNode =
+  { moduleName :: String
+  , declName :: String
+  , hop :: Int
+  }
+
+-- | Bidirectional cross-module usage for a declaration
+type DeclarationUsage =
+  { callers :: Array UsageNode
+  , callees :: Array UsageNode
+  , callerCount :: Int
+  , calleeCount :: Int
+  }
+
+-- | Fetch cross-module usage for a declaration (callers + callees, transitive)
+fetchDeclarationUsage :: String -> String -> Aff (Either String DeclarationUsage)
+fetchDeclarationUsage moduleName declName = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/declaration-usage?module=" <> moduleName <> "&decl=" <> declName)
+  pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- =============================================================================
+-- Module Source (read .purs file from disk)
+-- =============================================================================
+
+-- | Module source file content and path
+type ModuleSource =
+  { source :: String
+  , path :: String
+  }
+
+-- | Fetch the full source file for a module
+fetchModuleSource :: String -> Aff (Either String ModuleSource)
+fetchModuleSource moduleName = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/module-source?module=" <> moduleName)
+  pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError

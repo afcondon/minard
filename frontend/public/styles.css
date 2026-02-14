@@ -2419,3 +2419,104 @@ svg [data-tooltip]::before {
 .neighborhood-node text {
   pointer-events: none;
 }
+
+/* =============================================================================
+   PureScript Source Code Syntax Highlighting
+   ============================================================================= */
+
+.ps-source {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  background: #faf9f7;
+  border: 1px solid #e8e6e0;
+  border-radius: 4px;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.ps-line {
+  display: flex;
+  min-height: 1.7em;
+  padding: 0 12px 0 0;
+}
+
+.ps-linenum {
+  width: 3.5em;
+  text-align: right;
+  padding-right: 1em;
+  color: #c0bdb8;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.ps-code {
+  flex: 1;
+  white-space: pre;
+}
+
+/* Focused declaration highlight */
+.ps-focused {
+  background: rgba(14, 76, 138, 0.04);
+}
+
+.ps-focused-accent {
+  border-left: 3px solid;
+  /* border-left-color set via inline style from kindColor */
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+/* Token classes - restrained, print-inspired palette */
+.ps-keyword {
+  color: #1a1a2e;
+  font-weight: 600;
+}
+
+.ps-type {
+  color: #0E4C8A;
+}
+
+.ps-ident {
+  color: #333;
+}
+
+.ps-operator {
+  color: #8b7355;
+}
+
+.ps-string {
+  color: #6b4226;
+}
+
+.ps-number {
+  color: #6b4226;
+}
+
+.ps-comment {
+  color: #a09a90;
+  font-style: italic;
+}
+
+.ps-module {
+  color: #888;
+}
+
+.ps-punct {
+  color: #999;
+}
+
+/* Clickable identifiers */
+a.ps-clickable {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+  cursor: pointer;
+}
+
+a.ps-clickable:hover {
+  color: #0E4C8A;
+  border-bottom-style: solid;
+  background: rgba(14, 76, 138, 0.06);
+}
