@@ -29,7 +29,9 @@ import Halogen.Subscription as HS
 
 import CE2.Data.Loader as Loader
 import CE2.Viz.ModuleSignatureMap as MSM
+import CE2.Viz.SignatureTree as SigTree
 import CE2.Viz.TypeSignature as TS
+import CE2.Viz.TypeSignature.TypeAST (elideAST)
 
 -- =============================================================================
 -- Types
@@ -198,20 +200,14 @@ renderLetterHeader letter =
 -- Cell renderers
 -- =============================================================================
 
--- | Render a value cell: name as HTML, siglet SVG below, tooltip on hover
+-- | Render a value cell: name header + empty containers filled by HATS post-render
 renderSigletCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
 renderSigletCell cell =
-  let
-    nameH = 20.0
-    sparkH = cell.sparklineHeight
-    totalH = nameH + sparkH + MSM.cellPad * 2.0 + 4.0
-  in
   HH.div
     [ HP.id ("sigmap-cell-" <> cell.name)
     , HP.classes [ HH.ClassName "sigmap-cell", HH.ClassName "sigmap-cell-sparkline" ]
     , HP.style $ "break-inside:avoid;"
         <> " margin-bottom:6px;"
-        <> " height:" <> show totalH <> "px;"
         <> " overflow:visible;"
         <> " padding:" <> show MSM.cellPad <> "px;"
         <> " box-sizing:border-box;"
@@ -223,17 +219,13 @@ renderSigletCell cell =
     , HE.onMouseEnter \_ -> ShowTooltip cell.name
     , HE.onMouseLeave \_ -> HideTooltip
     ]
-    [ -- Name as readable HTML
+    [ -- Name header (Halogen)
       HH.div
         [ HP.style "font-family:'Fira Code','SF Mono',monospace; font-size:12px; font-weight:700; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" ]
         [ HH.text cell.name ]
-    -- Siglet SVG container (inserted by Effect)
-    , HH.div
-        [ HP.id ("sig-sparkline-" <> cell.name)
-        , HP.style $ "margin-top:2px; height:" <> show sparkH <> "px; overflow:hidden;"
-        ]
-        []
-    -- Hidden container for full-size SVG (tooltip source)
+    -- Siglet container (filled by HATS after render)
+    , HH.div [ HP.id ("sig-sparkline-" <> cell.name) ] []
+    -- Hidden full-size for tooltip (filled by HATS after render)
     , HH.div
         [ HP.id ("sig-cell-" <> cell.name)
         , HP.style "display:none;"
@@ -241,7 +233,8 @@ renderSigletCell cell =
         []
     ]
 
--- | Render a regular full-size cell (types, data, classes)
+-- | Render a regular full-size cell (types, data, classes, type synonyms)
+-- | Content inserted post-render: SVG for ADT/ClassDef, HATS HTML for others
 renderFullCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
 renderFullCell cell =
   HH.div
@@ -249,7 +242,9 @@ renderFullCell cell =
     , HP.class_ (HH.ClassName "sigmap-cell")
     , HP.style $ "break-inside:avoid;"
         <> " margin-bottom:6px;"
-        <> " height:" <> show cell.cellHeight <> "px;"
+        <> (case cell.svg of
+              Just _ -> " height:" <> show cell.cellHeight <> "px;"
+              Nothing -> "")
         <> " overflow:auto;"
         <> " padding:" <> show MSM.cellPad <> "px;"
         <> " box-sizing:border-box;"
@@ -259,13 +254,17 @@ renderFullCell cell =
         <> " cursor:pointer;"
     , HE.onClick \_ -> CellClicked cell.onClick
     ]
+    -- All content inserted post-render (SVG or HATS HTML)
+    -- Only plain-text fallback for cells with no SVG and no AST
     (case cell.svg of
-      Just _ -> []  -- SVGs inserted by Effect after render
-      Nothing ->
-        [ HH.div
-            [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
-            [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
-        ])
+      Just _ -> []  -- SVG inserted by insertSVGsIntoCells
+      Nothing -> case cell.ast of
+        Just _ -> []  -- HATS HTML inserted by insertHtmlIntoCells
+        Nothing ->
+          [ HH.div
+              [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
+              [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
+          ])
 
 -- =============================================================================
 -- Action Handlers
@@ -310,7 +309,7 @@ handleAction = case _ of
   HideTooltip -> do
     liftEffect $ TS.hideSigletTooltip tooltipId
 
--- | Pre-render SVGs, measure, group into lanes, then insert SVGs after render.
+-- | Pre-render SVGs, measure, group into lanes, then insert content after render.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
 renderSignatureMap input = do
   state <- H.get
@@ -324,11 +323,33 @@ renderSignatureMap input = do
     input.declarations
   let newLanes = MSM.groupIntoLanes measured
   H.modify_ _ { lanes = newLanes }
-  -- After Halogen re-renders with the new lanes, insert SVGs into cell divs
+  -- After Halogen re-renders, insert SVGs for ADT/ClassDef cells
   liftEffect $ MSM.insertSVGsIntoCells measured
+  -- Insert HATS HTML trees for value/type synonym cells
+  liftEffect $ insertHtmlIntoCells measured
 
 -- | Create a declaration click callback that notifies the Halogen listener
 makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit
 makeDeclarationClickCallback mListener pkgName modName declName = case mListener of
   Just listener -> HS.notify listener (HandleDeclarationClick pkgName modName declName)
   Nothing -> log $ "[ModuleSignatureMapViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
+
+-- | Insert HATS HTML trees into cells that have AST but no SVG.
+-- | Value cells get both siglet (sparkline) and hidden full-size (tooltip).
+-- | Type synonym/foreign cells get full-size rendering.
+insertHtmlIntoCells :: Array MSM.MeasuredCell -> Effect Unit
+insertHtmlIntoCells cells =
+  Array.foldM (\_ cell ->
+    case cell.svg of
+      Just _ -> pure unit  -- SVG cells handled by insertSVGsIntoCells
+      Nothing -> case cell.ast of
+        Just ast -> do
+          -- Value cells: render siglet into sparkline container
+          when (cell.kind == "value") $
+            SigTree.renderSigletInto ("#sig-sparkline-" <> cell.name)
+              { ast: elideAST ast, maxWidth: 360.0 }
+          -- All non-SVG cells with AST: render full-size signature
+          SigTree.renderSignatureInto ("#sig-cell-" <> cell.name)
+            { name: cell.name, sig: cell.sig, ast, typeParams: [], className: Nothing }
+        Nothing -> pure unit
+  ) unit cells

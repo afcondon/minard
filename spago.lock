@@ -135,16 +135,16 @@
               "hylograph-layout": ">=0.1.0 <0.2.0"
             },
             {
-              "hylograph-selection": ">=0.1.1 <0.2.0"
+              "hylograph-selection": "*"
             },
             {
               "hylograph-sigil": "*"
             },
             {
-              "hylograph-simulation": ">=0.1.0 <0.2.0"
+              "hylograph-simulation": "*"
             },
             {
-              "hylograph-simulation-halogen": ">=0.1.0 <0.2.0"
+              "hylograph-simulation-halogen": "*"
             },
             {
               "integers": ">=6.0.0 <7.0.0"
@@ -315,8 +315,17 @@
       }
     },
     "extra_packages": {
+      "hylograph-selection": {
+        "path": "../../purescript-hylograph-libs/purescript-hylograph-selection"
+      },
       "hylograph-sigil": {
         "path": "../../purescript-hylograph-libs/purescript-hylograph-sigil"
+      },
+      "hylograph-simulation": {
+        "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation"
+      },
+      "hylograph-simulation-halogen": {
+        "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation-halogen"
       }
     }
   },
@@ -1053,9 +1062,8 @@
       ]
     },
     "hylograph-selection": {
-      "type": "registry",
-      "version": "0.1.1",
-      "integrity": "sha256-PGMAJeq9FiicgPQY4pdLDNmpSyfd6MbhYshehU9ZIbQ=",
+      "type": "local",
+      "path": "../../purescript-hylograph-libs/purescript-hylograph-selection",
       "dependencies": [
         "arrays",
         "colors",
@@ -1109,9 +1117,8 @@
       ]
     },
     "hylograph-simulation": {
-      "type": "registry",
-      "version": "0.1.0",
-      "integrity": "sha256-ZROzYOPgA2dmgp7kkrq+NoePd/01zoqr1zmVjSfp5Ak=",
+      "type": "local",
+      "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation",
       "dependencies": [
         "aff",
         "arrays",
@@ -1152,9 +1159,8 @@
       ]
     },
     "hylograph-simulation-halogen": {
-      "type": "registry",
-      "version": "0.1.0",
-      "integrity": "sha256-+2nyyUJi7M18SJbc7ns9SUmMFh5xrlZDSRkeV8mt84g=",
+      "type": "local",
+      "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation-halogen",
       "dependencies": [
         "effect",
         "halogen-subscriptions",

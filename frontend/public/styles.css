@@ -2449,6 +2449,99 @@ svg [data-tooltip]::before {
 }
 
 /* =============================================================================
+   Sigil HTML Rendering (type signatures as native HTML)
+   ============================================================================= */
+
+/* ── Semantic Signature Rendering ──
+   Elements: <code> wrapper, <dfn> name, <var> type variables,
+   <ol>/<li> arrow chains, <dl>/<dt>/<dd> records, <em> constraints,
+   <small> decorative punctuation (::, →, ., parens).
+   Visual appearance is CSS-only — alternate stylesheets can restyle
+   the same semantic document. */
+
+/* Full-size wrapper (<code>) */
+.sig-full { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+            display: block; font-style: normal; }
+
+/* Header: <dfn> name + <small> :: */
+.sig-header { display: flex; align-items: baseline; gap: 0.5em; margin-bottom: 4px; flex-wrap: wrap; }
+.sig-name { color: #222; font-weight: 700; font-style: normal; }
+.sig-dcolon { color: #aaa; font-size: inherit; }
+.sig-sep { color: #888; font-size: inherit; }
+
+/* Type body layout */
+.sig-body { display: flex; flex-direction: column; gap: 2px; }
+.sig-constrained { display: flex; flex-direction: column; gap: 2px; }
+
+/* Arrow chain (<ol> with CSS-generated → separators) */
+.sig-arrow-chain { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px;
+                   list-style: none; margin: 0; padding: 0; }
+.sig-arrow-chain > li { display: inline-flex; align-items: center; }
+.sig-arrow-chain > li + li::before { content: "\2192"; color: #71717a; padding: 0 3px;
+                                     font-style: normal; font-weight: normal; }
+
+/* Type variable pill (<var>) */
+.sig-var { display: inline-block; color: white; font-weight: 600; font-style: italic;
+           padding: 1px 5px; border-radius: 3px; font-size: 0.92em; }
+.sig-wildcard { background: #71717a; }
+
+/* Type constructor (<code>) */
+.sig-con { color: #16653e; font-weight: 600; }
+.sig-con-effect { color: #9333ea; }
+
+/* Application (<code>) */
+.sig-app { display: inline-flex; align-items: center; gap: 2px; }
+.sig-hkt { background: #eff6ff; border: 1px solid #3b82f6; border-radius: 3px; padding: 0 3px; }
+
+/* Constraints (<em>) */
+.sig-constraints { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+.sig-constraint { display: inline-flex; align-items: center; gap: 3px;
+                  background: #fef3c7; border: 1px solid #d97706; border-radius: 3px;
+                  padding: 1px 8px; font-size: 11px; color: #92400e; font-weight: 600;
+                  font-style: normal; }
+
+/* Forall row */
+.sig-forall { display: flex; flex-direction: column; gap: 2px; }
+.sig-forall-row { display: flex; align-items: center; gap: 3px; }
+.sig-forall-symbol { color: #7b61ff; font-weight: 700; font-size: inherit; }
+.sig-forall-dot { color: #7b61ff; font-weight: 600; font-size: inherit; }
+
+/* Parens (<small>) */
+.sig-paren { color: #aaa; font-size: inherit; }
+
+/* Record / Row (<dl> with CSS-generated :: separators) */
+.sig-record { display: grid; grid-template-columns: auto auto; gap: 0 4px;
+              border: 1px solid #ccc; border-radius: 4px; background: white;
+              padding: 2px 8px; font-size: 12px; }
+.sig-record-open { border-style: dashed; border-width: 1.5px; }
+.sig-record > dt { color: #333; font-weight: 600; font-style: normal; }
+.sig-record > dt::after { content: " ::"; color: #aaa; font-weight: normal; }
+.sig-record > dd { color: #555; margin: 0; }
+.sig-record > dd + dt { border-top: 1px solid #f0f0f0; padding-top: 2px; }
+.sig-record > dd + dt + dd { border-top: 1px solid #f0f0f0; padding-top: 2px; }
+.sig-row-tail { display: flex; align-items: center; gap: 6px; padding: 2px 0;
+                grid-column: 1 / -1; margin: 0; }
+
+/* Miscellaneous separators */
+.sig-sep { color: #aaa; font-size: inherit; }
+
+/* String literals */
+.sig-string { color: #6b4226; font-weight: 600; }
+
+/* Operator */
+.sig-op { color: #71717a; font-weight: 600; padding: 0 3px; font-size: inherit; }
+
+/* Siglet dots (miniature indicators) */
+.sig-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle;
+           font-size: 0; overflow: hidden; padding: 0; }
+.sig-dot-con { border: 1.5px solid #16653e; background: none; }
+.sig-dot-effect { background: #9333ea; border: none; }
+
+/* Siglet wrapper (<code>) */
+.sig-siglet { display: inline-flex; flex-direction: column; gap: 1px; margin-top: 2px;
+              font-style: normal; }
+
+/* =============================================================================
    PureScript Source Code Syntax Highlighting
    ============================================================================= */
 

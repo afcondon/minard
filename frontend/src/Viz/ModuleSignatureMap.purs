@@ -27,7 +27,7 @@ import Web.DOM (Element)
 
 import CE2.Data.Loader (V2Declaration, V2ChildDeclaration)
 import CE2.Viz.TypeSignature as TS
-import CE2.Viz.TypeSignature.TypeAST (parseToRenderType, extractCtorRenderTypes, collectTypeVars)
+import CE2.Viz.TypeSignature.TypeAST (parseToRenderType, extractCtorRenderTypes, collectTypeVars, RenderType)
 
 -- =============================================================================
 -- Types
@@ -44,9 +44,8 @@ type MeasuredCell =
   { name :: String
   , kind :: String
   , sig :: String
-  , svg :: Maybe Element          -- Full-size SVG (types, data, classes)
-  , sparklineSvg :: Maybe Element -- Sparkline SVG (values in compact mode)
-  , sparklineHeight :: Number     -- Height of the sparkline SVG
+  , ast :: Maybe RenderType       -- Parsed AST for HTML rendering (values, type synonyms)
+  , svg :: Maybe Element          -- Full-size SVG (data types, classes only)
   , cellWidth :: Number
   , cellHeight :: Number
   , onClick :: Effect Unit
@@ -137,14 +136,6 @@ prepareCells config declarations = do
     pure (Array.snoc acc cell)
   ) [] declarations
 
--- | Max width for siglet (elided signature shape)
-sigletMaxW :: Number
-sigletMaxW = 360.0
-
--- | Max height for siglet
-sigletMaxH :: Number
-sigletMaxH = 42.0
-
 prepareOneCell :: Config -> V2Declaration -> Effect MeasuredCell
 prepareOneCell config decl = do
   let
@@ -155,14 +146,11 @@ prepareOneCell config decl = do
 
   result <- renderDeclaration decl sig
 
-  -- For values, generate a siglet (elided signature shape)
-  sparkResult <- if decl.kind == "value"
-    then case decl.typeSignature >>= parseToRenderType of
-      Just ast -> TS.renderSigletSVG ast sigletMaxW sigletMaxH
-      Nothing -> pure Nothing
-    else pure Nothing
-
   let
+    -- For values and type synonyms (and other non-SVG kinds), store parsed AST for HTML rendering
+    ast = case result.svg of
+      Just _ -> Nothing  -- ADT/ClassDef have SVG, no AST needed
+      Nothing -> decl.typeSignature >>= parseToRenderType
     svg = result.svg
     cellWidth = case svg of
       Just _ -> min maxCellW (max minCellW (result.width + cellPad * 2.0))
@@ -170,17 +158,13 @@ prepareOneCell config decl = do
     cellHeight = case svg of
       Just _ -> max minCellH (result.height + cellPad * 2.0)
       Nothing -> minCellH
-    sparklineHeight = case sparkResult of
-      Just r -> r.height
-      Nothing -> 0.0
 
   pure
     { name: decl.name
     , kind: decl.kind
     , sig: sig
+    , ast: ast
     , svg: svg
-    , sparklineSvg: map _.svg sparkResult
-    , sparklineHeight: sparklineHeight
     , cellWidth: cellWidth
     , cellHeight: cellHeight
     , onClick: clickHandler
@@ -191,7 +175,7 @@ prepareOneCell config decl = do
 -- | Render a declaration to an SVG element based on its kind.
 -- | Uses hylograph-sigil layout + emit — dimensions come from the layout step.
 renderDeclaration :: V2Declaration -> String -> Effect { svg :: Maybe Element, width :: Number, height :: Number }
-renderDeclaration decl sig
+renderDeclaration decl _sig
   | decl.kind == "data" || decl.kind == "newtype" = do
       let
         typeParams = if Array.null decl.children
@@ -219,17 +203,8 @@ renderDeclaration decl sig
       rendered <- TS.renderClassDefSVG decl.name typeParams superclasses methods
       pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
 
-  | otherwise = do
-      case decl.typeSignature >>= parseToRenderType of
-        Nothing -> pure { svg: Nothing, width: 0.0, height: 0.0 }
-        Just ast -> do
-          let
-            showTypeParams = decl.kind == "type_synonym" || decl.kind == "data" || decl.kind == "newtype"
-            typeVars = if showTypeParams
-              then Set.toUnfoldable (collectTypeVars ast)
-              else []
-          rendered <- TS.renderSignatureSVG decl.name sig ast typeVars Nothing
-          pure { svg: Just rendered.svg, width: rendered.width, height: rendered.height }
+  -- Values, type synonyms, and other kinds: skip SVG, use HTML rendering via AST
+  | otherwise = pure { svg: Nothing, width: 0.0, height: 0.0 }
 
 -- | Infer type parameters from constructor children signatures
 inferTypeParams :: Array V2ChildDeclaration -> Array String
@@ -267,14 +242,10 @@ groupIntoLanes cells = Array.mapMaybe mkLane lanes
 -- =============================================================================
 
 -- | Insert pre-rendered SVGs into their cell divs after Halogen render.
+-- | Only used for ADT/ClassDef cells that still use SVG.
 insertSVGsIntoCells :: Array MeasuredCell -> Effect Unit
 insertSVGsIntoCells cells =
   Array.foldM (\_ cell -> do
-    -- Insert siglet SVG into sparkline container (for values)
-    case cell.sparklineSvg of
-      Just sparkEl -> TS.insertSVGIntoCell ("sig-sparkline-" <> cell.name) sparkEl sigletMaxW cellPad
-      Nothing -> pure unit
-    -- Insert full-size SVG into full container (for non-values, or hover overlay for values)
     case cell.svg of
       Just svgEl -> TS.insertSVGIntoCell ("sig-cell-" <> cell.name) svgEl cell.cellWidth cellPad
       Nothing -> pure unit

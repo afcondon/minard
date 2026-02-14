@@ -3,3 +3,9 @@ workspace:
   extraPackages:
     hylograph-sigil:
       path: ../../purescript-hylograph-libs/purescript-hylograph-sigil
+    hylograph-selection:
+      path: ../../purescript-hylograph-libs/purescript-hylograph-selection
+    hylograph-simulation:
+      path: ../../purescript-hylograph-libs/purescript-hylograph-simulation
+    hylograph-simulation-halogen:
+      path: ../../purescript-hylograph-libs/purescript-hylograph-simulation-halogen
