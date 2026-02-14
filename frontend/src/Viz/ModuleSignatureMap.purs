@@ -44,14 +44,17 @@ type MeasuredCell =
   { name :: String
   , kind :: String
   , sig :: String
-  , svg :: Maybe Element
+  , svg :: Maybe Element          -- Full-size SVG (types, data, classes)
+  , sparklineSvg :: Maybe Element -- Sparkline SVG (values in compact mode)
+  , sparklineHeight :: Number     -- Height of the sparkline SVG
   , cellWidth :: Number
   , cellHeight :: Number
   , onClick :: Effect Unit
   }
 
 type Lane =
-  { label :: String
+  { key :: String
+  , label :: String
   , accent :: String
   , cells :: Array MeasuredCell
   , column :: Boolean  -- true = vertical column, false = flex-wrap shelf
@@ -134,6 +137,14 @@ prepareCells config declarations = do
     pure (Array.snoc acc cell)
   ) [] declarations
 
+-- | Max width for siglet (elided signature shape)
+sigletMaxW :: Number
+sigletMaxW = 360.0
+
+-- | Max height for siglet
+sigletMaxH :: Number
+sigletMaxH = 42.0
+
 prepareOneCell :: Config -> V2Declaration -> Effect MeasuredCell
 prepareOneCell config decl = do
   let
@@ -143,6 +154,14 @@ prepareOneCell config decl = do
       Nothing -> pure unit
 
   result <- renderDeclaration decl sig
+
+  -- For values, generate a siglet (elided signature shape)
+  sparkResult <- if decl.kind == "value"
+    then case decl.typeSignature >>= parseToRenderType of
+      Just ast -> TS.renderSigletSVG ast sigletMaxW sigletMaxH
+      Nothing -> pure Nothing
+    else pure Nothing
+
   let
     svg = result.svg
     cellWidth = case svg of
@@ -151,12 +170,17 @@ prepareOneCell config decl = do
     cellHeight = case svg of
       Just _ -> max minCellH (result.height + cellPad * 2.0)
       Nothing -> minCellH
+    sparklineHeight = case sparkResult of
+      Just r -> r.height
+      Nothing -> 0.0
 
   pure
     { name: decl.name
     , kind: decl.kind
     , sig: sig
     , svg: svg
+    , sparklineSvg: map _.svg sparkResult
+    , sparklineHeight: sparklineHeight
     , cellWidth: cellWidth
     , cellHeight: cellHeight
     , onClick: clickHandler
@@ -231,7 +255,8 @@ groupIntoLanes cells = Array.mapMaybe mkLane lanes
       let laneCells = Array.filter (\c -> Array.elem c.kind laneDef.kinds) cells
       in if Array.null laneCells then Nothing
          else Just
-           { label: laneDef.label
+           { key: laneDef.key
+           , label: laneDef.label
            , accent: kindAccent (fromMaybe "" (Array.head laneDef.kinds))
            , cells: laneCells
            , column: laneDef.column
@@ -244,7 +269,12 @@ groupIntoLanes cells = Array.mapMaybe mkLane lanes
 -- | Insert pre-rendered SVGs into their cell divs after Halogen render.
 insertSVGsIntoCells :: Array MeasuredCell -> Effect Unit
 insertSVGsIntoCells cells =
-  Array.foldM (\_ cell ->
+  Array.foldM (\_ cell -> do
+    -- Insert siglet SVG into sparkline container (for values)
+    case cell.sparklineSvg of
+      Just sparkEl -> TS.insertSVGIntoCell ("sig-sparkline-" <> cell.name) sparkEl sigletMaxW cellPad
+      Nothing -> pure unit
+    -- Insert full-size SVG into full container (for non-values, or hover overlay for values)
     case cell.svg of
       Just svgEl -> TS.insertSVGIntoCell ("sig-cell-" <> cell.name) svgEl cell.cellWidth cellPad
       Nothing -> pure unit

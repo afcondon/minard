@@ -8,9 +8,13 @@ module CE2.Viz.TypeSignature
   , injectSparklines
   , SparklineCell
   , renderSignatureSVG
+  , renderSparklineSVG
+  , renderSigletSVG
   , renderADTSVG
   , renderClassDefSVG
   , insertSVGIntoCell
+  , showSigletTooltip
+  , hideSigletTooltip
   , RenderedSVG
   ) where
 
@@ -24,9 +28,9 @@ import Data.Set as Set
 import Effect (Effect)
 import Web.DOM (Element)
 
-import Hylograph.Sigil (layoutSignature, layoutADT, layoutClassDef, layoutSparkline, emit, emitNode)
+import Hylograph.Sigil (layoutSignature, layoutADT, layoutClassDef, layoutSparkline, layoutSiglet, emit, emitNode)
 import Hylograph.Sigil.Types (RenderType, SuperclassInfo)
-import CE2.Viz.TypeSignature.TypeAST (parseToRenderType, collectTypeVars)
+import CE2.Viz.TypeSignature.TypeAST (parseToRenderType, collectTypeVars, elideAST)
 
 -- =============================================================================
 -- Types
@@ -50,6 +54,10 @@ type SparklineCell =
 foreign import replaceContainerContent :: String -> Element -> Effect Unit
 foreign import showFallbackText :: String -> String -> Effect Unit
 foreign import insertSVGIntoCell :: String -> Element -> Number -> Number -> Effect Unit
+
+-- Siglet tooltip
+foreign import showSigletTooltip :: String -> String -> String -> Effect Unit
+foreign import hideSigletTooltip :: String -> Effect Unit
 
 -- Sparkline DOM helpers
 foreign import querySvgInContainer :: String -> Effect (Nullable Element)
@@ -81,6 +89,31 @@ renderADTSVG name typeParams constructors keyword = do
   let result = layoutADT { name, typeParams, constructors, keyword }
   el <- emit result.layout result.dimensions
   pure { svg: el, width: result.dimensions.width, height: result.dimensions.height }
+
+-- | Render a standalone sparkline SVG for a type signature.
+-- | Returns Nothing if the signature can't be laid out in the available space.
+renderSparklineSVG
+  :: RenderType -> Number -> Number
+  -> Effect (Maybe RenderedSVG)
+renderSparklineSVG ast maxWidth maxHeight =
+  case layoutSparkline { ast, maxWidth, maxHeight, maxScale: Just 0.55 } of
+    Nothing -> pure Nothing
+    Just result -> do
+      el <- emit result.layout { width: result.scaledWidth, height: result.scaledHeight }
+      pure $ Just { svg: el, width: result.scaledWidth, height: result.scaledHeight }
+
+-- | Render a siglet: elided type signature showing arity, structure, and variable patterns.
+-- | Concrete type names become hollow circles; type variable pills keep their colors.
+renderSigletSVG
+  :: RenderType -> Number -> Number
+  -> Effect (Maybe RenderedSVG)
+renderSigletSVG ast maxWidth maxHeight =
+  let elided = elideAST ast
+  in case layoutSiglet { ast: elided, maxWidth, maxHeight } of
+    Nothing -> pure Nothing
+    Just result -> do
+      el <- emit result.layout { width: result.scaledWidth, height: result.scaledHeight }
+      pure $ Just { svg: el, width: result.scaledWidth, height: result.scaledHeight }
 
 -- | Render a class definition to SVG element + dimensions.
 renderClassDefSVG
@@ -152,7 +185,7 @@ renderSparklineCell group cell = case cell.ast of
     when (cell.width >= minW && cell.height >= minH) do
       let availW = cell.width - pad * 2.0
           availH = cell.height - stripH - labelH - pad
-      case layoutSparkline { ast, maxWidth: availW, maxHeight: availH } of
+      case layoutSparkline { ast, maxWidth: availW, maxHeight: availH, maxScale: Nothing } of
         Nothing -> pure unit
         Just result -> do
           sparkEl <- emitNode result.layout

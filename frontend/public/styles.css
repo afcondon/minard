@@ -2421,6 +2421,34 @@ svg [data-tooltip]::before {
 }
 
 /* =============================================================================
+   SigMap Sparkline Cells
+   ============================================================================= */
+
+.sigmap-cell {
+  position: relative;
+}
+
+/* Fixed-position tooltip for full-size signature on hover */
+.sigmap-tooltip {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 12px 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  pointer-events: none;
+  white-space: nowrap;
+  width: max-content;
+  max-width: 90vw;
+}
+
+.sigmap-cell-sparkline:hover {
+  z-index: 100;
+}
+
+/* =============================================================================
    PureScript Source Code Syntax Highlighting
    ============================================================================= */
 

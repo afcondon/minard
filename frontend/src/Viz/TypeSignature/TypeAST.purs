@@ -6,6 +6,7 @@ module CE2.Viz.TypeSignature.TypeAST
   ( parseToRenderType
   , extractCtorArgs
   , extractCtorRenderTypes
+  , elideAST
   , module Hylograph.Sigil.Types
   , module Hylograph.Sigil.Text
   ) where
@@ -165,6 +166,26 @@ extractCtorArgs sig = case parseToRenderType sig of
     params -> Array.init params # case _ of
       Just args -> map renderTypeToText args
       Nothing -> []
+
+-- | Prepare AST for siglet rendering.
+-- | Collapses records/rows to compact markers (the sigil renderer handles
+-- | TCon → circles via sigletMode). Forall, constraints, and parens are kept.
+elideAST :: RenderType -> RenderType
+elideAST = case _ of
+  TRecord _ _     -> TCon "{..}"
+  TRow _ _        -> TCon "(..)"
+  TApp (TCon "Record") [TRow _ _] -> TCon "{..}"
+  TApp head args  -> TApp (elideAST head) (map elideAST args)
+  TArrow from to  -> TArrow (elideAST from) (elideAST to)
+  TForall vars body -> TForall vars (elideAST body)
+  TConstrained cs body -> TConstrained (map elideConstraint cs) (elideAST body)
+  TParens inner   -> TParens (elideAST inner)
+  TKinded ty kind -> TKinded (elideAST ty) (elideAST kind)
+  TOperator l op r -> TOperator (elideAST l) op (elideAST r)
+  other           -> other
+
+elideConstraint :: Constraint -> Constraint
+elideConstraint c = c { args = map elideAST c.args }
 
 -- | Extract constructor argument types as RenderType values.
 -- | Constructor sigs look like "a -> b -> MyType a b" — returns [TVar "a", TVar "b"].

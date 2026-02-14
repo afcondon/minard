@@ -53,3 +53,45 @@ export const setSvgAttr = (el) => (key) => (value) => () => {
 export const appendSvgChild = (parent) => (child) => () => {
   parent.appendChild(child);
 };
+
+// --- Siglet tooltip ---
+
+export const showSigletTooltip = (tooltipId) => (sourceId) => (cellId) => () => {
+  const tooltip = document.getElementById(tooltipId);
+  const source = document.getElementById(sourceId);
+  const cell = document.getElementById(cellId);
+  if (!tooltip || !source || !cell) return;
+
+  // Clone SVG content into tooltip
+  tooltip.innerHTML = '';
+  Array.from(source.children).forEach(child => {
+    tooltip.appendChild(child.cloneNode(true));
+  });
+
+  // Position above the cell
+  const rect = cell.getBoundingClientRect();
+  tooltip.style.display = 'block';
+  tooltip.style.left = rect.left + 'px';
+  tooltip.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
+  tooltip.style.top = 'auto';
+
+  // Adjust if off-screen
+  requestAnimationFrame(() => {
+    const tr = tooltip.getBoundingClientRect();
+    if (tr.right > window.innerWidth - 8) {
+      tooltip.style.left = Math.max(8, window.innerWidth - tr.width - 8) + 'px';
+    }
+    if (tr.top < 8) {
+      tooltip.style.bottom = 'auto';
+      tooltip.style.top = (rect.bottom + 8) + 'px';
+    }
+  });
+};
+
+export const hideSigletTooltip = (tooltipId) => () => {
+  const tooltip = document.getElementById(tooltipId);
+  if (tooltip) {
+    tooltip.style.display = 'none';
+    tooltip.innerHTML = '';
+  }
+};

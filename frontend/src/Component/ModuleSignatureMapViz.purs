@@ -14,7 +14,9 @@ module CE2.Component.ModuleSignatureMapViz
 import Prelude
 
 import Data.Array as Array
+import Data.Array.NonEmpty as NEA
 import Data.Maybe (Maybe(..))
+import Data.String as String
 import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (liftEffect)
@@ -27,6 +29,7 @@ import Halogen.Subscription as HS
 
 import CE2.Data.Loader as Loader
 import CE2.Viz.ModuleSignatureMap as MSM
+import CE2.Viz.TypeSignature as TS
 
 -- =============================================================================
 -- Types
@@ -58,6 +61,8 @@ data Action
   | Finalize
   | HandleDeclarationClick String String String
   | CellClicked (Effect Unit)
+  | ShowTooltip String  -- cell name
+  | HideTooltip
 
 -- =============================================================================
 -- Component
@@ -85,6 +90,13 @@ initialState input =
   }
 
 -- =============================================================================
+-- Constants
+-- =============================================================================
+
+tooltipId :: String
+tooltipId = "sigmap-tooltip"
+
+-- =============================================================================
 -- Render
 -- =============================================================================
 
@@ -100,35 +112,143 @@ render state =
           [ HH.text "No declarations" ]
       ]
     else
-      (state.lanes <#> renderLane)
+      (state.lanes <#> renderLane) <>
+      [ -- Fixed-position tooltip (outside columns, rendered at end)
+        HH.div
+          [ HP.id tooltipId
+          , HP.class_ (HH.ClassName "sigmap-tooltip")
+          ]
+          []
+      ]
 
 renderLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
 renderLane lane =
-  let
-    cellsStyle = if lane.column
-      then "display:grid; grid-template-columns:1fr 1fr; gap:6px; align-items:start; justify-items:start;"
-      else "display:flex; flex-wrap:wrap; gap:6px; align-items:flex-start;"
-  in
+  if lane.key == "values"
+    then renderValuesLane lane
+    else renderStandardLane lane
+
+-- | Standard lane for types, data, classes etc — full-size SVG cards in columns
+renderStandardLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
+renderStandardLane lane =
   HH.div [ HP.style "margin-bottom: 16px;" ]
-    [ HH.div
-        [ HP.style $ "display:flex; align-items:center; gap:8px; padding:4px 0; margin-bottom:6px; border-bottom: 2px solid " <> lane.accent <> ";" ]
-        [ HH.span
-            [ HP.style $ "font-family: 'Courier New', Courier, monospace; font-size:11px; font-weight:700; color:" <> lane.accent <> "; text-transform:uppercase; letter-spacing:0.5px;" ]
-            [ HH.text lane.label ]
-        , HH.span
-            [ HP.style $ "font-size:9px; padding:1px 5px; border-radius:8px; background:" <> lane.accent <> "; color:white; font-weight:600;" ]
-            [ HH.text (show (Array.length lane.cells)) ]
-        ]
+    [ renderLaneHeader lane
     , HH.div
-        [ HP.style cellsStyle ]
-        (lane.cells <#> renderCell)
+        [ HP.style "columns: 300px; column-gap: 6px;" ]
+        (lane.cells <#> renderFullCell)
     ]
 
-renderCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
-renderCell cell =
+-- | Values lane — siglet cells, alphabetically grouped when large
+renderValuesLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
+renderValuesLane lane =
+  let
+    sorted = Array.sortBy (comparing _.name) lane.cells
+    groups = groupByFirstLetter sorted
+    useGrouping = Array.length lane.cells >= 12
+  in
+  HH.div [ HP.style "margin-bottom: 16px;" ]
+    [ renderLaneHeader lane
+    , HH.div
+        [ HP.style "column-count: 3; column-gap: 6px;" ]
+        (if useGrouping
+          then Array.concatMap renderLetterGroup groups
+          else sorted <#> renderSigletCell)
+    ]
+
+-- | Shared lane header
+renderLaneHeader :: forall m. MSM.Lane -> H.ComponentHTML Action () m
+renderLaneHeader lane =
+  HH.div
+    [ HP.style $ "display:flex; align-items:center; gap:8px; padding:4px 0; margin-bottom:6px; border-bottom: 2px solid " <> lane.accent <> ";" ]
+    [ HH.span
+        [ HP.style $ "font-family: 'Courier New', Courier, monospace; font-size:11px; font-weight:700; color:" <> lane.accent <> "; text-transform:uppercase; letter-spacing:0.5px;" ]
+        [ HH.text lane.label ]
+    , HH.span
+        [ HP.style $ "font-size:9px; padding:1px 5px; border-radius:8px; background:" <> lane.accent <> "; color:white; font-weight:600;" ]
+        [ HH.text (show (Array.length lane.cells)) ]
+    ]
+
+-- =============================================================================
+-- Alphabetical grouping
+-- =============================================================================
+
+type LetterGroup = { letter :: String, cells :: Array MSM.MeasuredCell }
+
+groupByFirstLetter :: Array MSM.MeasuredCell -> Array LetterGroup
+groupByFirstLetter sorted =
+  let
+    firstLetter c = String.toUpper (String.take 1 c.name)
+  in
+    Array.groupBy (\a b -> firstLetter a == firstLetter b) sorted
+      # map (\group ->
+          { letter: firstLetter (NEA.head group)
+          , cells: NEA.toArray group
+          })
+
+renderLetterGroup :: forall m. LetterGroup -> Array (H.ComponentHTML Action () m)
+renderLetterGroup group =
+  [ renderLetterHeader group.letter ] <> (group.cells <#> renderSigletCell)
+
+renderLetterHeader :: forall m. String -> H.ComponentHTML Action () m
+renderLetterHeader letter =
+  HH.div
+    [ HP.style "column-span: all; font-size: 13px; font-weight: 700; color: #aaa; padding: 10px 0 2px; letter-spacing: 0.5px;" ]
+    [ HH.text letter ]
+
+-- =============================================================================
+-- Cell renderers
+-- =============================================================================
+
+-- | Render a value cell: name as HTML, siglet SVG below, tooltip on hover
+renderSigletCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
+renderSigletCell cell =
+  let
+    nameH = 20.0
+    sparkH = cell.sparklineHeight
+    totalH = nameH + sparkH + MSM.cellPad * 2.0 + 4.0
+  in
+  HH.div
+    [ HP.id ("sigmap-cell-" <> cell.name)
+    , HP.classes [ HH.ClassName "sigmap-cell", HH.ClassName "sigmap-cell-sparkline" ]
+    , HP.style $ "break-inside:avoid;"
+        <> " margin-bottom:6px;"
+        <> " height:" <> show totalH <> "px;"
+        <> " overflow:visible;"
+        <> " padding:" <> show MSM.cellPad <> "px;"
+        <> " box-sizing:border-box;"
+        <> " background:" <> MSM.kindBackground cell.kind <> ";"
+        <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
+        <> " border-radius:3px;"
+        <> " cursor:pointer;"
+    , HE.onClick \_ -> CellClicked cell.onClick
+    , HE.onMouseEnter \_ -> ShowTooltip cell.name
+    , HE.onMouseLeave \_ -> HideTooltip
+    ]
+    [ -- Name as readable HTML
+      HH.div
+        [ HP.style "font-family:'Fira Code','SF Mono',monospace; font-size:12px; font-weight:700; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" ]
+        [ HH.text cell.name ]
+    -- Siglet SVG container (inserted by Effect)
+    , HH.div
+        [ HP.id ("sig-sparkline-" <> cell.name)
+        , HP.style $ "margin-top:2px; height:" <> show sparkH <> "px; overflow:hidden;"
+        ]
+        []
+    -- Hidden container for full-size SVG (tooltip source)
+    , HH.div
+        [ HP.id ("sig-cell-" <> cell.name)
+        , HP.style "display:none;"
+        ]
+        []
+    ]
+
+-- | Render a regular full-size cell (types, data, classes)
+renderFullCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
+renderFullCell cell =
   HH.div
     [ HP.id ("sig-cell-" <> cell.name)
-    , HP.style $ "width:" <> show cell.cellWidth <> "px;"
+    , HP.class_ (HH.ClassName "sigmap-cell")
+    , HP.style $ "break-inside:avoid;"
+        <> " margin-bottom:6px;"
         <> " height:" <> show cell.cellHeight <> "px;"
         <> " overflow:auto;"
         <> " padding:" <> show MSM.cellPad <> "px;"
@@ -137,8 +257,6 @@ renderCell cell =
         <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
         <> " border-radius:3px;"
         <> " cursor:pointer;"
-        <> " transition:box-shadow 0.15s ease, transform 0.15s ease;"
-        <> " flex-shrink:0;"
     , HE.onClick \_ -> CellClicked cell.onClick
     ]
     (case cell.svg of
@@ -185,6 +303,12 @@ handleAction = case _ of
 
   CellClicked handler -> do
     liftEffect handler
+
+  ShowTooltip name -> do
+    liftEffect $ TS.showSigletTooltip tooltipId ("sig-cell-" <> name) ("sigmap-cell-" <> name)
+
+  HideTooltip -> do
+    liftEffect $ TS.hideSigletTooltip tooltipId
 
 -- | Pre-render SVGs, measure, group into lanes, then insert SVGs after render.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
