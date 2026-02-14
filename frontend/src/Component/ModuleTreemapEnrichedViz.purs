@@ -29,7 +29,7 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Types (ColorMode)
+import CE2.Types (ColorMode, PackageReachability)
 import CE2.Viz.ModuleTreemapEnriched as ModuleTreemapEnriched
 
 -- =============================================================================
@@ -45,6 +45,7 @@ type Input =
   , functionCalls :: Map Int (Array Loader.V2FunctionCall)
   , gitStatus :: Maybe Loader.GitStatusData  -- For git status coloring
   , colorMode :: ColorMode                   -- Current color mode
+  , reachabilityData :: Maybe PackageReachability  -- For reachability coloring
   }
 
 -- | Output to parent
@@ -147,11 +148,12 @@ handleAction = case _ of
         callsChanged = Map.size input.functionCalls /= Map.size lastInput.functionCalls
         colorModeChanged = input.colorMode /= lastInput.colorMode
         gitStatusChanged = input.gitStatus /= lastInput.gitStatus
+        reachabilityChanged = (input.reachabilityData <#> _.packageName) /= (lastInput.reachabilityData <#> _.packageName)
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
-    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged) do
+    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged || reachabilityChanged) do
       log $ "[ModuleTreemapEnrichedViz] Input changed, re-rendering"
       renderTreemap input
 
@@ -192,6 +194,7 @@ renderTreemap input = do
     , onDeclarationClick: Just onDeclarationClick
     , colorMode: input.colorMode
     , gitStatus: input.gitStatus
+    , reachabilityData: input.reachabilityData
     }
     pkgModules
     pkgImports

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS package_versions (
     license         VARCHAR,
     repository      VARCHAR,
     source          VARCHAR DEFAULT 'registry',
+    bundle_module   VARCHAR DEFAULT NULL,  -- Spago bundle entry module (apps only)
     -- FFI statistics (polyglot support v3.2)
     loc_ffi_js      INTEGER DEFAULT 0,
     loc_ffi_erlang  INTEGER DEFAULT 0,
@@ -258,7 +259,7 @@ CREATE TABLE IF NOT EXISTS metadata (
     value   VARCHAR
 );
 
-INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.1');
+INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.2');
 INSERT OR REPLACE INTO metadata (key, value) VALUES ('created_at', CURRENT_TIMESTAMP);
 "#;
 

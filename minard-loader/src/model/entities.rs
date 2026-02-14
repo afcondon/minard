@@ -79,6 +79,7 @@ pub struct PackageVersion {
     pub license: Option<String>,
     pub repository: Option<String>,
     pub source: String, // "registry" | "local" | "git"
+    pub bundle_module: Option<String>, // Spago bundle entry module (apps only)
     // FFI statistics (polyglot support)
     pub loc_ffi_js: Option<i32>,
     pub loc_ffi_erlang: Option<i32>,

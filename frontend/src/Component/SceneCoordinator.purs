@@ -46,8 +46,7 @@ import Web.Event.Event as WE
 import Web.UIEvent.KeyboardEvent (KeyboardEvent, toEvent, key)
 
 -- PSD3 Imports
-import Hylograph.Render (runD3, clear)
-import Hylograph.HATS.InterpreterTick (clearAllHighlights)
+import Hylograph.HATS.InterpreterTick (clearContainer, clearAllHighlights)
 
 -- Child visualization components (streamlined)
 import CE2.Component.BubblePackBeeswarmViz as BubblePackBeeswarmViz
@@ -68,7 +67,8 @@ import CE2.Data.Loader as Loader
 import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
 import CE2.Viz.SourceCode as SourceCode
-import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus)
+import Data.Graph.Algorithms (reachableFrom) as GraphAlgo
+import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus, PackageReachability)
 
 -- FFI declarations for browser history integration
 foreign import pushHistoryState :: String -> String -> Effect Unit
@@ -256,6 +256,9 @@ type State =
     -- Git status (lazy loaded when Git mode activated)
   , gitStatus :: Maybe Loader.GitStatusData
 
+    -- Reachability data (lazy computed when Reachability mode activated)
+  , reachabilityData :: Maybe PackageReachability
+
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
@@ -291,6 +294,7 @@ data Action
   | OpenPackagePanel String               -- packageName - opens panel with first module
   | ToggleGitMode                         -- Toggle between GitStatus color mode and previous mode
   | ToggleTidyMode                        -- Toggle infrastructure link filtering
+  | ToggleReachabilityMode                -- Toggle reachability coloring (dead code detection)
   -- Search typeahead
   | SearchInput String                    -- User typed in search box
   | SearchResultsReceived Int (Array Loader.UnifiedSearchResult)  -- Results arrived (seqId, results)
@@ -337,6 +341,7 @@ initialState input =
   , hoveredModule: Nothing
   , typeClassStats: Nothing
   , gitStatus: Nothing
+  , reachabilityData: Nothing
   , hideInfraLinks: false
   , historyCleanup: Nothing
   , searchQuery: ""
@@ -472,6 +477,12 @@ renderHeaderBar state =
             , HP.style $ toggleButtonStyle state.hideInfraLinks textColor
             ]
             [ HH.text "Tidy" ]
+        , HH.button
+            [ HE.onClick \_ -> ToggleReachabilityMode
+            , HP.style $ toggleButtonStyle (state.colorMode == Reachability) textColor
+            , HP.title "Reachability: modules colored by transitive reachability. Libraries: from external consumers. Apps: from Main."
+            ]
+            [ HH.text "Reach" ]
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
             [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
@@ -844,6 +855,7 @@ renderScene state =
                   , functionCalls: state.packageCalls
                   , gitStatus: state.gitStatus
                   , colorMode: state.colorMode
+                  , reachabilityData: state.reachabilityData
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1049,6 +1061,30 @@ handleAction = case _ of
     -- ViewMode resets to PrimaryView on scene change
     liftEffect $ pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
 
+    -- If reachability mode is active and we're entering a package view, recompute
+    when (state.colorMode == Reachability) $ case targetScene of
+      PkgTreemap pkg -> do
+        updatedState <- H.get
+        case updatedState.v2Data of
+          Just v2 -> do
+            let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
+                              >>= _.bundleModule
+                reach = computePackageReachability pkg bundleMod v2.imports v2.modules
+            log $ "[SceneCoordinator] Reachability recomputed for " <> pkg
+            H.modify_ _ { reachabilityData = Just reach }
+          Nothing -> pure unit
+      PkgModuleBeeswarm pkg -> do
+        updatedState <- H.get
+        case updatedState.v2Data of
+          Just v2 -> do
+            let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
+                              >>= _.bundleModule
+                reach = computePackageReachability pkg bundleMod v2.imports v2.modules
+            log $ "[SceneCoordinator] Reachability recomputed for " <> pkg
+            H.modify_ _ { reachabilityData = Just reach }
+          Nothing -> pure unit
+      _ -> pure unit
+
     H.raise (SceneChanged targetScene)
     newState <- H.get
     prepareSceneData newState
@@ -1229,6 +1265,38 @@ handleAction = case _ of
     -- Re-render current scene to apply/remove infrastructure link filtering
     newState <- H.get
     prepareSceneData newState
+
+  ToggleReachabilityMode -> do
+    state <- H.get
+    if state.colorMode == Reachability
+      then do
+        log "[SceneCoordinator] Reachability mode OFF"
+        H.modify_ _ { colorMode = FullRegistryTopo }
+      else do
+        log "[SceneCoordinator] Reachability mode ON"
+        H.modify_ _ { colorMode = Reachability }
+        -- Compute reachability for current package (if in a package view)
+        case state.scene of
+          PkgTreemap pkg -> computeAndStoreReachability pkg
+          PkgModuleBeeswarm pkg -> computeAndStoreReachability pkg
+          _ -> pure unit
+    where
+      computeAndStoreReachability pkg = do
+        state' <- H.get
+        case state'.v2Data of
+          Just v2 -> do
+            -- Find bundle module for this package (deterministic app detection)
+            let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
+                              >>= _.bundleModule
+                reach = computePackageReachability pkg bundleMod v2.imports v2.modules
+                modeLabel = case bundleMod of
+                  Just m  -> "app reachability from " <> m
+                  Nothing -> "library reachability"
+            log $ "[SceneCoordinator] " <> modeLabel <> " for " <> pkg <> ": "
+                <> show (Set.size reach.reachable) <> " reachable, "
+                <> show (Set.size reach.entryPoints) <> " entry points"
+            H.modify_ _ { reachabilityData = Just reach }
+          Nothing -> pure unit
 
   -- =========================================================================
   -- Search Typeahead Actions
@@ -1543,11 +1611,11 @@ handleQuery = case _ of
 
 -- | Clear all visualization containers (prevents stale SVGs when switching scenes)
 clearAllVizContainers :: Effect Unit
-clearAllVizContainers = void $ runD3 do
-  clear "#galaxy-beeswarm-container *"
-  clear (C.bubblePackBeeswarmContainer <> " *")
-  clear "#pkg-treemap-container *"
-  clear "#circlepack-container *"
+clearAllVizContainers = do
+  clearContainer "#galaxy-beeswarm-container"
+  clearContainer (C.bubblePackBeeswarmContainer)
+  clearContainer "#pkg-treemap-container"
+  clearContainer "#circlepack-container"
 
 -- | Compute the scoped packages for SolarSwarm chord/matrix views
 -- | Respects focalPackage: when set, filters to the focal neighborhood
@@ -1775,3 +1843,64 @@ buildModuleImportedByMap imports =
     foldl (\acc (Tuple imported importer) ->
       Map.alter (Just <<< Array.cons importer <<< fromMaybe []) imported acc
     ) Map.empty pairs
+
+-- =============================================================================
+-- Package Reachability Computation
+-- =============================================================================
+
+-- | Compute which modules in a package are reachable
+-- | Two modes, determined by bundleModule:
+-- |   - Library mode (Nothing): entry points are modules imported by external packages
+-- |   - App mode (Just mainMod): entry point is the bundle module (e.g. CE2.Main)
+-- | Uses `reachableFrom` from Data.Graph.Algorithms for BFS traversal
+computePackageReachability
+  :: String                         -- target package name
+  -> Maybe String                   -- bundle module (Just for apps, Nothing for libraries)
+  -> Array Loader.V2ModuleImports   -- all imports
+  -> Array Loader.V2ModuleListItem  -- all modules (with package info)
+  -> PackageReachability
+computePackageReachability targetPkg bundleModule allImports allModules =
+  let
+    -- Module name → package name
+    modToPkg :: Map String String
+    modToPkg = Map.fromFoldable $ allModules <#> \m -> Tuple m.name m.package.name
+
+    -- Modules in target package
+    targetMods :: Set String
+    targetMods = Set.fromFoldable $
+      Array.filter (\m -> m.package.name == targetPkg) allModules <#> _.name
+
+    -- Forward import map: module → Set of what it imports
+    importsOf :: Map String (Set String)
+    importsOf = Map.fromFoldable $
+      allImports <#> \imp -> Tuple imp.moduleName (Set.fromFoldable imp.imports)
+
+    -- Build import graph restricted to target package
+    internalGraph =
+      { nodes: Array.fromFoldable targetMods
+      , edges: Map.fromFoldable $ (Array.fromFoldable targetMods) <#> \mod ->
+          Tuple mod (Set.intersection (fromMaybe Set.empty (Map.lookup mod importsOf)) targetMods)
+      }
+
+    -- Entry points depend on mode
+    entryPoints = case bundleModule of
+      Just mainMod | Set.member mainMod targetMods ->
+        Set.singleton mainMod  -- App mode: Main is the sole entry point
+      _ ->
+        -- Library mode: target modules imported by external modules
+        foldl (\acc imp ->
+          let importerPkg = Map.lookup imp.moduleName modToPkg
+          in if importerPkg /= Just targetPkg
+             then foldl (\a imported ->
+                    if Set.member imported targetMods
+                    then Set.insert imported a
+                    else a
+                  ) acc imp.imports
+             else acc
+        ) Set.empty allImports
+
+    -- BFS using library function, union results from all entry points
+    reachable = Set.unions $
+      (Array.fromFoldable entryPoints) <#> \ep -> GraphAlgo.reachableFrom ep internalGraph
+  in
+    { reachable, entryPoints, packageName: targetPkg }

@@ -38,6 +38,7 @@ export const buildPackagesJson = (rows) => {
     license: row.license || null,
     repository: row.repository || null,
     source: row.source || 'registry',
+    bundleModule: row.bundle_module || null,
     moduleCount: Number(row.module_count) || 0,
     declarationCount: Number(row.declaration_count) || 0,
     totalLoc: Number(row.total_loc) || 0,

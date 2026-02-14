@@ -354,6 +354,7 @@ data ColorMode
   | ProjectScopeTopo    -- Color by topo layer within project scope
   | PublishDate         -- Color by publish date (beeswarm default)
   | GitStatus           -- Color by git working tree status (modified/staged/clean)
+  | Reachability        -- Color by external reachability (dead code detection)
 
 derive instance eqColorMode :: Eq ColorMode
 
@@ -364,6 +365,7 @@ instance showColorMode :: Show ColorMode where
   show ProjectScopeTopo = "ProjectScopeTopo"
   show PublishDate = "PublishDate"
   show GitStatus = "GitStatus"
+  show Reachability = "Reachability"
 
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String
@@ -457,3 +459,35 @@ getPackageGitStatus pgs packageName
   | Set.member packageName pgs.packagesWithStaged = GitStaged
   | Set.member packageName pgs.packagesWithUntracked = GitUntracked
   | otherwise = GitClean
+
+-- =============================================================================
+-- Reachability Status (for dead code detection)
+-- =============================================================================
+
+-- | Module reachability status for coloring
+data ReachabilityStatus
+  = Reachable       -- Transitively imported from outside the package
+  | Unreachable     -- Not reachable from any external consumer
+  | EntryPoint      -- Directly imported by external module (a root)
+
+derive instance eqReachabilityStatus :: Eq ReachabilityStatus
+
+-- | Package-level reachability: set of reachable module names
+type PackageReachability =
+  { reachable :: Set String      -- Modules transitively reachable from outside
+  , entryPoints :: Set String    -- Modules directly imported from outside
+  , packageName :: String        -- Which package this was computed for
+  }
+
+-- | Get reachability status for a module
+getModuleReachability :: PackageReachability -> String -> ReachabilityStatus
+getModuleReachability pr moduleName
+  | Set.member moduleName pr.entryPoints = EntryPoint
+  | Set.member moduleName pr.reachable = Reachable
+  | otherwise = Unreachable
+
+-- | Short display name for reachability status
+showReachabilityStatus :: ReachabilityStatus -> String
+showReachabilityStatus EntryPoint = "entry point"
+showReachabilityStatus Reachable = "reachable"
+showReachabilityStatus Unreachable = "unreachable"

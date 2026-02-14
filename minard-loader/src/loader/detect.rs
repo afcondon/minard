@@ -123,6 +123,30 @@ fn detect_from_spago_yaml(project_path: &Path) -> Option<Backend> {
     None
 }
 
+/// Extract bundle module from a workspace package's spago.yaml
+/// Looks for `bundle:` → `module:` nested structure
+pub fn extract_bundle_module(spago_yaml_path: &Path) -> Option<String> {
+    let content = fs::read_to_string(spago_yaml_path).ok()?;
+    let mut in_bundle = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !in_bundle && (trimmed == "bundle:" || trimmed.starts_with("bundle:")) {
+            in_bundle = true;
+            continue;
+        }
+        if in_bundle && trimmed.starts_with("module:") {
+            return trimmed
+                .strip_prefix("module:")
+                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string());
+        }
+        // Exit bundle block if we hit a non-indented line
+        if in_bundle && !line.starts_with(' ') && !line.starts_with('\t') && !trimmed.is_empty() {
+            in_bundle = false;
+        }
+    }
+    None
+}
+
 /// FFI file extensions by backend
 const FFI_EXTENSIONS: &[(&str, Backend)] = &[
     (".js", Backend::JavaScript),

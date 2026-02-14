@@ -103,6 +103,7 @@ listPackages db mProject = do
       pv.license,
       pv.repository,
       pv.source,
+      pv.bundle_module,
       COUNT(DISTINCT m.id) as module_count,
       COUNT(DISTINCT d.id) as declaration_count,
       (SELECT COALESCE(SUM(m2.loc), 0) FROM modules m2 WHERE m2.package_version_id = pv.id) as total_loc,
@@ -122,7 +123,7 @@ listPackages db mProject = do
       WHERE sp.package_version_id = pv.id
       AND s.project_id = (SELECT project_id FROM target)
     )
-    GROUP BY pv.id, pv.name, pv.version, pv.description, pv.license, pv.repository, pv.source
+    GROUP BY pv.id, pv.name, pv.version, pv.description, pv.license, pv.repository, pv.source, pv.bundle_module
     ORDER BY pv.source DESC, pv.name, pv.version
   """ [unsafeToForeign (toNullable mProject)]
   let json = buildPackagesJson rows

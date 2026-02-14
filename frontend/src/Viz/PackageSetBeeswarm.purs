@@ -504,6 +504,10 @@ getNodeStyling colorMode gitStatus pkg dateRange maxTopoLayer = case colorMode o
         , strokeColor: "#7d3c98"
         , strokeWidth: 3.0
         }
+  Reachability ->
+    -- At package-set level, fall back to topo coloring
+    -- (per-package reachability is computed at module level in PkgTreemap)
+    { color: getTopoColor pkg.topoLayer maxTopoLayer, strokeColor: "#333", strokeWidth: 0.5 }
 
 -- | Get color based on topo layer (green-to-blue gradient)
 getTopoColor :: Int -> Int -> String

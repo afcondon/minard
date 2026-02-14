@@ -57,7 +57,7 @@ import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreema
 import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
 import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall, GitStatusData)
-import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor)
+import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor, PackageReachability, ReachabilityStatus(..), getModuleReachability)
 
 -- =============================================================================
 -- Types
@@ -71,8 +71,9 @@ type Config =
   , packageName :: String
   , onModuleClick :: Maybe (String -> String -> Effect Unit)  -- packageName -> moduleName -> Effect
   , onDeclarationClick :: Maybe (String -> String -> String -> Effect Unit)  -- pkg -> mod -> decl -> Effect
-  , colorMode :: ColorMode       -- Current color mode (for git status)
+  , colorMode :: ColorMode       -- Current color mode (for git status / reachability)
   , gitStatus :: Maybe GitStatusData  -- Git status for module coloring
+  , reachabilityData :: Maybe PackageReachability  -- Reachability for dead code coloring
   }
 
 -- | Module with computed treemap position
@@ -143,8 +144,34 @@ type ModuleStyling =
   , strokeWidth :: String
   }
 
-getModuleStyling :: ColorMode -> GitFileStatus -> ModuleStyling
-getModuleStyling colorMode gitStatus = case colorMode of
+getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> ModuleStyling
+getModuleStyling colorMode gitStatus mReachStatus = case colorMode of
+  Reachability ->
+    case mReachStatus of
+      Just EntryPoint ->
+        -- Entry points: bright blue background with thick stroke (most important)
+        { fillColor: "#d6eaf8"
+        , strokeColor: "#2980b9"
+        , strokeWidth: "3"
+        }
+      Just Reachable ->
+        -- Reachable: subtle tinted background (alive, needed)
+        { fillColor: "transparent"
+        , strokeColor: "rgba(255, 255, 255, 0.3)"
+        , strokeWidth: "1"
+        }
+      Just Unreachable ->
+        -- Unreachable: desaturated gray (dead code)
+        { fillColor: "rgba(180, 180, 180, 0.25)"
+        , strokeColor: "rgba(150, 150, 150, 0.4)"
+        , strokeWidth: "1"
+        }
+      Nothing ->
+        -- No reachability data: default
+        { fillColor: "transparent"
+        , strokeColor: "rgba(255, 255, 255, 0.3)"
+        , strokeWidth: "1"
+        }
   GitStatus ->
     case gitStatus of
       GitClean ->
@@ -714,9 +741,16 @@ linkPath from to fromName toName =
 enrichedModuleCell :: Config -> EnrichedModuleData -> Tree
 enrichedModuleCell config m =
   let
-    -- Get git status and styling for this module
+    -- Get git status and reachability status for this module
     gitStatus = getModuleGitStatus config.gitStatus m.name
-    styling = getModuleStyling config.colorMode gitStatus
+    reachStatus = config.reachabilityData <#> \rd -> getModuleReachability rd m.name
+    styling = getModuleStyling config.colorMode gitStatus reachStatus
+    -- Dim declaration bubbles for unreachable modules in Reachability mode
+    declOpacity = case config.colorMode of
+      Reachability -> case reachStatus of
+        Just Unreachable -> "0.25"
+        _ -> "1"
+      _ -> "1"
   in
     withBehaviors
       ( [ onCoordinatedHighlight
@@ -757,6 +791,7 @@ enrichedModuleCell config m =
           [ thunkedStr "transform"
               ("translate(" <> show (m.width / 2.0) <> "," <> show (m.height / 2.0) <> ")")
           , staticStr "class" "declaration-bubbles"
+          , thunkedStr "opacity" declOpacity
           ]
           (map (declarationCircleElem config m.name) m.declarations)
 

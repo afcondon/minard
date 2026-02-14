@@ -1231,6 +1231,7 @@ type V2Package =
   , license :: Maybe String
   , repository :: Maybe String
   , source :: String  -- "registry" | "workspace" | "extra"
+  , bundleModule :: Maybe String  -- Spago bundle entry module (apps only, e.g. "CE2.Main")
   , moduleCount :: Int
   , declarationCount :: Int
   , totalLoc :: Int         -- Sum of all module LOC in this package

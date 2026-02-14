@@ -97,9 +97,9 @@ pub fn insert_snapshot_packages(conn: &Connection, packages: &[SnapshotPackage])
 pub fn insert_package_versions(conn: &Connection, packages: &[PackageVersion]) -> Result<()> {
     let mut stmt = conn.prepare(
         "INSERT OR IGNORE INTO package_versions
-         (id, name, version, description, license, repository, source,
+         (id, name, version, description, license, repository, source, bundle_module,
           loc_ffi_js, loc_ffi_erlang, loc_ffi_python, loc_ffi_lua, ffi_file_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )?;
 
     for pkg in packages {
@@ -111,6 +111,7 @@ pub fn insert_package_versions(conn: &Connection, packages: &[PackageVersion]) -
             pkg.license,
             pkg.repository,
             pkg.source,
+            pkg.bundle_module,
             pkg.loc_ffi_js,
             pkg.loc_ffi_erlang,
             pkg.loc_ffi_python,

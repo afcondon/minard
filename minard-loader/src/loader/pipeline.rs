@@ -27,7 +27,7 @@ use crate::registry::{
     get_registry_packages_to_load, load_registry_modules_from_output,
 };
 
-use super::detect::scan_ffi_files;
+use super::detect::{scan_ffi_files, extract_bundle_module};
 use super::discovery::ProjectDiscovery;
 
 /// Main load pipeline
@@ -122,6 +122,16 @@ impl LoadPipeline {
         // Phase 4: Create package versions (with deduplication)
         progress.set_message("Creating package versions...");
         let packages = spago_lock.all_packages();
+
+        // Build map of workspace package name -> bundle_module (from each package's spago.yaml)
+        let mut bundle_modules: HashMap<String, String> = HashMap::new();
+        for (name, ws_pkg) in &spago_lock.workspace.packages {
+            let ws_yaml_path = discovery.project_path.join(&ws_pkg.path).join("spago.yaml");
+            if let Some(bundle_mod) = extract_bundle_module(&ws_yaml_path) {
+                bundle_modules.insert(name.clone(), bundle_mod);
+            }
+        }
+
         let mut package_versions = Vec::new();
 
         for pkg_info in &packages {
@@ -134,6 +144,7 @@ impl LoadPipeline {
                 license: None,
                 repository: None,
                 source: pkg_info.source.clone(),
+                bundle_module: bundle_modules.get(&pkg_info.name).cloned(),
                 // FFI stats will be populated by post-load phase
                 loc_ffi_js: None,
                 loc_ffi_erlang: None,
