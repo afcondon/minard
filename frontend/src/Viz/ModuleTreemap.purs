@@ -22,7 +22,7 @@ import Effect (Effect)
 -- PSD3 HATS Imports
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Internal.Behavior.Types (HighlightClass(..))
 
 -- Layout

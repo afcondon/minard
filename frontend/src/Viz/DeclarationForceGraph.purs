@@ -31,7 +31,7 @@ import Effect.Console (log)
 -- HATS
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlightWithTooltip, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Internal.Behavior.Types (HighlightClass(..), TooltipTrigger(..))
 
 -- Simulation

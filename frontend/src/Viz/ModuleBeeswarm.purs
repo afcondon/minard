@@ -42,7 +42,7 @@ import Effect.Ref as Ref
 -- PSD3 HATS Imports
 import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Simulation.HATS (tickUpdate)
 
 -- Simulation imports

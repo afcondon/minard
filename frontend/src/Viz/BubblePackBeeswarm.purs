@@ -36,7 +36,7 @@ import Effect.Class.Console (log)
 -- PSD3 HATS Imports
 import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onMouseEnter, onMouseLeave, onClick, onClickWithModifier, onCoordinatedHighlight)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Internal.Behavior.Types (HighlightClass(..))
 import Data.Number (sqrt)
 import Hylograph.Simulation.HATS (tickUpdate)

@@ -34,7 +34,7 @@ import Effect (Effect)
 
 import Hylograph.HATS (Tree, elem, staticStr)
 import Hylograph.HATS.InterpreterTick (rerender)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 
 import Hylograph.Sigil.Color (assignVarColors, isEffectName)
 import Hylograph.Sigil.Text (collectTypeVars, collectArrowParams, collectForallVars)

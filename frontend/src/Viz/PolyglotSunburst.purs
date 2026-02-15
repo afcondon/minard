@@ -25,7 +25,7 @@ import Effect (Effect)
 -- HATS imports
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 
 -- Layout imports
 import DataViz.Layout.Hierarchy.Partition

@@ -22,7 +22,7 @@ import Effect.Class.Console (log)
 -- PSD3 HATS Imports
 import Hylograph.HATS (Tree, elem, staticStr, staticNum)
 import Hylograph.HATS.InterpreterTick (rerender)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 
 -- Layout
 import DataViz.Layout.Adjacency (layout, MatrixLayout, MatrixCell, MatrixLabel)

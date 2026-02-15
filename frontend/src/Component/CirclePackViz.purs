@@ -43,7 +43,7 @@ import Halogen.Subscription as HS
 -- PSD3 HATS Imports
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onMouseEnter, onMouseLeave, onClick)
 import Hylograph.HATS.InterpreterTick (rerender)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 
 -- Simulation imports
 import Hylograph.Simulation

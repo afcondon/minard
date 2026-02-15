@@ -29,7 +29,7 @@ import Data.Int (floor) as Int
 -- HATS imports
 import Hylograph.HATS (Tree, elem, staticStr, thunkedStr)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 
 -- Local imports
 import CE2.Data.Loader (TypeClassStats, TypeClassInfo)
