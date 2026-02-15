@@ -90,6 +90,9 @@ newtype PackageRenderData = PackageRenderData
   -- Dependency info for hover highlighting
   , dependsOn :: Array String   -- Packages this package depends on
   , dependedBy :: Array String  -- Packages that depend on this package
+  -- Source info for visual indicators
+  , source :: String            -- "registry" | "workspace" | "extra"
+  , isApp :: Boolean            -- true if has bundleModule
   }
 
 derive instance eqPackageRenderData :: Eq PackageRenderData
@@ -192,7 +195,7 @@ computeTreemapPositions config packages =
 
         -- Layer group node (uses dummy package data)
         layerData :: PackageSetPackage
-        layerData = { name: "layer-" <> show layer, id: -layer, version: "", topoLayer: layer, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0, source: "registry" }
+        layerData = { name: "layer-" <> show layer, id: -layer, version: "", topoLayer: layer, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0, source: "registry", bundleModule: Nothing }
       in
         VNode
           { data_: layerData
@@ -208,7 +211,7 @@ computeTreemapPositions config packages =
 
     -- Create root node containing layer groups
     rootData :: PackageSetPackage
-    rootData = { name: "root", id: 0, version: "", topoLayer: -1, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0, source: "registry" }
+    rootData = { name: "root", id: 0, version: "", topoLayer: -1, depends: [], description: Nothing, license: Nothing, repositoryOwner: Nothing, repositoryName: Nothing, publishedAt: Nothing, releaseNumber: 0, moduleCount: 0, totalLoc: 0, source: "registry", bundleModule: Nothing }
 
     root :: ValuedNode PackageSetPackage
     root = VNode
@@ -315,6 +318,8 @@ toPackageRenderDataWithoutDeps config pp =
     , circleR
     , dependsOn: []
     , dependedBy: []
+    , source: pp.pkg.source
+    , isApp: pp.pkg.bundleModule /= Nothing
     }
 
 -- | Convert PositionedPackage to PackageRenderData (with dependency data for highlighting)
@@ -340,6 +345,8 @@ toPackageRenderDataWithDeps config dependsOnMap dependedByMap pp =
     , circleR
     , dependsOn: fromMaybe [] $ Map.lookup pp.pkg.name dependsOnMap
     , dependedBy: fromMaybe [] $ Map.lookup pp.pkg.name dependedByMap
+    , source: pp.pkg.source
+    , isApp: pp.pkg.bundleModule /= Nothing
     }
 
 -- | Build a position map from package name to center coordinates
@@ -560,6 +567,48 @@ renderCellContent config colors (PackageRenderData d) =
         Just handler -> withBehaviors [ onClick (handler d.name) ] circleElem
         Nothing -> circleElem
 
+    -- Rounded rectangle for app packages (has bundleModule)
+    makeAppRect =
+      let rectW = d.circleR * 1.6
+          rectH = d.circleR * 1.2
+          rectElem = elem Rect
+            [ thunkedNum "x" (d.cx - rectW / 2.0)
+            , thunkedNum "y" (d.cy - rectH / 2.0)
+            , thunkedNum "width" rectW
+            , thunkedNum "height" rectH
+            , staticStr "rx" "4"
+            , staticStr "ry" "4"
+            , staticStr "fill" colors.stroke
+            , staticStr "stroke" colors.text
+            , staticStr "stroke-width" "0.5"
+            , staticStr "class" "package-circle app-rect"
+            ]
+            []
+      in case config.onCircleClick of
+        Just handler -> withBehaviors [ onClick (handler d.name) ] rectElem
+        Nothing -> rectElem
+
+    -- Source indicator letter inside circle
+    makeSourceIndicator =
+      let letter = if d.source == "registry" then "p"
+                   else if d.source == "extra" then "e"
+                   else ""  -- workspace: no indicator
+          fontSize = max 6.0 (d.circleR * 0.6)
+      in if letter /= "" && d.circleR > 5.0
+         then elem Text
+           [ thunkedNum "x" d.cx
+           , thunkedNum "y" d.cy
+           , staticStr "text-anchor" "middle"
+           , staticStr "dominant-baseline" "central"
+           , thunkedStr "font-size" (show fontSize)
+           , staticStr "fill" colors.textMuted
+           , staticStr "font-family" "'Courier New', Courier, monospace"
+           , staticStr "pointer-events" "none"
+           , thunkedStr "textContent" letter
+           ]
+           []
+         else elem Group [] []
+
     -- Label below circle
     makeLabel =
       if d.width > 50.0 && d.height > 30.0
@@ -596,13 +645,19 @@ renderCellContent config colors (PackageRenderData d) =
 
     CellCircle ->
       if d.width > 8.0 && d.height > 8.0
-      then elem Group [] [ makeCircle, makeLabel ]
+      then
+        if d.isApp
+        then elem Group [] [ makeAppRect, makeLabel ]
+        else elem Group [] [ makeCircle, makeSourceIndicator, makeLabel ]
       else elem Group [] []
 
     -- ModuleCircles and BubblePack fall back to Circle for package set view
     _ ->
       if d.width > 8.0 && d.height > 8.0
-      then elem Group [] [ makeCircle, makeLabel ]
+      then
+        if d.isApp
+        then elem Group [] [ makeAppRect, makeLabel ]
+        else elem Group [] [ makeCircle, makeSourceIndicator, makeLabel ]
       else elem Group [] []
 
 -- | Truncate name to fit

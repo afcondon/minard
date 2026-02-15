@@ -631,6 +631,8 @@ getAllImports db = do
   -- Deduplicate modules: when a package exists as both local and registry,
   -- prefer the local version (it has current source). Then deduplicate by
   -- module name, keeping the entry with the most imports.
+  -- Note: exclude packages with 0 modules (e.g. git-sourced stubs from
+  -- alternative backends) to prevent them shadowing real registry packages.
   rows <- queryAll db """
     WITH active_packages AS (
       SELECT pv.id, pv.name, pv.source,
@@ -641,6 +643,7 @@ getAllImports db = do
              ) as rn
       FROM package_versions pv
       WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+        AND EXISTS (SELECT 1 FROM modules m WHERE m.package_version_id = pv.id)
     ),
     best_modules AS (
       SELECT m.name as module_name,
@@ -649,10 +652,12 @@ getAllImports db = do
       WHERE m.package_version_id IN (SELECT id FROM active_packages WHERE rn = 1)
       GROUP BY m.name
     )
-    SELECT bm.module_id, bm.module_name, mi.imported_module
+    SELECT bm.module_id, bm.module_name,
+           COALESCE(m2.name, mi.imported_module) as imported_module
     FROM best_modules bm
     LEFT JOIN module_imports mi ON mi.module_id = bm.module_id
-    ORDER BY bm.module_name, mi.imported_module
+    LEFT JOIN modules m2 ON m2.id = mi.imported_module_id
+    ORDER BY bm.module_name, imported_module
   """
   let json = buildAllImportsJson rows
   ok' jsonHeaders json
@@ -667,7 +672,8 @@ foreign import buildAllImportsJson :: Array Foreign -> String
 -- | Returns: { calls: [{ moduleId, moduleName, calls: [{ callerName, calleeModule, calleeName }] }] }
 getAllCalls :: Database -> Aff Response
 getAllCalls db = do
-  -- Deduplicate modules (same as getAllImports: prefer local over registry)
+  -- Deduplicate modules (same as getAllImports: prefer local over registry,
+  -- exclude 0-module packages to prevent git stubs shadowing registry)
   rows <- queryAll db """
     WITH active_packages AS (
       SELECT pv.id, pv.name, pv.source,
@@ -678,6 +684,7 @@ getAllCalls db = do
              ) as rn
       FROM package_versions pv
       WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+        AND EXISTS (SELECT 1 FROM modules m WHERE m.package_version_id = pv.id)
     ),
     best_modules AS (
       SELECT m.name as module_name,

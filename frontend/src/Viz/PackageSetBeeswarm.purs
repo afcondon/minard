@@ -648,21 +648,64 @@ packageNodeHATS config node =
         , thunkedStr "data-name" node.pkg.name
         , thunkedStr "data-layer" (show node.pkg.topoLayer)
         ]
-        [ -- Package circle (click → neighborhood view)
-          withBehaviors circleBehaviors $
-            elem Circle
-              [ staticStr "cx" "0"
-              , staticStr "cy" "0"
-              , thunkedNum "r" node.r
-              , thunkedStr "fill" node.color
-              , thunkedStr "stroke" node.strokeColor
-              , thunkedNum "stroke-width" node.strokeWidth
-              , staticStr "opacity" "1.0"
-              , staticStr "cursor" "pointer"
-              , staticStr "class" "package-circle"  -- For CSS transitions
-              ]
-              []
-        , -- Package name label (click → treemap view)
+        (
+          -- App packages: rounded rectangle; others: circle
+          if node.pkg.bundleModule /= Nothing
+          then
+            [ withBehaviors circleBehaviors $
+                elem Rect
+                  [ thunkedNum "x" (-(node.r * 0.8))
+                  , thunkedNum "y" (-(node.r * 0.6))
+                  , thunkedNum "width" (node.r * 1.6)
+                  , thunkedNum "height" (node.r * 1.2)
+                  , staticStr "rx" "4"
+                  , staticStr "ry" "4"
+                  , thunkedStr "fill" node.color
+                  , thunkedStr "stroke" node.strokeColor
+                  , thunkedNum "stroke-width" node.strokeWidth
+                  , staticStr "opacity" "1.0"
+                  , staticStr "cursor" "pointer"
+                  , staticStr "class" "package-circle app-rect"
+                  ]
+                  []
+            ]
+          else
+            [ withBehaviors circleBehaviors $
+                elem Circle
+                  [ staticStr "cx" "0"
+                  , staticStr "cy" "0"
+                  , thunkedNum "r" node.r
+                  , thunkedStr "fill" node.color
+                  , thunkedStr "stroke" node.strokeColor
+                  , thunkedNum "stroke-width" node.strokeWidth
+                  , staticStr "opacity" "1.0"
+                  , staticStr "cursor" "pointer"
+                  , staticStr "class" "package-circle"
+                  ]
+                  []
+            ]
+            -- Source indicator letter for registry/extra
+            <> let letter = if node.pkg.source == "registry" then "p"
+                            else if node.pkg.source == "extra" then "e"
+                            else ""
+                   fontSize = max 6.0 (node.r * 0.6)
+               in if letter /= "" && node.r > 10.0
+                  then [ elem Text
+                           [ staticStr "x" "0"
+                           , staticStr "y" "0"
+                           , staticStr "text-anchor" "middle"
+                           , staticStr "dominant-baseline" "central"
+                           , thunkedStr "font-size" (show fontSize)
+                           , staticStr "fill" "rgba(255,255,255,0.6)"
+                           , staticStr "font-family" "'Courier New', Courier, monospace"
+                           , staticStr "pointer-events" "none"
+                           , thunkedStr "textContent" letter
+                           ]
+                           []
+                       ]
+                  else []
+        <>
+        [ -- Package name label (click → treemap view)
           withBehaviors labelBehaviors $
             elem Text
               [ staticStr "x" "0"
@@ -677,6 +720,7 @@ packageNodeHATS config node =
               ]
               []
         ]
+        )
 
 -- =============================================================================
 -- Force Simulation

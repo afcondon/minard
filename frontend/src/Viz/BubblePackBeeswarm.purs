@@ -27,6 +27,8 @@ import Data.Int (toNumber)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set (Set)
+import Data.Set as Set
 import Data.String as String
 import Data.Nullable as Nullable
 import Data.Tuple (Tuple(..))
@@ -80,6 +82,7 @@ type Config =
   , maxTopoLayer :: Int        -- For topo-based X positioning
   , moduleImports :: Map String (Array String)    -- Module name -> modules it imports
   , moduleImportedBy :: Map String (Array String) -- Module name -> modules that import it
+  , appPackages :: Set String  -- Package names that have a bundleModule (apps)
   }
 
 -- | Callbacks for user interactions
@@ -113,6 +116,8 @@ type PackedPackageNode = SimulationNode
   , modules :: Array PackedModuleCircle -- Pre-packed module positions
   , targetX :: Number                   -- Target X for topo-based positioning
   , topoLayer :: Int                    -- Topo layer for coloring
+  , source :: String                    -- "registry" | "workspace" | "extra"
+  , isApp :: Boolean                    -- true if has bundleModule
   )
 
 -- | Handle for interacting with the visualization
@@ -134,6 +139,8 @@ type PackedPackageNodeRow =
   , modules :: Array PackedModuleCircle
   , targetX :: Number
   , topoLayer :: Int
+  , source :: String
+  , isApp :: Boolean
   )
 
 -- =============================================================================
@@ -388,6 +395,8 @@ preparePackedNodes config packageNodes modulesByPackage =
       , modules: packedModules
       , targetX
       , topoLayer: pkg.topoLayer
+      , source: pkg.source
+      , isApp: Set.member pkg.name config.appPackages
       }
 
 -- | Prepare packages at initial positions (for hero transition)
@@ -468,6 +477,8 @@ preparePackedNodesAtPositions config packageNodes modulesByPackage positionMap =
       , modules: packedModules
       , targetX
       , topoLayer: pkg.topoLayer
+      , source: pkg.source
+      , isApp: false
       }
 
 -- =============================================================================
@@ -546,24 +557,59 @@ packageNodeHATS callbacks node =
       , thunkedStr "data-name" node.name
       , staticStr "cursor" "pointer"
       ]
-      ( [ -- Package enclosing circle
+      ( [ -- Package enclosing shape: rounded rect for apps, circle for others
           -- Plain click → drill into package, modifier+click → focal filter
           withBehaviors [ onClickWithModifier
                             (callbacks.onPackageClick node.name)
                             (callbacks.onPackageModifierClick node.name)
                         ]
-          $ elem Circle
-            [ staticStr "class" "package-circle"
-            , staticStr "cx" "0"
-            , staticStr "cy" "0"
-            , thunkedNum "r" node.r
-            , thunkedStr "fill" node.color
-            , staticStr "fill-opacity" "0.15"
-            , thunkedStr "stroke" node.color
-            , staticStr "stroke-width" "2"
-            ]
-            []
+          $ if node.isApp
+            then elem Rect
+              [ staticStr "class" "package-circle app-rect"
+              , thunkedNum "x" (-(node.r * 0.9))
+              , thunkedNum "y" (-(node.r * 0.9))
+              , thunkedNum "width" (node.r * 1.8)
+              , thunkedNum "height" (node.r * 1.8)
+              , staticStr "rx" "8"
+              , staticStr "ry" "8"
+              , thunkedStr "fill" node.color
+              , staticStr "fill-opacity" "0.15"
+              , thunkedStr "stroke" node.color
+              , staticStr "stroke-width" "2"
+              ]
+              []
+            else elem Circle
+              [ staticStr "class" "package-circle"
+              , staticStr "cx" "0"
+              , staticStr "cy" "0"
+              , thunkedNum "r" node.r
+              , thunkedStr "fill" node.color
+              , staticStr "fill-opacity" "0.15"
+              , thunkedStr "stroke" node.color
+              , staticStr "stroke-width" "2"
+              ]
+              []
         ]
+        -- Source indicator for registry/extra packages
+        <> let letter = if node.source == "registry" then "p"
+                        else if node.source == "extra" then "e"
+                        else ""
+               fontSize = max 8.0 (node.r * 0.25)
+           in if letter /= "" && node.r > 20.0
+              then [ elem Text
+                       [ staticStr "x" "0"
+                       , thunkedNum "y" (-(node.r - fontSize))
+                       , staticStr "text-anchor" "middle"
+                       , staticStr "dominant-baseline" "central"
+                       , thunkedStr "font-size" (show fontSize)
+                       , staticStr "fill" "rgba(0,0,0,0.3)"
+                       , staticStr "font-family" "'Courier New', Courier, monospace"
+                       , staticStr "pointer-events" "none"
+                       , thunkedStr "textContent" letter
+                       ]
+                       []
+                   ]
+              else []
         -- Module circles inside
         <> map (moduleCircleHATS callbacks node) node.modules
         <>

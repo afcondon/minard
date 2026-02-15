@@ -48,6 +48,7 @@ type Input =
   , reachabilityData :: Maybe PackageReachability  -- For reachability coloring
   , reachabilityPeek :: Boolean              -- True while R key held (show overlay)
   , clusterData :: Maybe PackageClusters     -- For cluster coloring
+  , isAppPackage :: Boolean                  -- True for app packages (Main entry point)
   }
 
 -- | Output to parent
@@ -175,9 +176,11 @@ renderTreemap input = do
   state <- H.get
 
   -- Filter to this package's modules
+  -- Note: filter imports by module name (not ID) because allImports may resolve
+  -- to different module IDs than listModules when registry packages have multiple versions
   let pkgModules = Array.filter (\m -> m.package.name == input.packageName) input.modules
-      pkgModuleIds = Set.fromFoldable $ map _.id pkgModules
-      pkgImports = Array.filter (\imp -> Set.member imp.moduleId pkgModuleIds) input.imports
+      pkgModuleNames = Set.fromFoldable $ map _.name pkgModules
+      pkgImports = Array.filter (\imp -> Set.member imp.moduleName pkgModuleNames) input.imports
 
   log $ "[ModuleTreemapEnrichedViz] Rendering " <> show (Array.length pkgModules)
       <> " modules, " <> show (Array.length pkgImports) <> " import records"
@@ -201,6 +204,7 @@ renderTreemap input = do
     , reachabilityData: input.reachabilityData
     , reachabilityPeek: input.reachabilityPeek
     , clusterData: input.clusterData
+    , isAppPackage: input.isAppPackage
     }
     pkgModules
     pkgImports

@@ -123,8 +123,11 @@ CREATE INDEX IF NOT EXISTS idx_module_name ON modules(name);
 CREATE TABLE IF NOT EXISTS module_imports (
     module_id           INTEGER NOT NULL REFERENCES modules(id),
     imported_module     VARCHAR NOT NULL,
+    imported_module_id  INTEGER REFERENCES modules(id),
     PRIMARY KEY (module_id, imported_module)
 );
+
+CREATE INDEX IF NOT EXISTS idx_import_resolved ON module_imports(imported_module_id);
 
 CREATE TABLE IF NOT EXISTS module_reexports (
     module_id           INTEGER NOT NULL REFERENCES modules(id),
@@ -259,7 +262,7 @@ CREATE TABLE IF NOT EXISTS metadata (
     value   VARCHAR
 );
 
-INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.2');
+INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.3');
 INSERT OR REPLACE INTO metadata (key, value) VALUES ('created_at', CURRENT_TIMESTAMP);
 "#;
 

@@ -805,6 +805,11 @@ renderScene state =
                       }
                     Nothing ->
                       { imports: Map.empty, importedBy: Map.empty }
+                  -- Compute app packages from V2 data
+                  appPkgs = case state.v2Data of
+                    Just v2 -> Set.fromFoldable $
+                      Array.mapMaybe (\p -> if p.bundleModule /= Nothing then Just p.name else Nothing) v2.packages
+                    Nothing -> Set.empty
                 in
                   HH.slot _bubblePackBeeswarmViz unit BubblePackBeeswarmViz.component
                     { nodes: model.nodes
@@ -816,6 +821,7 @@ renderScene state =
                     , initialPositions: state.capturedPositions
                     , moduleImports: importMaps.imports
                     , moduleImportedBy: importMaps.importedBy
+                    , appPackages: appPkgs
                     }
                     HandleBubblePackBeeswarmOutput
               Nothing ->
@@ -877,6 +883,7 @@ renderScene state =
                   , reachabilityData: state.reachabilityData
                   , reachabilityPeek: state.reachabilityPeek
                   , clusterData: state.clusterData
+                  , isAppPackage: fromMaybe false (state.reachabilityData <#> _.isApp)
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1107,6 +1114,8 @@ handleAction = case _ of
       , viewMode = PrimaryView  -- Reset view mode on scene change
       , scope = scopeForScene
       , capturedPositions = capturedPos
+      , reachabilityData = Nothing  -- Clear stale reachability (package-specific)
+      , clusterData = Nothing       -- Clear stale cluster data (package-specific)
       }
 
     -- Push to browser history (enables back/forward buttons)
@@ -1152,6 +1161,8 @@ handleAction = case _ of
         , scope = scopeForScene
         , capturedPositions = Nothing  -- Clear stale positions
         , focalPackage = Nothing  -- Clear focal when navigating via history
+        , reachabilityData = Nothing  -- Clear stale reachability (package-specific)
+        , clusterData = Nothing       -- Clear stale cluster data (package-specific)
         }
 
       H.raise (SceneChanged targetScene)
@@ -1329,12 +1340,17 @@ handleAction = case _ of
             let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
                               >>= _.bundleModule
                 reach = computePackageReachability pkg bundleMod v2.imports v2.modules
-                modeLabel = case bundleMod of
-                  Just m  -> "app reachability from " <> m
-                  Nothing -> "library reachability"
+                modeLabel = if reach.isApp
+                  then case bundleMod of
+                    Just m  -> "App reachability from " <> m <> " (explicit)"
+                    Nothing -> "App reachability from " <> show (Set.toUnfoldable reach.entryPoints :: Array String) <> " (heuristic)"
+                  else "Library reachability"
             log $ "[SceneCoordinator] " <> modeLabel <> " for " <> pkg <> ": "
                 <> show (Set.size reach.reachable) <> " reachable, "
                 <> show (Set.size reach.entryPoints) <> " entry points"
+                <> " (allImports=" <> show (Array.length v2.imports) <> ", allModules=" <> show (Array.length v2.modules) <> ")"
+            log $ "[SceneCoordinator]   entry points: " <> show (Set.toUnfoldable reach.entryPoints :: Array String)
+            log $ "[SceneCoordinator]   unreachable: " <> show (Array.filter (\m -> m.package.name == pkg && not (Set.member m.name reach.reachable)) v2.modules <#> _.name)
             H.modify_ _ { reachabilityData = Just reach }
           Nothing -> pure unit
 
@@ -1939,6 +1955,8 @@ computePackageReachability targetPkg bundleModule allImports allModules =
     targetMods = Set.fromFoldable $
       Array.filter (\m -> m.package.name == targetPkg) allModules <#> _.name
 
+    -- Entry module comes directly from bundleModule in the database (e.g. "CE2.Main")
+
     -- Forward import map: module → Set of what it imports
     importsOf :: Map String (Set String)
     importsOf = Map.fromFoldable $
@@ -1968,11 +1986,16 @@ computePackageReachability targetPkg bundleModule allImports allModules =
              else acc
         ) Set.empty allImports
 
+    -- Track whether we resolved as an app (for callers to know)
+    isApp = case bundleModule of
+              Just m -> Set.member m targetMods
+              Nothing -> false
+
     -- BFS using library function, union results from all entry points
     reachable = Set.unions $
       (Array.fromFoldable entryPoints) <#> \ep -> GraphAlgo.reachableFrom ep internalGraph
   in
-    { reachable, entryPoints, packageName: targetPkg }
+    { reachable, entryPoints, packageName: targetPkg, isApp }
 
 -- =============================================================================
 -- Package Cluster Computation
@@ -2053,7 +2076,12 @@ computeAndStoreReachabilityForPeek pkg = do
       let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
                         >>= _.bundleModule
           reach = computePackageReachability pkg bundleMod v2.imports v2.modules
-      log $ "[SceneCoordinator] Peek reachability for " <> pkg <> ": "
+          modeLabel = if reach.isApp
+            then case bundleMod of
+              Just m  -> "App reachability from " <> m <> " (explicit)"
+              Nothing -> "App reachability from " <> show (Set.toUnfoldable reach.entryPoints :: Array String) <> " (heuristic)"
+            else "Library reachability"
+      log $ "[SceneCoordinator] " <> modeLabel <> " for " <> pkg <> ": "
           <> show (Set.size reach.reachable) <> " reachable, "
           <> show (Set.size reach.entryPoints) <> " entry points"
       H.modify_ _ { reachabilityData = Just reach }

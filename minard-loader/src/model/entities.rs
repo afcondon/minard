@@ -187,6 +187,10 @@ pub struct LoadStats {
     pub registry_packages_loaded: usize,
     pub registry_modules_loaded: usize,
     pub registry_declarations_loaded: usize,
+    // Extra (local/git) package metrics
+    pub extra_packages_loaded: usize,
+    pub extra_modules_loaded: usize,
+    pub extra_declarations_loaded: usize,
 }
 
 impl LoadStats {
@@ -231,6 +235,15 @@ impl LoadStats {
                 " + registry: {} modules from {} packages",
                 self.registry_modules_loaded,
                 self.registry_packages_loaded
+            ));
+        }
+
+        // Add extra package stats if any
+        if self.extra_modules_loaded > 0 {
+            result.push_str(&format!(
+                " + extra: {} modules from {} packages",
+                self.extra_modules_loaded,
+                self.extra_packages_loaded
             ));
         }
 
@@ -279,6 +292,9 @@ impl LoadStats {
         self.registry_packages_loaded += other.registry_packages_loaded;
         self.registry_modules_loaded += other.registry_modules_loaded;
         self.registry_declarations_loaded += other.registry_declarations_loaded;
+        self.extra_packages_loaded += other.extra_packages_loaded;
+        self.extra_modules_loaded += other.extra_modules_loaded;
+        self.extra_declarations_loaded += other.extra_declarations_loaded;
     }
 }
 

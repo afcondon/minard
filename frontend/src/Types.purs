@@ -479,6 +479,7 @@ type PackageReachability =
   { reachable :: Set String      -- Modules transitively reachable from outside
   , entryPoints :: Set String    -- Modules directly imported from outside
   , packageName :: String        -- Which package this was computed for
+  , isApp :: Boolean             -- True if resolved as app mode (Main entry point)
   }
 
 -- | Get reachability status for a module

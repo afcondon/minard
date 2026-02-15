@@ -989,6 +989,7 @@ type PackageSetPackage =
   , moduleCount :: Int            -- Number of modules (from unified schema, 0 if unknown)
   , totalLoc :: Int               -- Total lines of code (0 if unknown)
   , source :: String              -- "registry" | "workspace" | "extra"
+  , bundleModule :: Maybe String  -- Spago bundle entry module (apps only)
   }
 
 -- | Full package set data with all packages
@@ -1069,6 +1070,7 @@ fetchPackageSet packageSetId = do
               , moduleCount: pkg.moduleCount
               , totalLoc: pkg.totalLoc
               , source: "registry"  -- Old API doesn't have source, default to registry
+              , bundleModule: Nothing
               }
           }
 
@@ -1103,6 +1105,7 @@ v2ToPackageSetData v2Packages =
       , moduleCount: pkg.moduleCount
       , totalLoc: pkg.totalLoc
       , source: pkg.source  -- "registry" | "workspace" | "extra"
+      , bundleModule: pkg.bundleModule
       }
   in
     { packageSet:
@@ -1133,6 +1136,7 @@ v2PackageToPackageSetPackage pkg =
   , moduleCount: pkg.moduleCount
   , totalLoc: pkg.totalLoc  -- Sum of module LOC from v2 API
   , source: pkg.source  -- "registry" | "workspace" | "extra"
+  , bundleModule: pkg.bundleModule
   }
 
 -- =============================================================================

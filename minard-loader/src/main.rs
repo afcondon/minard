@@ -7,7 +7,7 @@ use std::time::Instant;
 use minard_loader::{
     cache::{load_cache_packages, parse_package_set},
     db::{drop_all_tables, get_stats, init_schema, IdGenerator},
-    loader::{discovery::discover_all, LoadPipeline, ProjectDiscovery},
+    loader::{discovery::discover_all, postload::resolve_import_module_ids, LoadPipeline, ProjectDiscovery},
     model::ScanStats,
     progress::ProgressReporter,
     Cli, Commands,
@@ -278,6 +278,20 @@ fn load_scan(
                 }
             }
         }
+    }
+
+    // Final pass: re-resolve import module IDs across all projects.
+    // Module deletions (workspace refresh) may have NULLed out cross-project
+    // references via ON DELETE SET NULL. This pass re-resolves them.
+    progress.set_message("Re-resolving import module IDs...");
+    match resolve_import_module_ids(conn) {
+        Ok(count) => {
+            if verbose && count > 0 {
+                eprintln!("\nFinal pass: re-resolved {} import module IDs", count);
+            }
+        }
+        Err(e) if verbose => eprintln!("Warning: Final import resolution failed: {}", e),
+        _ => {}
     }
 
     scan_stats.elapsed_ms = start.elapsed().as_millis() as u64;

@@ -22,6 +22,7 @@ import Prelude
 import Data.Array as Array
 import Data.Map as Map
 import Data.Maybe (Maybe(..), isJust, fromMaybe)
+import Data.Set (Set)
 import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (liftEffect)
@@ -54,6 +55,7 @@ type Input =
   , initialPositions :: Maybe (Array InitialPosition)  -- For Beeswarm → SolarSwarm transition
   , moduleImports :: Map.Map String (Array String)     -- Module name -> modules it imports
   , moduleImportedBy :: Map.Map String (Array String)  -- Module name -> modules that import it
+  , appPackages :: Set String                          -- Package names that have a bundleModule
   }
 
 -- | Output to parent
@@ -297,7 +299,7 @@ startVisualization input = do
   -- Render the bubblepack beeswarm with filtered nodes and optional positions
   handle <- liftEffect $ renderBubblePackBeeswarmWithPositions
     input.packages filteredNodes input.initialPositions
-    input.moduleImports input.moduleImportedBy callbacks
+    input.moduleImports input.moduleImportedBy input.appPackages callbacks
 
   -- Store handle (initialPositions consumed from input, not stored in state)
   H.modify_ _ { handle = Just handle, initialized = true }
@@ -339,9 +341,10 @@ renderBubblePackBeeswarmWithPositions
   -> Maybe (Array InitialPosition)
   -> Map.Map String (Array String)  -- moduleImports
   -> Map.Map String (Array String)  -- moduleImportedBy
+  -> Set String                     -- appPackages
   -> BubblePackBeeswarm.Callbacks
   -> Effect BubblePackBeeswarm.BubblePackHandle
-renderBubblePackBeeswarmWithPositions packages nodes mInitialPositions moduleImports moduleImportedBy callbacks = do
+renderBubblePackBeeswarmWithPositions packages nodes mInitialPositions moduleImports moduleImportedBy appPackages callbacks = do
   -- Calculate max topo layer for X positioning spread
   let maxTopoLayer = Array.foldl (\acc n -> max acc n.topoLayer) 0 nodes
       config :: BubblePackBeeswarm.Config
@@ -353,6 +356,7 @@ renderBubblePackBeeswarmWithPositions packages nodes mInitialPositions moduleImp
         , maxTopoLayer: maxTopoLayer
         , moduleImports: moduleImports
         , moduleImportedBy: moduleImportedBy
+        , appPackages: appPackages
         }
   case mInitialPositions of
     Just positions -> do

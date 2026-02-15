@@ -76,6 +76,7 @@ type Config =
   , reachabilityData :: Maybe PackageReachability  -- Reachability for dead code coloring
   , reachabilityPeek :: Boolean  -- True while R key held (show text overlay)
   , clusterData :: Maybe PackageClusters  -- Cluster data for ClusterView coloring
+  , isAppPackage :: Boolean      -- True for app packages (peek labels differ)
   }
 
 -- | Module with computed treemap position
@@ -846,9 +847,9 @@ enrichedModuleCell config m =
       , if config.reachabilityPeek then
           let
             peekLabel = case reachStatus of
-              Just EntryPoint  -> "ENTRY POINT"
-              Just Reachable   -> "reachable"
-              Just Unreachable -> "UNREACHABLE"
+              Just EntryPoint  -> if config.isAppPackage then "MAIN" else "ENTRY POINT"
+              Just Reachable   -> if config.isAppPackage then "in use" else "reachable"
+              Just Unreachable -> if config.isAppPackage then "dead code" else "UNREACHABLE"
               Nothing          -> ""
             peekBgColor = case reachStatus of
               Just EntryPoint  -> "rgba(41, 128, 185, 0.7)"   -- Blue tint
