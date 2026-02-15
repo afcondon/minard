@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""
+minard-reach: Query module reachability from the Minard code cartography server.
+
+Computes dead code analysis for PureScript packages by running the same BFS
+reachability algorithm used by the frontend visualization.
+
+Two modes:
+  - App packages (with a bundleModule like CE2.Main): trace from Main entry point
+  - Library packages: trace from modules imported by external packages
+
+Usage:
+  minard-reach                     # Summary of all packages
+  minard-reach prelude             # Detailed reachability for 'prelude'
+  minard-reach minard-frontend     # App package traces from Main
+  minard-reach --json prelude      # Machine-readable JSON output
+  minard-reach --unreachable       # List only unreachable modules across all packages
+
+Requires the Minard server running (default: http://localhost:3000).
+"""
+
+import argparse
+import json
+import sys
+from collections import defaultdict
+from urllib.request import urlopen, Request
+from urllib.error import URLError
+
+
+def fetch_json(url):
+    """Fetch JSON from URL, return parsed data."""
+    req = Request(url, headers={"Accept": "application/json"})
+    with urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode())
+
+
+def compute_reachability(package_name, bundle_module, all_imports, all_modules):
+    """
+    Compute module reachability for a package.
+
+    Mirrors the BFS algorithm in SceneCoordinator.computePackageReachability:
+    - Build a map of module -> package
+    - Filter to target package modules
+    - Build internal import graph (edges within package only)
+    - Determine entry points (app mode vs library mode)
+    - BFS from each entry point through internal imports
+    """
+    # Build module -> package mapping
+    mod_to_pkg = {}
+    for m in all_modules:
+        mod_to_pkg[m["name"]] = m["package"]["name"]
+
+    # Target package modules
+    target_mods = {m["name"] for m in all_modules if m["package"]["name"] == package_name}
+
+    if not target_mods:
+        return {
+            "packageName": package_name,
+            "isApp": False,
+            "entryPoints": set(),
+            "reachable": set(),
+            "unreachable": set(),
+            "totalModules": 0,
+        }
+
+    # Build internal import graph (only edges within the package)
+    # Forward edges: module -> set of modules it imports (within package)
+    internal_edges = defaultdict(set)
+    for imp in all_imports:
+        mod_name = imp["moduleName"]
+        if mod_name not in target_mods:
+            continue
+        for imported in imp.get("imports", []):
+            if imported in target_mods:
+                internal_edges[mod_name].add(imported)
+
+    # Determine entry points
+    is_app = False
+    entry_points = set()
+
+    if bundle_module and bundle_module in target_mods:
+        # App mode: trace from bundle module
+        is_app = True
+        entry_points = {bundle_module}
+    else:
+        # Library mode: find modules imported by external packages
+        for imp in all_imports:
+            mod_name = imp["moduleName"]
+            if mod_name in target_mods:
+                continue  # Skip internal modules
+            for imported in imp.get("imports", []):
+                if imported in target_mods:
+                    entry_points.add(imported)
+
+    # BFS from each entry point
+    reachable = set()
+    for ep in entry_points:
+        # BFS
+        visited = set()
+        frontier = {ep}
+        while frontier:
+            visited |= frontier
+            next_frontier = set()
+            for node in frontier:
+                for neighbor in internal_edges.get(node, set()):
+                    if neighbor not in visited:
+                        next_frontier.add(neighbor)
+            frontier = next_frontier
+        reachable |= visited
+
+    unreachable = target_mods - reachable
+
+    return {
+        "packageName": package_name,
+        "isApp": is_app,
+        "entryPoints": entry_points,
+        "reachable": reachable,
+        "unreachable": unreachable,
+        "totalModules": len(target_mods),
+    }
+
+
+def get_package_info(packages):
+    """Build a dict of package_name -> {bundleModule, source, version, moduleCount}."""
+    info = {}
+    for p in packages:
+        info[p["name"]] = {
+            "bundleModule": p.get("bundleModule"),
+            "source": p.get("source", "unknown"),
+            "version": p.get("version", "?"),
+            "moduleCount": p.get("moduleCount", 0),
+        }
+    return info
+
+
+def print_package_summary(result, pkg_info, use_json=False):
+    """Print reachability summary for one package."""
+    if use_json:
+        out = {
+            "packageName": result["packageName"],
+            "isApp": result["isApp"],
+            "totalModules": result["totalModules"],
+            "reachableCount": len(result["reachable"]),
+            "unreachableCount": len(result["unreachable"]),
+            "entryPoints": sorted(result["entryPoints"]),
+            "reachable": sorted(result["reachable"]),
+            "unreachable": sorted(result["unreachable"]),
+        }
+        if result["packageName"] in pkg_info:
+            info = pkg_info[result["packageName"]]
+            out["source"] = info["source"]
+            out["version"] = info["version"]
+            if info["bundleModule"]:
+                out["bundleModule"] = info["bundleModule"]
+        print(json.dumps(out, indent=2))
+        return
+
+    name = result["packageName"]
+    info = pkg_info.get(name, {})
+    source = info.get("source", "?")
+    version = info.get("version", "?")
+    mode = "APP" if result["isApp"] else "LIB"
+    total = result["totalModules"]
+    reached = len(result["reachable"])
+    unreached = len(result["unreachable"])
+    entry_count = len(result["entryPoints"])
+
+    if total == 0:
+        print(f"  {name} ({source}, {version}): no modules loaded")
+        return
+
+    pct = (reached / total * 100) if total > 0 else 0
+    bar_width = 30
+    filled = round(pct / 100 * bar_width)
+    bar = "█" * filled + "░" * (bar_width - filled)
+
+    print(f"\n  {name} ({source} {version}) [{mode}]")
+    print(f"    {bar} {reached}/{total} reachable ({pct:.0f}%)")
+    print(f"    Entry points: {entry_count}")
+
+    if result["entryPoints"]:
+        for ep in sorted(result["entryPoints"]):
+            print(f"      → {ep}")
+
+    if result["unreachable"]:
+        print(f"    Unreachable ({unreached}):")
+        for mod in sorted(result["unreachable"]):
+            print(f"      ✗ {mod}")
+
+
+def print_table_summary(results, pkg_info):
+    """Print a compact table of all packages."""
+    # Sort: apps first, then by unreachable count descending
+    results.sort(key=lambda r: (not r["isApp"], -len(r["unreachable"]), r["packageName"]))
+
+    # Header
+    print(f"\n  {'Package':<35} {'Type':>4} {'Source':<10} {'Reach':>7} {'Dead':>6} {'%':>5}")
+    print(f"  {'─' * 35} {'─' * 4} {'─' * 10} {'─' * 7} {'─' * 6} {'─' * 5}")
+
+    total_modules = 0
+    total_reachable = 0
+    total_unreachable = 0
+
+    for r in results:
+        if r["totalModules"] == 0:
+            continue
+        name = r["packageName"]
+        if len(name) > 35:
+            name = name[:32] + "..."
+        info = pkg_info.get(r["packageName"], {})
+        source = info.get("source", "?")
+        mode = "APP" if r["isApp"] else "LIB"
+        reached = len(r["reachable"])
+        unreached = len(r["unreachable"])
+        total = r["totalModules"]
+        pct = (reached / total * 100) if total > 0 else 0
+
+        total_modules += total
+        total_reachable += reached
+        total_unreachable += unreached
+
+        # Color hint: red for high dead code
+        flag = " !" if unreached > 0 and pct < 50 else ""
+        print(f"  {name:<35} {mode:>4} {source:<10} {reached:>3}/{total:<3} {unreached:>6} {pct:>4.0f}%{flag}")
+
+    total_pct = (total_reachable / total_modules * 100) if total_modules > 0 else 0
+    print(f"  {'─' * 35} {'─' * 4} {'─' * 10} {'─' * 7} {'─' * 6} {'─' * 5}")
+    print(f"  {'TOTAL':<35} {'':>4} {'':>10} {total_reachable:>3}/{total_modules:<3} {total_unreachable:>6} {total_pct:>4.0f}%")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="minard-reach",
+        description="Query module reachability from the Minard server.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  minard-reach                        Summary table of all packages
+  minard-reach prelude                Detailed view for 'prelude'
+  minard-reach --json prelude         JSON output for machine consumption
+  minard-reach --unreachable          List all unreachable modules
+  minard-reach --json                 Full JSON report for all packages
+        """,
+    )
+    parser.add_argument(
+        "package", nargs="?", help="Package name to analyze (omit for all)"
+    )
+    parser.add_argument(
+        "--server",
+        default="http://localhost:3000",
+        help="Minard server URL (default: http://localhost:3000)",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Output as JSON"
+    )
+    parser.add_argument(
+        "--unreachable",
+        action="store_true",
+        help="Show only unreachable modules",
+    )
+    parser.add_argument(
+        "--project",
+        type=int,
+        default=None,
+        help="Project ID (default: server default, usually 1)",
+    )
+
+    args = parser.parse_args()
+    base = args.server.rstrip("/")
+
+    # Fetch data
+    try:
+        project_param = f"?project={args.project}" if args.project else ""
+        packages = fetch_json(f"{base}/api/v2/packages{project_param}")["packages"]
+        modules = fetch_json(f"{base}/api/v2/modules{project_param}")["modules"]
+        all_imports = fetch_json(f"{base}/api/v2/all-imports")["imports"]
+    except URLError as e:
+        print(f"Error: Cannot connect to server at {base}", file=sys.stderr)
+        print(f"  {e}", file=sys.stderr)
+        print(f"  Is the Minard server running? (npm run serve:api)", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON response from server", file=sys.stderr)
+        print(f"  {e}", file=sys.stderr)
+        sys.exit(1)
+
+    pkg_info = get_package_info(packages)
+
+    # Determine which packages to analyze
+    if args.package:
+        # Fuzzy match: exact first, then substring
+        target = args.package
+        if target in pkg_info:
+            target_packages = [target]
+        else:
+            matches = [p for p in pkg_info if target.lower() in p.lower()]
+            if len(matches) == 1:
+                target_packages = matches
+            elif len(matches) > 1:
+                print(f"Ambiguous package name '{target}'. Matches:", file=sys.stderr)
+                for m in sorted(matches):
+                    print(f"  - {m}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                print(f"No package matching '{target}'", file=sys.stderr)
+                available = sorted(pkg_info.keys())
+                print(f"Available packages ({len(available)}):", file=sys.stderr)
+                for p in available:
+                    print(f"  - {p}", file=sys.stderr)
+                sys.exit(1)
+    else:
+        target_packages = sorted(pkg_info.keys())
+
+    # Compute reachability
+    results = []
+    for pkg_name in target_packages:
+        info = pkg_info[pkg_name]
+        result = compute_reachability(
+            pkg_name, info["bundleModule"], all_imports, modules
+        )
+        results.append(result)
+
+    # Output
+    if args.json:
+        if args.package and len(results) == 1:
+            print_package_summary(results[0], pkg_info, use_json=True)
+        else:
+            out = []
+            for r in results:
+                entry = {
+                    "packageName": r["packageName"],
+                    "isApp": r["isApp"],
+                    "totalModules": r["totalModules"],
+                    "reachableCount": len(r["reachable"]),
+                    "unreachableCount": len(r["unreachable"]),
+                    "entryPoints": sorted(r["entryPoints"]),
+                }
+                info = pkg_info.get(r["packageName"], {})
+                entry["source"] = info.get("source", "?")
+                entry["version"] = info.get("version", "?")
+                if info.get("bundleModule"):
+                    entry["bundleModule"] = info["bundleModule"]
+                if args.unreachable:
+                    entry["unreachable"] = sorted(r["unreachable"])
+                out.append(entry)
+            print(json.dumps(out, indent=2))
+    elif args.unreachable:
+        any_dead = False
+        for r in results:
+            if r["unreachable"]:
+                any_dead = True
+                mode = "APP" if r["isApp"] else "LIB"
+                print(f"\n{r['packageName']} [{mode}] — {len(r['unreachable'])} unreachable:")
+                for mod in sorted(r["unreachable"]):
+                    print(f"  ✗ {mod}")
+        if not any_dead:
+            print("No unreachable modules found.")
+    elif args.package and len(results) == 1:
+        print_package_summary(results[0], pkg_info)
+    else:
+        print_table_summary(results, pkg_info)
+
+
+if __name__ == "__main__":
+    main()
