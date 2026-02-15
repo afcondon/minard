@@ -1,3 +1,4 @@
+use duckdb::params;
 use rayon::prelude::*;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -7,14 +8,15 @@ use std::time::Instant;
 
 use crate::db::{
     cleanup_orphaned_package_versions, delete_old_snapshots, delete_package_module_data,
-    get_max_ids, get_or_create_namespace, get_or_create_project, insert_child_declarations,
-    insert_declarations, insert_modules, insert_package_dependencies,
-    insert_package_versions_with_ids, insert_reexports, insert_snapshot, insert_snapshot_packages,
+    get_max_ids, get_or_create_namespace, get_or_create_project,
+    append_child_declarations, append_declarations, append_modules,
+    append_package_dependencies, append_reexports, append_snapshot_packages,
+    insert_package_versions_with_ids, insert_snapshot,
     package_has_modules, update_package_ffi_stats, IdGenerator,
 };
 use super::postload::{
     compute_topo_layers, insert_module_imports, insert_function_calls, collect_git_data,
-    update_module_metrics, update_coupling_metrics,
+    update_module_metrics, update_coupling_metrics, resolve_import_module_ids,
 };
 use crate::error::Result;
 use crate::git::get_git_info;
@@ -26,10 +28,35 @@ use crate::parse::{render_type, CstSpanIndex, DocsJson, SpagoLock};
 use crate::progress::ProgressReporter;
 use crate::registry::{
     get_registry_packages_to_load, load_registry_modules_from_output,
+    get_extra_packages_to_load, load_extra_modules_from_output,
 };
 
 use super::detect::{scan_ffi_files, extract_bundle_module};
 use super::discovery::ProjectDiscovery;
+
+/// Phase timing helper for verbose instrumentation
+struct PhaseTimer {
+    phase_start: Instant,
+    verbose: bool,
+}
+
+impl PhaseTimer {
+    fn new(verbose: bool) -> Self {
+        Self {
+            phase_start: Instant::now(),
+            verbose,
+        }
+    }
+
+    /// Mark the end of one phase and the start of the next. Prints elapsed time if verbose.
+    fn lap(&mut self, phase_name: &str) {
+        if self.verbose {
+            let elapsed = self.phase_start.elapsed();
+            eprintln!("  [{:>6.1}s] {}", elapsed.as_secs_f64(), phase_name);
+        }
+        self.phase_start = Instant::now();
+    }
+}
 
 /// Main load pipeline
 pub struct LoadPipeline {
@@ -85,6 +112,8 @@ impl LoadPipeline {
             );
         }
 
+        let mut timer = PhaseTimer::new(self.verbose);
+
         // Phase 1: Get or create project
         progress.set_message("Creating project record...");
         let project_id = self.id_gen.next_project_id();
@@ -95,6 +124,8 @@ impl LoadPipeline {
             discovery.project_path.to_str(),
             discovery.primary_backend,
         )?;
+
+        timer.lap("project record");
 
         // Phase 2: Get git info and create snapshot
         progress.set_message("Creating snapshot...");
@@ -128,9 +159,13 @@ impl LoadPipeline {
         insert_snapshot(conn, &snapshot)?;
         stats.snapshot_label = Some(label);
 
+        timer.lap("snapshot + git info");
+
         // Phase 3: Parse spago.lock
         progress.set_message("Parsing spago.lock...");
         let spago_lock = SpagoLock::from_path(&discovery.spago_lock_path)?;
+
+        timer.lap("parse spago.lock");
 
         // Phase 4: Create package versions (with deduplication)
         progress.set_message("Creating package versions...");
@@ -214,21 +249,35 @@ impl LoadPipeline {
         }
 
         // Create package dependencies using actual IDs (only for new packages)
+        // Clear existing deps for packages_to_load to avoid PK violations with Appender
+        // (delete_package_module_data handles workspace refreshes, but registry packages
+        // shared across projects may already have deps from a prior load)
+        for &pkg_id in &packages_to_load {
+            conn.execute(
+                "DELETE FROM package_dependencies WHERE dependent_id = ?",
+                params![pkg_id],
+            )?;
+        }
+
+        // Dedup within the current batch (all_packages() may list a package twice)
+        let mut seen_deps: HashSet<(i64, String)> = HashSet::new();
         let mut package_deps = Vec::new();
         for pkg_info in &packages {
             if let Some(&pkg_id) = package_map.get(&pkg_info.name) {
                 if packages_to_load.contains(&pkg_id) {
                     for dep_name in &pkg_info.dependencies {
-                        package_deps.push(PackageDependency {
-                            dependent_id: pkg_id,
-                            dependency_name: dep_name.clone(),
-                        });
+                        if seen_deps.insert((pkg_id, dep_name.clone())) {
+                            package_deps.push(PackageDependency {
+                                dependent_id: pkg_id,
+                                dependency_name: dep_name.clone(),
+                            });
+                        }
                     }
                 }
             }
         }
 
-        insert_package_dependencies(conn, &package_deps)?;
+        append_package_dependencies(conn, &package_deps)?;
         stats.dependencies_loaded = package_deps.len();
 
         // Build workspace path -> package_id map for module assignment
@@ -257,7 +306,9 @@ impl LoadPipeline {
             }
         }
 
-        insert_snapshot_packages(conn, &snapshot_packages)?;
+        append_snapshot_packages(conn, &snapshot_packages)?;
+
+        timer.lap(&format!("package versions ({} new, {} reused)", stats.packages_loaded, stats.packages_reused));
 
         // Phase 5: Parse docs.json files in parallel (for workspace packages)
         // Registry packages should be loaded from .spago cache, not output/
@@ -321,6 +372,8 @@ impl LoadPipeline {
 
         stats.parse_errors = *parse_errors.lock().unwrap();
 
+        timer.lap(&format!("parse docs.json ({} local modules)", parsed_modules.len()));
+
         // Phase 6: Create namespaces and insert into database
         progress.set_message("Creating namespaces and inserting...");
 
@@ -363,19 +416,27 @@ impl LoadPipeline {
             all_children.extend(parsed.child_declarations);
         }
 
-        insert_modules(conn, &all_modules)?;
+        append_modules(conn, &all_modules)?;
         stats.modules_loaded = all_modules.len();
 
-        insert_declarations(conn, &all_declarations)?;
+        append_declarations(conn, &all_declarations)?;
         stats.declarations_loaded = all_declarations.len();
 
-        insert_child_declarations(conn, &all_children)?;
+        append_child_declarations(conn, &all_children)?;
         stats.child_declarations_loaded = all_children.len();
 
-        // Insert re-exports
-        for (module_id, re_exports) in &all_reexports {
-            insert_reexports(conn, *module_id, re_exports)?;
-        }
+        // Insert re-exports (collect into flat Vec for single append call)
+        let flat_reexports: Vec<(i64, String, String)> = all_reexports
+            .iter()
+            .flat_map(|(module_id, re_exports)| {
+                re_exports
+                    .iter()
+                    .map(move |(src_mod, decl_name)| (*module_id, src_mod.clone(), decl_name.clone()))
+            })
+            .collect();
+        append_reexports(conn, &flat_reexports)?;
+
+        timer.lap(&format!("insert modules/decls ({} modules, {} decls)", stats.modules_loaded, stats.declarations_loaded));
 
         // Phase 6b: Load registry packages from output directory
         progress.set_message("Loading registry packages...");
@@ -402,6 +463,45 @@ impl LoadPipeline {
             }
         }
 
+        timer.lap(&format!("registry packages ({} pkgs, {} modules)", stats.registry_packages_loaded, stats.registry_modules_loaded));
+
+        // Phase 6c: Load extra (local/git) packages from output directory
+        // These are non-registry, non-workspace packages (e.g. local workspace deps from sibling repos)
+        progress.set_message("Loading extra packages...");
+        let extra_packages = get_extra_packages_to_load(conn)?;
+        if !extra_packages.is_empty() {
+            // Build path map from spago.lock's packages section
+            let extra_pkg_paths: HashMap<String, String> = spago_lock.packages.iter()
+                .filter(|(_, entry)| entry.source_type != "registry")
+                .filter_map(|(name, entry)| {
+                    entry.path.as_ref().map(|p| (name.clone(), p.clone()))
+                })
+                .collect();
+
+            if self.verbose {
+                eprintln!("Loading {} extra packages from output...", extra_packages.len());
+            }
+            match load_extra_modules_from_output(
+                conn,
+                &discovery.output_dir,
+                &extra_packages,
+                &extra_pkg_paths,
+                &self.id_gen,
+                progress,
+                self.verbose,
+            ) {
+                Ok(extra_stats) => {
+                    stats.extra_packages_loaded = extra_stats.packages_loaded;
+                    stats.extra_modules_loaded = extra_stats.modules_loaded;
+                    stats.extra_declarations_loaded = extra_stats.declarations_loaded;
+                }
+                Err(e) if self.verbose => eprintln!("Warning: Failed to load extra packages: {}", e),
+                _ => {}
+            }
+        }
+
+        timer.lap(&format!("extra packages ({} pkgs, {} modules)", stats.extra_packages_loaded, stats.extra_modules_loaded));
+
         // Phase 7: Post-load processing (imports, calls, git data)
         // Process each workspace package separately
         progress.set_message("Extracting module imports...");
@@ -411,6 +511,22 @@ impl LoadPipeline {
             }
         }
 
+        timer.lap(&format!("module imports ({} imports)", stats.module_imports_loaded));
+
+        // Phase 7b: Resolve import module IDs (name → id)
+        progress.set_message("Resolving import module IDs...");
+        match resolve_import_module_ids(conn) {
+            Ok(count) => {
+                if self.verbose {
+                    eprintln!("  Resolved {} import module IDs", count);
+                }
+            }
+            Err(e) if self.verbose => eprintln!("Warning: Failed to resolve import module IDs: {}", e),
+            _ => {}
+        }
+
+        timer.lap("resolve import module IDs");
+
         progress.set_message("Extracting function calls...");
         for &ws_pkg_id in &workspace_pkg_ids {
             match insert_function_calls(conn, &discovery.output_dir, ws_pkg_id) {
@@ -419,6 +535,8 @@ impl LoadPipeline {
                 _ => {}
             }
         }
+
+        timer.lap(&format!("function calls ({} calls)", stats.function_calls_loaded));
 
         // Phase 8: Git data collection
         progress.set_message("Collecting git data...");
@@ -434,6 +552,8 @@ impl LoadPipeline {
                 _ => {}
             }
         }
+
+        timer.lap(&format!("git data ({} commits)", stats.commits_loaded));
 
         // Phase 8b: Scan FFI files for polyglot statistics
         progress.set_message("Scanning FFI files...");
@@ -455,6 +575,8 @@ impl LoadPipeline {
             }
         }
 
+        timer.lap("FFI scan");
+
         // Phase 9: Update metrics
         progress.set_message("Updating metrics...");
         for &ws_pkg_id in &workspace_pkg_ids {
@@ -462,11 +584,15 @@ impl LoadPipeline {
             let _ = update_coupling_metrics(conn, ws_pkg_id);
         }
 
+        timer.lap("metrics");
+
         // Phase 10: Compute topological layers
         progress.set_message("Computing topological layers...");
         if let Ok(count) = compute_topo_layers(conn, snapshot_id) {
             stats.topo_layers_computed = count;
         }
+
+        timer.lap(&format!("topo layers ({} layers)", stats.topo_layers_computed));
 
         // Phase 11: Clean up orphaned package_versions from old snapshots
         progress.set_message("Cleaning up orphaned packages...");
@@ -479,6 +605,8 @@ impl LoadPipeline {
             Err(e) if self.verbose => eprintln!("Warning: Failed to clean up orphans: {}", e),
             _ => {}
         }
+
+        timer.lap("cleanup orphans");
 
         stats.elapsed_ms = start.elapsed().as_millis() as u64;
 

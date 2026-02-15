@@ -2,7 +2,9 @@ use duckdb::{params, Connection};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
 
+use crate::db::{append_function_calls, append_module_imports};
 use crate::error::Result;
 use crate::parse::CoreFn;
 
@@ -106,13 +108,12 @@ pub fn compute_topo_layers(conn: &Connection, snapshot_id: i64) -> Result<usize>
 }
 
 /// Insert module imports from corefn.json files
+/// Collects all imports, deduplicates in memory, then bulk-inserts via Appender.
 pub fn insert_module_imports(
     conn: &Connection,
     output_dir: &Path,
     package_version_id: i64,
 ) -> Result<usize> {
-    let mut count = 0;
-
     // Get all modules for this package
     let mut modules: HashMap<String, i64> = HashMap::new();
     let mut stmt = conn.prepare("SELECT id, name FROM modules WHERE package_version_id = ?")?;
@@ -123,44 +124,74 @@ pub fn insert_module_imports(
         modules.insert(name.clone(), id);
     }
 
-    // For each module, parse its corefn.json and extract imports
-    let mut insert_stmt = conn.prepare(
-        "INSERT OR IGNORE INTO module_imports (module_id, imported_module) VALUES (?, ?)",
-    )?;
+    // Collect all imports, dedup via HashSet
+    let mut seen: HashSet<(i64, String)> = HashSet::new();
+    let mut all_imports: Vec<(i64, String)> = Vec::new();
+    let mut parse_time = std::time::Duration::ZERO;
+    let mut files_parsed = 0usize;
 
     for (module_name, module_id) in &modules {
-        // Construct path to corefn.json
         let corefn_path = output_dir.join(module_name).join("corefn.json");
-
         if !corefn_path.exists() {
             continue;
         }
 
+        let tp = Instant::now();
         match CoreFn::from_path(&corefn_path) {
             Ok(corefn) => {
-                for imported in corefn.imported_modules() {
-                    insert_stmt.execute(params![module_id, imported])?;
-                    count += 1;
+                let imports = corefn.imported_modules();
+                parse_time += tp.elapsed();
+                files_parsed += 1;
+
+                for imported in imports {
+                    let key = (*module_id, imported.clone());
+                    if seen.insert(key) {
+                        all_imports.push((*module_id, imported));
+                    }
                 }
             }
-            Err(_) => {
-                // Skip modules with parse errors
-                continue;
-            }
+            Err(_) => continue,
         }
     }
+
+    let count = all_imports.len();
+
+    // Single bulk insert via Appender
+    let ti = Instant::now();
+    append_module_imports(conn, &all_imports)?;
+    let insert_time = ti.elapsed();
+
+    eprintln!(
+        "    module_imports breakdown: {} files, parse={:.1}s, db_insert={:.1}s",
+        files_parsed, parse_time.as_secs_f64(), insert_time.as_secs_f64()
+    );
 
     Ok(count)
 }
 
+/// Resolve imported_module_id for all module_imports rows where it is NULL.
+/// Module names are globally unique within a PureScript package set, so a
+/// simple name-based join is unambiguous.
+pub fn resolve_import_module_ids(conn: &Connection) -> Result<usize> {
+    let updated = conn.execute(
+        r#"
+        UPDATE module_imports SET imported_module_id = m.id
+        FROM modules m
+        WHERE m.name = module_imports.imported_module
+          AND module_imports.imported_module_id IS NULL
+        "#,
+        [],
+    )?;
+    Ok(updated)
+}
+
 /// Insert function calls from corefn.json files
+/// Collects all calls, deduplicates in memory, then bulk-inserts via Appender.
 pub fn insert_function_calls(
     conn: &Connection,
     output_dir: &Path,
     package_version_id: i64,
 ) -> Result<usize> {
-    let mut count = 0;
-
     // Get all modules for this package
     let mut modules: HashMap<String, i64> = HashMap::new();
     let mut stmt = conn.prepare("SELECT id, name FROM modules WHERE package_version_id = ?")?;
@@ -177,37 +208,59 @@ pub fn insert_function_calls(
         .unwrap_or(0);
     let mut next_id = max_id + 1;
 
-    // For each module, parse its corefn.json and extract function calls
-    let mut insert_stmt = conn.prepare(
-        "INSERT OR IGNORE INTO function_calls
-         (id, caller_module_id, caller_name, callee_module, callee_name, is_cross_module, call_count)
-         VALUES (?, ?, ?, ?, ?, TRUE, 1)",
-    )?;
+    // Collect all calls, dedup via HashSet on (caller_module_id, caller_name, callee_module, callee_name)
+    let mut seen: HashSet<(i64, String, String, String)> = HashSet::new();
+    let mut all_calls: Vec<(i64, i64, String, String, String)> = Vec::new();
+    let mut parse_time = std::time::Duration::ZERO;
+    let mut files_parsed = 0usize;
 
     for (module_name, module_id) in &modules {
         let corefn_path = output_dir.join(module_name).join("corefn.json");
-
         if !corefn_path.exists() {
             continue;
         }
 
+        let tp = Instant::now();
         match CoreFn::from_path(&corefn_path) {
             Ok(corefn) => {
-                for call in corefn.extract_function_calls() {
-                    insert_stmt.execute(params![
-                        next_id,
-                        module_id,
-                        call.caller_name,
-                        call.callee_module,
-                        call.callee_name,
-                    ])?;
-                    next_id += 1;
-                    count += 1;
+                let calls = corefn.extract_function_calls();
+                parse_time += tp.elapsed();
+                files_parsed += 1;
+
+                for call in calls {
+                    let key = (
+                        *module_id,
+                        call.caller_name.clone(),
+                        call.callee_module.clone(),
+                        call.callee_name.clone(),
+                    );
+                    if seen.insert(key) {
+                        all_calls.push((
+                            next_id,
+                            *module_id,
+                            call.caller_name,
+                            call.callee_module,
+                            call.callee_name,
+                        ));
+                        next_id += 1;
+                    }
                 }
             }
             Err(_) => continue,
         }
     }
+
+    let count = all_calls.len();
+
+    // Single bulk insert via Appender
+    let ti = Instant::now();
+    append_function_calls(conn, &all_calls)?;
+    let insert_time = ti.elapsed();
+
+    eprintln!(
+        "    function_calls breakdown: {} files, parse={:.1}s, db_insert={:.1}s",
+        files_parsed, parse_time.as_secs_f64(), insert_time.as_secs_f64()
+    );
 
     Ok(count)
 }

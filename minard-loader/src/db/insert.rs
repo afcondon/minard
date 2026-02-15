@@ -579,6 +579,16 @@ pub fn delete_package_module_data(conn: &Connection, package_version_id: i64) ->
         conn.execute("DELETE FROM module_reexports WHERE module_id = ?", params![mid])?;
         conn.execute("DELETE FROM module_metrics WHERE module_id = ?", params![mid])?;
     }
+    // NULL out imported_module_id references from OTHER packages' module_imports
+    // before deleting modules. This avoids FK constraint violations when a module
+    // is referenced as an import target by modules in other packages.
+    // The final resolve_import_module_ids pass will re-resolve these after all loads.
+    for &mid in &module_ids {
+        conn.execute(
+            "UPDATE module_imports SET imported_module_id = NULL WHERE imported_module_id = ?",
+            params![mid],
+        )?;
+    }
     for &mid in &module_ids {
         conn.execute("DELETE FROM modules WHERE id = ?", params![mid])?;
     }
@@ -621,6 +631,191 @@ pub fn cleanup_orphaned_package_versions(conn: &Connection) -> Result<usize> {
     }
 
     Ok(orphan_ids.len())
+}
+
+// =============================================================================
+// Appender-based bulk insert functions
+// These bypass SQL parsing entirely and are ~10-100x faster for bulk loads.
+// =============================================================================
+
+/// Bulk-insert modules via Appender (all 7 columns)
+pub fn append_modules(conn: &Connection, modules: &[Module]) -> Result<()> {
+    if modules.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("modules")?;
+    for module in modules {
+        appender.append_row(params![
+            module.id,
+            module.package_version_id,
+            module.namespace_id,
+            module.name,
+            module.path,
+            module.comments,
+            module.loc,
+        ])?;
+    }
+    appender.flush()?;
+    Ok(())
+}
+
+/// Bulk-insert declarations via Appender (15 columns, JSON fields serialized to String)
+pub fn append_declarations(conn: &Connection, decls: &[Declaration]) -> Result<()> {
+    if decls.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("declarations")?;
+    for decl in decls {
+        let type_ast_json = decl.type_ast.as_ref().map(|v| v.to_string());
+        let type_args_json = decl.type_arguments.as_ref().map(|v| v.to_string());
+        let roles_json = decl.roles.as_ref().map(|v| v.to_string());
+        let superclasses_json = decl.superclasses.as_ref().map(|v| v.to_string());
+        let fundeps_json = decl.fundeps.as_ref().map(|v| v.to_string());
+        let synonym_json = decl.synonym_type.as_ref().map(|v| v.to_string());
+        let source_span_json = decl.source_span.as_ref().map(|v| v.to_string());
+
+        appender.append_row(params![
+            decl.id,
+            decl.module_id,
+            decl.name,
+            decl.kind,
+            decl.type_signature,
+            type_ast_json,
+            decl.data_decl_type,
+            type_args_json,
+            roles_json,
+            superclasses_json,
+            fundeps_json,
+            synonym_json,
+            decl.comments,
+            source_span_json,
+            decl.source_code,
+        ])?;
+    }
+    appender.flush()?;
+    Ok(())
+}
+
+/// Bulk-insert child declarations via Appender (11 columns)
+pub fn append_child_declarations(conn: &Connection, children: &[ChildDeclaration]) -> Result<()> {
+    if children.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("child_declarations")?;
+    for child in children {
+        let type_ast_json = child.type_ast.as_ref().map(|v| v.to_string());
+        let args_json = child.constructor_args.as_ref().map(|v| v.to_string());
+        let chain_json = child.instance_chain.as_ref().map(|v| v.to_string());
+        let constraints_json = child.instance_constraints.as_ref().map(|v| v.to_string());
+        let source_span_json = child.source_span.as_ref().map(|v| v.to_string());
+
+        appender.append_row(params![
+            child.id,
+            child.declaration_id,
+            child.name,
+            child.kind,
+            child.type_signature,
+            type_ast_json,
+            args_json,
+            chain_json,
+            constraints_json,
+            child.comments,
+            source_span_json,
+        ])?;
+    }
+    appender.flush()?;
+    Ok(())
+}
+
+/// Bulk-insert snapshot packages via Appender (5 columns, topo_layer set to NULL)
+pub fn append_snapshot_packages(conn: &Connection, packages: &[SnapshotPackage]) -> Result<()> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("snapshot_packages")?;
+    for pkg in packages {
+        appender.append_row(params![
+            pkg.snapshot_id,
+            pkg.package_version_id,
+            pkg.source,
+            pkg.is_direct,
+            None::<i32>, // topo_layer — computed later
+        ])?;
+    }
+    appender.flush()?;
+    Ok(())
+}
+
+/// Bulk-insert package dependencies via Appender (2 columns)
+pub fn append_package_dependencies(conn: &Connection, deps: &[PackageDependency]) -> Result<()> {
+    if deps.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("package_dependencies")?;
+    for dep in deps {
+        appender.append_row(params![dep.dependent_id, dep.dependency_name])?;
+    }
+    appender.flush()?;
+    Ok(())
+}
+
+/// Bulk-insert module imports via Appender (3 columns, imported_module_id set to NULL)
+/// Caller must ensure no duplicates (Appender doesn't support OR IGNORE).
+pub fn append_module_imports(conn: &Connection, imports: &[(i64, String)]) -> Result<()> {
+    if imports.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("module_imports")?;
+    for (module_id, imported_module) in imports {
+        appender.append_row(params![
+            module_id,
+            imported_module,
+            None::<i64>, // imported_module_id — resolved later
+        ])?;
+    }
+    appender.flush()?;
+    Ok(())
+}
+
+/// Bulk-insert function calls via Appender (7 columns)
+/// Caller must ensure no duplicates (Appender doesn't support OR IGNORE).
+pub fn append_function_calls(
+    conn: &Connection,
+    calls: &[(i64, i64, String, String, String)], // (id, caller_module_id, caller_name, callee_module, callee_name)
+) -> Result<()> {
+    if calls.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("function_calls")?;
+    for (id, caller_module_id, caller_name, callee_module, callee_name) in calls {
+        appender.append_row(params![
+            id,
+            caller_module_id,
+            caller_name,
+            callee_module,
+            callee_name,
+            true,  // is_cross_module
+            1_i32, // call_count
+        ])?;
+    }
+    appender.flush()?;
+    Ok(())
+}
+
+/// Bulk-insert re-exports via Appender (3 columns)
+pub fn append_reexports(
+    conn: &Connection,
+    reexports: &[(i64, String, String)], // (module_id, source_module, declaration_name)
+) -> Result<()> {
+    if reexports.is_empty() {
+        return Ok(());
+    }
+    let mut appender = conn.appender("module_reexports")?;
+    for (module_id, source_module, declaration_name) in reexports {
+        appender.append_row(params![module_id, source_module, declaration_name])?;
+    }
+    appender.flush()?;
+    Ok(())
 }
 
 /// FFI statistics for a package
