@@ -628,14 +628,31 @@ parseSearchPrefix q =
 -- | Returns: { imports: [{ moduleId, moduleName, imports: [importedModuleName] }] }
 getAllImports :: Database -> Aff Response
 getAllImports db = do
+  -- Deduplicate modules: when a package exists as both local and registry,
+  -- prefer the local version (it has current source). Then deduplicate by
+  -- module name, keeping the entry with the most imports.
   rows <- queryAll db """
-    SELECT
-      m.id as module_id,
-      m.name as module_name,
-      mi.imported_module
-    FROM modules m
-    LEFT JOIN module_imports mi ON mi.module_id = m.id
-    ORDER BY m.name, mi.imported_module
+    WITH active_packages AS (
+      SELECT pv.id, pv.name, pv.source,
+             ROW_NUMBER() OVER (
+               PARTITION BY pv.name
+               ORDER BY CASE pv.source WHEN 'local' THEN 0 WHEN 'workspace' THEN 0 ELSE 1 END,
+                        pv.id DESC
+             ) as rn
+      FROM package_versions pv
+      WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+    ),
+    best_modules AS (
+      SELECT m.name as module_name,
+             ARG_MAX(m.id, (SELECT COUNT(*) FROM module_imports mi2 WHERE mi2.module_id = m.id)) as module_id
+      FROM modules m
+      WHERE m.package_version_id IN (SELECT id FROM active_packages WHERE rn = 1)
+      GROUP BY m.name
+    )
+    SELECT bm.module_id, bm.module_name, mi.imported_module
+    FROM best_modules bm
+    LEFT JOIN module_imports mi ON mi.module_id = bm.module_id
+    ORDER BY bm.module_name, mi.imported_module
   """
   let json = buildAllImportsJson rows
   ok' jsonHeaders json
@@ -650,16 +667,29 @@ foreign import buildAllImportsJson :: Array Foreign -> String
 -- | Returns: { calls: [{ moduleId, moduleName, calls: [{ callerName, calleeModule, calleeName }] }] }
 getAllCalls :: Database -> Aff Response
 getAllCalls db = do
+  -- Deduplicate modules (same as getAllImports: prefer local over registry)
   rows <- queryAll db """
-    SELECT
-      m.id as module_id,
-      m.name as module_name,
-      fc.caller_name,
-      fc.callee_module,
-      fc.callee_name
-    FROM modules m
-    LEFT JOIN function_calls fc ON fc.caller_module_id = m.id
-    ORDER BY m.name, fc.caller_name, fc.callee_module, fc.callee_name
+    WITH active_packages AS (
+      SELECT pv.id, pv.name, pv.source,
+             ROW_NUMBER() OVER (
+               PARTITION BY pv.name
+               ORDER BY CASE pv.source WHEN 'local' THEN 0 WHEN 'workspace' THEN 0 ELSE 1 END,
+                        pv.id DESC
+             ) as rn
+      FROM package_versions pv
+      WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+    ),
+    best_modules AS (
+      SELECT m.name as module_name,
+             ARG_MAX(m.id, (SELECT COUNT(*) FROM function_calls fc2 WHERE fc2.caller_module_id = m.id)) as module_id
+      FROM modules m
+      WHERE m.package_version_id IN (SELECT id FROM active_packages WHERE rn = 1)
+      GROUP BY m.name
+    )
+    SELECT bm.module_id, bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name
+    FROM best_modules bm
+    LEFT JOIN function_calls fc ON fc.caller_module_id = bm.module_id
+    ORDER BY bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name
   """
   let json = buildAllCallsJson rows
   ok' jsonHeaders json
@@ -680,7 +710,9 @@ getModuleDeclarationStats db = do
       d.kind,
       COUNT(*) as count
     FROM modules m
+    JOIN package_versions pv ON m.package_version_id = pv.id
     JOIN declarations d ON d.module_id = m.id
+    WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
     GROUP BY m.id, d.kind
     ORDER BY m.id, d.kind
   """

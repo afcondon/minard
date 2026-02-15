@@ -510,6 +510,119 @@ pub fn get_package_id(conn: &Connection, name: &str, version: &str) -> Result<Op
     }
 }
 
+/// Delete old snapshots for a project, keeping only the newest one.
+/// This removes stale snapshot_packages entries so orphan cleanup can work.
+pub fn delete_old_snapshots(conn: &Connection, project_id: i64, keep_snapshot_id: i64) -> Result<usize> {
+    // Find old snapshot IDs
+    let mut stmt = conn.prepare(
+        "SELECT id FROM snapshots WHERE project_id = ? AND id != ?",
+    )?;
+    let old_ids: Vec<i64> = stmt
+        .query_map(params![project_id, keep_snapshot_id], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if old_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let count = old_ids.len();
+    for &sid in &old_ids {
+        conn.execute("DELETE FROM snapshot_packages WHERE snapshot_id = ?", params![sid])?;
+        conn.execute("DELETE FROM snapshots WHERE id = ?", params![sid])?;
+    }
+
+    Ok(count)
+}
+
+/// Delete all module data for a package version (cascading through child tables).
+/// Used to force-reload workspace packages whose source code has changed.
+pub fn delete_package_module_data(conn: &Connection, package_version_id: i64) -> Result<usize> {
+    // Get module IDs for this package
+    let mut stmt = conn.prepare(
+        "SELECT id FROM modules WHERE package_version_id = ?",
+    )?;
+    let module_ids: Vec<i64> = stmt
+        .query_map(params![package_version_id], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if module_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let count = module_ids.len();
+
+    // Get declaration IDs for cascading to child_declarations
+    let mut decl_stmt = conn.prepare(
+        "SELECT id FROM declarations WHERE module_id = ?",
+    )?;
+    let mut all_decl_ids: Vec<i64> = Vec::new();
+    for &mid in &module_ids {
+        let ids: Vec<i64> = decl_stmt
+            .query_map(params![mid], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        all_decl_ids.extend(ids);
+    }
+
+    // Delete in dependency order (leaves first)
+    for &did in &all_decl_ids {
+        conn.execute("DELETE FROM child_declarations WHERE declaration_id = ?", params![did])?;
+    }
+    for &mid in &module_ids {
+        conn.execute("DELETE FROM declaration_metrics WHERE declaration_id IN (SELECT id FROM declarations WHERE module_id = ?)", params![mid])?;
+        conn.execute("DELETE FROM declarations WHERE module_id = ?", params![mid])?;
+        conn.execute("DELETE FROM function_calls WHERE caller_module_id = ?", params![mid])?;
+        conn.execute("DELETE FROM module_imports WHERE module_id = ?", params![mid])?;
+        conn.execute("DELETE FROM module_commits WHERE module_id = ?", params![mid])?;
+        conn.execute("DELETE FROM module_reexports WHERE module_id = ?", params![mid])?;
+        conn.execute("DELETE FROM module_metrics WHERE module_id = ?", params![mid])?;
+    }
+    for &mid in &module_ids {
+        conn.execute("DELETE FROM modules WHERE id = ?", params![mid])?;
+    }
+
+    // Also clean up package dependencies so they get re-created fresh
+    conn.execute(
+        "DELETE FROM package_dependencies WHERE dependent_id = ?",
+        params![package_version_id],
+    )?;
+
+    Ok(count)
+}
+
+/// Delete orphaned package_versions not referenced by any snapshot.
+/// Returns the number of package_versions deleted.
+pub fn cleanup_orphaned_package_versions(conn: &Connection) -> Result<usize> {
+    // Find orphaned package_version IDs (not in any snapshot)
+    let mut stmt = conn.prepare(
+        "SELECT pv.id FROM package_versions pv
+         WHERE NOT EXISTS (
+             SELECT 1 FROM snapshot_packages sp
+             WHERE sp.package_version_id = pv.id
+         )",
+    )?;
+    let orphan_ids: Vec<i64> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if orphan_ids.is_empty() {
+        return Ok(0);
+    }
+
+    // Delete all data for each orphaned package
+    for &pkg_id in &orphan_ids {
+        delete_package_module_data(conn, pkg_id)?;
+        conn.execute("DELETE FROM package_dependencies WHERE dependent_id = ?", params![pkg_id])?;
+        conn.execute("DELETE FROM package_set_members WHERE package_version_id = ?", params![pkg_id])?;
+        conn.execute("DELETE FROM package_versions WHERE id = ?", params![pkg_id])?;
+    }
+
+    Ok(orphan_ids.len())
+}
+
 /// FFI statistics for a package
 #[derive(Debug, Default)]
 pub struct FfiStats {

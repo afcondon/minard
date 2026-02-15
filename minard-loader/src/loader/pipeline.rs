@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::db::{
+    cleanup_orphaned_package_versions, delete_old_snapshots, delete_package_module_data,
     get_max_ids, get_or_create_namespace, get_or_create_project, insert_child_declarations,
     insert_declarations, insert_modules, insert_package_dependencies,
     insert_package_versions_with_ids, insert_reexports, insert_snapshot, insert_snapshot_packages,
@@ -105,6 +106,18 @@ impl LoadPipeline {
             .or_else(|| git_info.as_ref().and_then(|g| g.ref_name.clone()))
             .unwrap_or_else(|| "manual".to_string());
 
+        // Clean up old snapshots for this project BEFORE inserting the new one.
+        // This avoids UNIQUE(project_id, git_hash) conflicts when reloading at the same commit.
+        match delete_old_snapshots(conn, project_id, snapshot_id) {
+            Ok(deleted) if deleted > 0 => {
+                if self.verbose {
+                    eprintln!("  Deleted {} old snapshot(s) for project {}", deleted, project_name);
+                }
+            }
+            Err(e) if self.verbose => eprintln!("Warning: Failed to clean old snapshots: {}", e),
+            _ => {}
+        }
+
         let snapshot = Snapshot {
             id: snapshot_id,
             project_id,
@@ -157,15 +170,36 @@ impl LoadPipeline {
         // Insert packages and get actual IDs (handles existing packages)
         let pkg_id_map = insert_package_versions_with_ids(conn, &package_versions)?;
 
+        // Build set of workspace package names for force-reload detection
+        let workspace_names: HashSet<String> = spago_lock
+            .workspace
+            .packages
+            .keys()
+            .cloned()
+            .collect();
+
         // Track which packages are new vs reused
+        // Workspace packages are always reloaded (source code may have changed)
+        // Registry packages are reused if they already have modules (immutable)
         let mut packages_to_load: HashSet<i64> = HashSet::new();
         for pkg in &package_versions {
             if let Some(&actual_id) = pkg_id_map.get(&(pkg.name.clone(), pkg.version.clone())) {
-                // Check if this package already has modules loaded
-                if !package_has_modules(conn, actual_id)? {
+                let is_workspace = workspace_names.contains(&pkg.name);
+
+                if is_workspace && package_has_modules(conn, actual_id)? {
+                    // Workspace package with existing data: delete and reload
+                    let deleted = delete_package_module_data(conn, actual_id)?;
+                    if self.verbose {
+                        eprintln!("  Refreshing workspace package {} (deleted {} stale modules)", pkg.name, deleted);
+                    }
+                    packages_to_load.insert(actual_id);
+                    stats.packages_loaded += 1;
+                } else if !package_has_modules(conn, actual_id)? {
+                    // New package (workspace or registry): load fresh
                     packages_to_load.insert(actual_id);
                     stats.packages_loaded += 1;
                 } else {
+                    // Registry package with existing data: reuse
                     stats.packages_reused += 1;
                 }
             }
@@ -432,6 +466,18 @@ impl LoadPipeline {
         progress.set_message("Computing topological layers...");
         if let Ok(count) = compute_topo_layers(conn, snapshot_id) {
             stats.topo_layers_computed = count;
+        }
+
+        // Phase 11: Clean up orphaned package_versions from old snapshots
+        progress.set_message("Cleaning up orphaned packages...");
+        match cleanup_orphaned_package_versions(conn) {
+            Ok(cleaned) if cleaned > 0 => {
+                if self.verbose {
+                    eprintln!("  Cleaned up {} orphaned package versions", cleaned);
+                }
+            }
+            Err(e) if self.verbose => eprintln!("Warning: Failed to clean up orphans: {}", e),
+            _ => {}
         }
 
         stats.elapsed_ms = start.elapsed().as_millis() as u64;
