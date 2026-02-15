@@ -355,6 +355,7 @@ data ColorMode
   | PublishDate         -- Color by publish date (beeswarm default)
   | GitStatus           -- Color by git working tree status (modified/staged/clean)
   | Reachability        -- Color by external reachability (dead code detection)
+  | ClusterView         -- Color by dependency cluster (connected components / communities)
 
 derive instance eqColorMode :: Eq ColorMode
 
@@ -366,6 +367,7 @@ instance showColorMode :: Show ColorMode where
   show PublishDate = "PublishDate"
   show GitStatus = "GitStatus"
   show Reachability = "Reachability"
+  show ClusterView = "ClusterView"
 
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String
@@ -485,6 +487,17 @@ getModuleReachability pr moduleName
   | Set.member moduleName pr.entryPoints = EntryPoint
   | Set.member moduleName pr.reachable = Reachable
   | otherwise = Unreachable
+
+-- =============================================================================
+-- Cluster Data (for dependency cluster coloring)
+-- =============================================================================
+
+-- | Package-level clustering: connected components and communities
+type PackageClusters =
+  { clusters :: Array (Set String)    -- Connected components (undirected)
+  , communities :: Map String Int     -- Module -> community index (from label propagation)
+  , packageName :: String
+  }
 
 -- | Short display name for reachability status
 showReachabilityStatus :: ReachabilityStatus -> String

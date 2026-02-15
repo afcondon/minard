@@ -43,7 +43,13 @@ import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 import Type.Proxy (Proxy(..))
 import Web.Event.Event as WE
-import Web.UIEvent.KeyboardEvent (KeyboardEvent, toEvent, key)
+import Web.Event.Event (EventType(..))
+import Web.Event.EventTarget (addEventListener, removeEventListener, eventListener) as ET
+import Web.HTML (window)
+import Web.HTML.HTMLDocument (toEventTarget) as HTMLDoc
+import Web.HTML.Window (document) as Win
+import Web.UIEvent.KeyboardEvent (KeyboardEvent, toEvent, key, repeat)
+import Web.UIEvent.KeyboardEvent as KE
 
 -- PSD3 Imports
 import Hylograph.HATS.InterpreterTick (clearContainer, clearAllHighlights)
@@ -67,8 +73,8 @@ import CE2.Data.Loader as Loader
 import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
 import CE2.Viz.SourceCode as SourceCode
-import Data.Graph.Algorithms (reachableFrom) as GraphAlgo
-import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus, PackageReachability)
+import Data.Graph.Algorithms (reachableFrom, connectedComponents, labelPropagation) as GraphAlgo
+import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus, PackageReachability, PackageClusters)
 
 -- FFI declarations for browser history integration
 foreign import pushHistoryState :: String -> String -> Effect Unit
@@ -259,6 +265,13 @@ type State =
     -- Reachability data (lazy computed when Reachability mode activated)
   , reachabilityData :: Maybe PackageReachability
 
+    -- Reachability peek (hold R key to overlay text labels)
+  , reachabilityPeek :: Boolean
+  , keyboardCleanup :: Maybe (Effect Unit)
+
+    -- Cluster data (lazy computed when Cluster mode activated)
+  , clusterData :: Maybe PackageClusters
+
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
@@ -295,6 +308,9 @@ data Action
   | ToggleGitMode                         -- Toggle between GitStatus color mode and previous mode
   | ToggleTidyMode                        -- Toggle infrastructure link filtering
   | ToggleReachabilityMode                -- Toggle reachability coloring (dead code detection)
+  | ToggleClusterMode                     -- Toggle cluster coloring (connected components)
+  | ReachabilityPeekOn                    -- R key pressed - show peek overlay
+  | ReachabilityPeekOff                   -- R key released - hide peek overlay
   -- Search typeahead
   | SearchInput String                    -- User typed in search box
   | SearchResultsReceived Int (Array Loader.UnifiedSearchResult)  -- Results arrived (seqId, results)
@@ -342,6 +358,9 @@ initialState input =
   , typeClassStats: Nothing
   , gitStatus: Nothing
   , reachabilityData: Nothing
+  , reachabilityPeek: false
+  , keyboardCleanup: Nothing
+  , clusterData: Nothing
   , hideInfraLinks: false
   , historyCleanup: Nothing
   , searchQuery: ""
@@ -478,11 +497,11 @@ renderHeaderBar state =
             ]
             [ HH.text "Tidy" ]
         , HH.button
-            [ HE.onClick \_ -> ToggleReachabilityMode
-            , HP.style $ toggleButtonStyle (state.colorMode == Reachability) textColor
-            , HP.title "Reachability: modules colored by transitive reachability. Libraries: from external consumers. Apps: from Main."
+            [ HE.onClick \_ -> ToggleClusterMode
+            , HP.style $ toggleButtonStyle (state.colorMode == ClusterView) textColor
+            , HP.title "Cluster: modules colored by dependency cluster (connected components). Hold R to peek reachability."
             ]
-            [ HH.text "Reach" ]
+            [ HH.text "Cluster" ]
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
             [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
@@ -856,6 +875,8 @@ renderScene state =
                   , gitStatus: state.gitStatus
                   , colorMode: state.colorMode
                   , reachabilityData: state.reachabilityData
+                  , reachabilityPeek: state.reachabilityPeek
+                  , clusterData: state.clusterData
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1001,6 +1022,37 @@ handleAction = case _ of
 
     log "[SceneCoordinator] Browser history integration enabled"
 
+    -- Set up keyboard listener for reachability peek (hold R)
+    { emitter: keyEmitter, listener: keyListener } <- liftEffect HS.create
+    void $ H.subscribe keyEmitter
+
+    doc <- liftEffect $ Win.document =<< window
+    let docTarget = HTMLDoc.toEventTarget doc
+
+    keydownListener <- liftEffect $ ET.eventListener \e ->
+      case KE.fromEvent e of
+        Just ke | key ke == "r" && not (repeat ke) ->
+          HS.notify keyListener ReachabilityPeekOn
+        _ -> pure unit
+
+    keyupListener <- liftEffect $ ET.eventListener \e ->
+      case KE.fromEvent e of
+        Just ke | key ke == "r" ->
+          HS.notify keyListener ReachabilityPeekOff
+        _ -> pure unit
+
+    liftEffect do
+      ET.addEventListener (EventType "keydown") keydownListener false docTarget
+      ET.addEventListener (EventType "keyup") keyupListener false docTarget
+
+    let kbCleanup = do
+          ET.removeEventListener (EventType "keydown") keydownListener false docTarget
+          ET.removeEventListener (EventType "keyup") keyupListener false docTarget
+
+    H.modify_ _ { keyboardCleanup = Just kbCleanup }
+
+    log "[SceneCoordinator] Keyboard listener for reachability peek enabled"
+
     prepareSceneData state
 
   Receive input -> do
@@ -1063,26 +1115,14 @@ handleAction = case _ of
 
     -- If reachability mode is active and we're entering a package view, recompute
     when (state.colorMode == Reachability) $ case targetScene of
-      PkgTreemap pkg -> do
-        updatedState <- H.get
-        case updatedState.v2Data of
-          Just v2 -> do
-            let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
-                              >>= _.bundleModule
-                reach = computePackageReachability pkg bundleMod v2.imports v2.modules
-            log $ "[SceneCoordinator] Reachability recomputed for " <> pkg
-            H.modify_ _ { reachabilityData = Just reach }
-          Nothing -> pure unit
-      PkgModuleBeeswarm pkg -> do
-        updatedState <- H.get
-        case updatedState.v2Data of
-          Just v2 -> do
-            let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
-                              >>= _.bundleModule
-                reach = computePackageReachability pkg bundleMod v2.imports v2.modules
-            log $ "[SceneCoordinator] Reachability recomputed for " <> pkg
-            H.modify_ _ { reachabilityData = Just reach }
-          Nothing -> pure unit
+      PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
+      PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
+      _ -> pure unit
+
+    -- If cluster mode is active and we're entering a package view, recompute
+    when (state.colorMode == ClusterView) $ case targetScene of
+      PkgTreemap pkg -> computeAndStoreClusters pkg
+      PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
       _ -> pure unit
 
     H.raise (SceneChanged targetScene)
@@ -1297,6 +1337,35 @@ handleAction = case _ of
                 <> show (Set.size reach.entryPoints) <> " entry points"
             H.modify_ _ { reachabilityData = Just reach }
           Nothing -> pure unit
+
+  ToggleClusterMode -> do
+    state <- H.get
+    if state.colorMode == ClusterView
+      then do
+        log "[SceneCoordinator] Cluster mode OFF"
+        H.modify_ _ { colorMode = FullRegistryTopo }
+      else do
+        log "[SceneCoordinator] Cluster mode ON"
+        H.modify_ _ { colorMode = ClusterView }
+        -- Compute clusters for current package (if in a package view)
+        case state.scene of
+          PkgTreemap pkg -> computeAndStoreClusters pkg
+          PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
+          _ -> pure unit
+
+  ReachabilityPeekOn -> do
+    state <- H.get
+    -- Only activate peek when not typing in search
+    when (not state.searchOpen) do
+      H.modify_ _ { reachabilityPeek = true }
+      -- Compute reachability if not cached and in a package view
+      when (state.reachabilityData == Nothing) $ case state.scene of
+        PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
+        PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
+        _ -> pure unit
+
+  ReachabilityPeekOff -> do
+    H.modify_ _ { reachabilityPeek = false }
 
   -- =========================================================================
   -- Search Typeahead Actions
@@ -1904,3 +1973,88 @@ computePackageReachability targetPkg bundleModule allImports allModules =
       (Array.fromFoldable entryPoints) <#> \ep -> GraphAlgo.reachableFrom ep internalGraph
   in
     { reachable, entryPoints, packageName: targetPkg }
+
+-- =============================================================================
+-- Package Cluster Computation
+-- =============================================================================
+
+-- | Compute dependency clusters for modules within a package
+-- | Uses connectedComponents for broad grouping and labelPropagation for finer communities
+computePackageClusters
+  :: String                         -- target package name
+  -> Array Loader.V2ModuleImports   -- all imports
+  -> Array Loader.V2ModuleListItem  -- all modules
+  -> PackageClusters
+computePackageClusters targetPkg allImports allModules =
+  let
+    -- Modules in target package
+    targetMods :: Set String
+    targetMods = Set.fromFoldable $
+      Array.filter (\m -> m.package.name == targetPkg) allModules <#> _.name
+
+    -- Forward import map: module → Set of what it imports (within package)
+    importsOf :: Map String (Set String)
+    importsOf = Map.fromFoldable $
+      allImports <#> \imp -> Tuple imp.moduleName (Set.fromFoldable imp.imports)
+
+    -- Build import graph restricted to target package (bidirectional for undirected clustering)
+    -- Make edges symmetric: if A imports B, both A→B and B→A are edges
+    forwardEdges = Map.fromFoldable $ (Array.fromFoldable targetMods) <#> \mod ->
+      Tuple mod (Set.intersection (fromMaybe Set.empty (Map.lookup mod importsOf)) targetMods)
+
+    -- Build reverse edges
+    reverseEdges = foldl (\acc (Tuple from targets) ->
+      foldl (\acc' to ->
+        Map.alter (\mSet -> Just (Set.insert from (fromMaybe Set.empty mSet))) to acc'
+      ) acc (Array.fromFoldable targets)
+    ) (Map.empty :: Map String (Set String)) (Map.toUnfoldable forwardEdges :: Array (Tuple String (Set String)))
+
+    -- Merge forward and reverse for undirected graph
+    symmetricEdges = Map.unionWith Set.union forwardEdges reverseEdges
+
+    internalGraph =
+      { nodes: Array.fromFoldable targetMods
+      , edges: symmetricEdges
+      }
+
+    -- Connected components
+    clusters = GraphAlgo.connectedComponents internalGraph
+
+    -- Label propagation for finer communities
+    communityLabels = GraphAlgo.labelPropagation internalGraph
+
+    -- Convert community labels (Map String String) to (Map String Int)
+    -- by assigning each unique label a numeric index
+    uniqueLabels = Set.fromFoldable $ Map.values communityLabels
+    labelToIdx = Map.fromFoldable $ Array.mapWithIndex (\i label -> Tuple label i) (Array.fromFoldable uniqueLabels)
+    communities = Map.mapMaybe (\label -> Map.lookup label labelToIdx) communityLabels
+  in
+    { clusters, communities, packageName: targetPkg }
+
+-- | Helper: compute and store clusters for a package (used in action handlers)
+computeAndStoreClusters :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
+computeAndStoreClusters pkg = do
+  state <- H.get
+  case state.v2Data of
+    Just v2 -> do
+      let clusters = computePackageClusters pkg v2.imports v2.modules
+      log $ "[SceneCoordinator] Clusters for " <> pkg <> ": "
+          <> show (Array.length clusters.clusters) <> " components, "
+          <> show (Map.size clusters.communities) <> " community assignments"
+      H.modify_ _ { clusterData = Just clusters }
+    Nothing -> pure unit
+
+-- | Helper: compute and store reachability for peek (reuses existing logic)
+computeAndStoreReachabilityForPeek :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
+computeAndStoreReachabilityForPeek pkg = do
+  state <- H.get
+  case state.v2Data of
+    Just v2 -> do
+      let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
+                        >>= _.bundleModule
+          reach = computePackageReachability pkg bundleMod v2.imports v2.modules
+      log $ "[SceneCoordinator] Peek reachability for " <> pkg <> ": "
+          <> show (Set.size reach.reachable) <> " reachable, "
+          <> show (Set.size reach.entryPoints) <> " entry points"
+      H.modify_ _ { reachabilityData = Just reach }
+    Nothing -> pure unit

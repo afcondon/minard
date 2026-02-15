@@ -57,7 +57,7 @@ import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreema
 import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
 import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall, GitStatusData)
-import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor, PackageReachability, ReachabilityStatus(..), getModuleReachability)
+import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor, PackageReachability, PackageClusters, ReachabilityStatus(..), getModuleReachability)
 
 -- =============================================================================
 -- Types
@@ -74,6 +74,8 @@ type Config =
   , colorMode :: ColorMode       -- Current color mode (for git status / reachability)
   , gitStatus :: Maybe GitStatusData  -- Git status for module coloring
   , reachabilityData :: Maybe PackageReachability  -- Reachability for dead code coloring
+  , reachabilityPeek :: Boolean  -- True while R key held (show text overlay)
+  , clusterData :: Maybe PackageClusters  -- Cluster data for ClusterView coloring
   }
 
 -- | Module with computed treemap position
@@ -144,8 +146,8 @@ type ModuleStyling =
   , strokeWidth :: String
   }
 
-getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> ModuleStyling
-getModuleStyling colorMode gitStatus mReachStatus = case colorMode of
+getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> Maybe Int -> ModuleStyling
+getModuleStyling colorMode gitStatus mReachStatus mClusterIdx = case colorMode of
   Reachability ->
     case mReachStatus of
       Just EntryPoint ->
@@ -197,6 +199,19 @@ getModuleStyling colorMode gitStatus mReachStatus = case colorMode of
         { fillColor: "#ebdef0"  -- Light purple background
         , strokeColor: "#9b59b6"  -- Purple stroke
         , strokeWidth: "3"
+        }
+  ClusterView ->
+    case mClusterIdx of
+      Just idx ->
+        let clusterColor = clusterPaletteColor idx
+        in { fillColor: clusterColor <> "33"  -- ~20% opacity hex suffix
+           , strokeColor: clusterColor
+           , strokeWidth: "2"
+           }
+      Nothing ->
+        { fillColor: "transparent"
+        , strokeColor: "rgba(255, 255, 255, 0.3)"
+        , strokeWidth: "1"
         }
   _ ->
     -- Default styling: transparent so scene background shows through, white grid strokes
@@ -744,7 +759,9 @@ enrichedModuleCell config m =
     -- Get git status and reachability status for this module
     gitStatus = getModuleGitStatus config.gitStatus m.name
     reachStatus = config.reachabilityData <#> \rd -> getModuleReachability rd m.name
-    styling = getModuleStyling config.colorMode gitStatus reachStatus
+    -- Get cluster index for this module
+    clusterIdx = config.clusterData >>= \cd -> Map.lookup m.name cd.communities
+    styling = getModuleStyling config.colorMode gitStatus reachStatus clusterIdx
     -- Dim declaration bubbles for unreachable modules in Reachability mode
     declOpacity = case config.colorMode of
       Reachability -> case reachStatus of
@@ -824,6 +841,56 @@ enrichedModuleCell config m =
                else "")
           ]
           []
+
+      -- Reachability peek overlay (visible when R key held)
+      , if config.reachabilityPeek then
+          let
+            peekLabel = case reachStatus of
+              Just EntryPoint  -> "ENTRY POINT"
+              Just Reachable   -> "reachable"
+              Just Unreachable -> "UNREACHABLE"
+              Nothing          -> ""
+            peekBgColor = case reachStatus of
+              Just EntryPoint  -> "rgba(41, 128, 185, 0.7)"   -- Blue tint
+              Just Reachable   -> "rgba(39, 174, 96, 0.5)"    -- Green tint
+              Just Unreachable -> "rgba(192, 57, 43, 0.6)"    -- Red tint
+              Nothing          -> "rgba(0, 0, 0, 0.3)"
+            peekTextColor = "white"
+            fontSize = if m.width > 80.0 then "11" else if m.width > 50.0 then "9" else "7"
+            visible = m.width > 25.0 && m.height > 20.0
+          in
+            elem Group
+              [ staticStr "class" "reachability-peek-overlay"
+              , thunkedStr "opacity" (if visible then "1" else "0")
+              ]
+              [ -- Semi-transparent background rect
+                elem Rect
+                  [ staticStr "x" "0"
+                  , staticStr "y" "0"
+                  , thunkedNum "width" m.width
+                  , thunkedNum "height" m.height
+                  , thunkedStr "fill" peekBgColor
+                  , staticStr "rx" "2"
+                  , staticStr "pointer-events" "none"
+                  ]
+                  []
+              -- Status label centered
+              , elem Text
+                  [ thunkedNum "x" (m.width / 2.0)
+                  , thunkedNum "y" (m.height / 2.0)
+                  , staticStr "text-anchor" "middle"
+                  , staticStr "dominant-baseline" "middle"
+                  , thunkedStr "font-size" fontSize
+                  , thunkedStr "fill" peekTextColor
+                  , staticStr "font-weight" "bold"
+                  , staticStr "font-family" "system-ui, sans-serif"
+                  , staticStr "pointer-events" "none"
+                  , thunkedStr "textContent" peekLabel
+                  ]
+                  []
+              ]
+        else
+          elem Group [] []  -- Empty placeholder
       ]
 
 -- | Render an individual declaration circle with dependency highlighting
@@ -999,6 +1066,20 @@ truncateName maxChars name =
   in if String.length name > maxLen
      then String.take maxLen name <> "…"
      else name
+
+-- | Color palette for dependency clusters (10 well-separated hues)
+clusterPaletteColor :: Int -> String
+clusterPaletteColor idx = case idx `mod` 10 of
+  0 -> "#e6194b"  -- Red
+  1 -> "#3cb44b"  -- Green
+  2 -> "#4363d8"  -- Blue
+  3 -> "#f58231"  -- Orange
+  4 -> "#911eb4"  -- Purple
+  5 -> "#42d4f4"  -- Cyan
+  6 -> "#f032e6"  -- Magenta
+  7 -> "#bfef45"  -- Lime
+  8 -> "#fabebe"  -- Pink
+  _ -> "#469990"  -- Teal
 
 kindColor :: String -> String
 kindColor = case _ of
