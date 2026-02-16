@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Signature Rendering Test</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260216a">
+  <style>
+    html, body {
+      overflow: auto;
+      height: auto;
+    }
+    body {
+      font-family: 'Fira Code', monospace;
+      background: #f8f7f4;
+      color: #333;
+      margin: 0;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 16px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #666;
+      margin: 0 0 8px;
+    }
+    .subtitle {
+      font-size: 11px;
+      color: #999;
+      margin: 0 0 24px;
+    }
+    h2 {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #888;
+      margin: 48px 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #d0ccc4;
+    }
+    h2:first-of-type { margin-top: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    thead th {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #999;
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 2px solid #ccc;
+      position: sticky;
+      top: 0;
+      background: #f8f7f4;
+      z-index: 10;
+    }
+    .sig-row { border-bottom: 1px solid #e8e6e0; }
+    .sig-row-error { background: #fff0f0; }
+    .sig-row:hover { background: #f0efe8; }
+    .sig-idx {
+      width: 32px;
+      text-align: right;
+      padding: 10px 12px;
+      font-size: 11px;
+      color: #aaa;
+      font-variant-numeric: tabular-nums;
+      vertical-align: top;
+    }
+    .sig-meta {
+      width: 200px;
+      padding: 10px 12px;
+      vertical-align: top;
+    }
+    .sig-meta-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #222;
+      margin-bottom: 2px;
+    }
+    .sig-meta-cat {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+      margin-bottom: 4px;
+    }
+    .sig-meta-raw {
+      font-size: 10px;
+      color: #888;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .sig-render-cell {
+      padding: 10px 12px;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+  <h1>Signature Rendering Test</h1>
+  <p class="subtitle">50 curated PureScript type signatures — parsed by real CST, rendered via HATS</p>
+
+  <h2>Sigils</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Name / Sig</th>
+        <th>Rendered</th>
+      </tr>
+    </thead>
+    <tbody id="sigil-table"></tbody>
+  </table>
+
+  <h2>Siglets</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Name / Sig</th>
+        <th>Rendered</th>
+      </tr>
+    </thead>
+    <tbody id="siglet-table"></tbody>
+  </table>
+
+  <script type="module" src="sig-test-bundle.js"></script>
+</body>
+</html>

@@ -16,8 +16,10 @@
 -- | ADT rail diagrams and ClassDef superclass diagrams still use SVG.
 module CE2.Viz.SignatureTree
   ( signatureTree
+  , sigilBodyTree
   , sigletTree
   , renderSignatureInto
+  , renderSigilBodyInto
   , renderSigletInto
   ) where
 
@@ -37,7 +39,7 @@ import Hylograph.HATS.InterpreterTick (rerender)
 import Hylograph.Internal.Element.Types (ElementType(..))
 
 import Hylograph.Sigil.Color (assignVarColors, isEffectName)
-import Hylograph.Sigil.Text (collectTypeVars, collectArrowParams, collectForallVars)
+import Hylograph.Sigil.Text (collectTypeVars, collectArrowParams)
 import Hylograph.Sigil.Types (RenderType(..), Constraint)
 
 -- =============================================================================
@@ -45,30 +47,53 @@ import Hylograph.Sigil.Types (RenderType(..), Constraint)
 -- =============================================================================
 
 -- | Build a HATS tree for a full-size type signature.
+-- | Uses Swiss typographic layout: preamble (∀ left, constraints right),
+-- | declaration (name ::), body (indented with left rule).
 signatureTree
   :: { name :: String, sig :: String, ast :: RenderType, typeParams :: Array String, className :: Maybe String }
   -> Tree
 signatureTree { name, ast, typeParams, className } =
   let
-    allVars = Set.toUnfoldable (collectTypeVars ast) <> collectForallVars ast <> typeParams
+    peeled = peelSignature ast
+    allVars = Set.toUnfoldable (collectTypeVars ast) <> peeled.forallVars <> typeParams
     varColors = assignVarColors (Array.nub allVars)
     ctx = { varColors }
+    hasPreamble = not (Array.null peeled.forallVars) || not (Array.null peeled.constraints)
   in
   elem Code [staticStr "class" "sig-full"]
-    [ -- Header: name [class] [params] ::
-      elem Div [staticStr "class" "sig-header"]
-        ([ elem Dfn [staticStr "class" "sig-name", staticStr "textContent" name] [] ]
-         <> case className of
-              Just cn -> [ elem Small [staticStr "class" "sig-sep", staticStr "textContent" (" (" <> cn <> ")")] [] ]
-              Nothing -> []
-         <> (if Array.null typeParams then []
-             else typeParams <#> \v -> varPill ctx v)
-         <> [ elem Small [staticStr "class" "sig-dcolon", staticStr "textContent" " ::"] [] ]
-        )
-    , -- Type body
-      elem Div [staticStr "class" "sig-body"]
-        [ renderTypeTree ctx ast ]
-    ]
+    ( (if hasPreamble then [ renderPreamble ctx peeled ] else [])
+      <> [ -- Declaration: name ::
+           elem Div [staticStr "class" "sig-decl"]
+             ([ elem Dfn [staticStr "class" "sig-name", staticStr "textContent" name] [] ]
+              <> case className of
+                   Just cn -> [ elem Small [staticStr "class" "sig-sep", staticStr "textContent" (" (" <> cn <> ")")] [] ]
+                   Nothing -> []
+              <> [ elem Small [staticStr "class" "sig-dcolon", staticStr "textContent" " ::"] [] ]
+             )
+         , -- Body: bare type with left rule
+           elem Div [staticStr "class" "sig-body"]
+             [ renderTypeTree ctx peeled.body ]
+         ]
+    )
+
+-- | Build a HATS tree for the sigil body only (no name header, no ::).
+-- | Used for inline rendering in value cells when there's enough space.
+-- | Still shows preamble (quantifier + constraints) if present.
+sigilBodyTree :: { ast :: RenderType } -> Tree
+sigilBodyTree { ast } =
+  let
+    peeled = peelSignature ast
+    allVars = Set.toUnfoldable (collectTypeVars ast) <> peeled.forallVars
+    varColors = assignVarColors (Array.nub allVars)
+    ctx = { varColors }
+    hasPreamble = not (Array.null peeled.forallVars) || not (Array.null peeled.constraints)
+  in
+  elem Code [staticStr "class" "sig-full sig-body-only"]
+    ( (if hasPreamble then [ renderPreamble ctx peeled ] else [])
+      <> [ elem Div [staticStr "class" "sig-body"]
+             [ renderTypeTree ctx peeled.body ]
+         ]
+    )
 
 -- | Build a HATS tree for a siglet (miniature signature).
 sigletTree :: { ast :: RenderType, maxWidth :: Number } -> Tree
@@ -87,6 +112,12 @@ renderSignatureInto selector config = do
   _ <- rerender selector (signatureTree config)
   pure unit
 
+-- | Render a sigil body (no header) into a container element.
+renderSigilBodyInto :: String -> { ast :: RenderType } -> Effect Unit
+renderSigilBodyInto selector config = do
+  _ <- rerender selector (sigilBodyTree config)
+  pure unit
+
 -- | Render a siglet into a container element.
 renderSigletInto :: String -> { ast :: RenderType, maxWidth :: Number } -> Effect Unit
 renderSigletInto selector config = do
@@ -100,6 +131,62 @@ renderSigletInto selector config = do
 type TreeCtx =
   { varColors :: Map String String
   }
+
+-- | Peeled signature: outermost forall/constraints separated from bare body.
+type PeeledSig =
+  { forallVars :: Array String
+  , constraints :: Array Constraint
+  , body :: RenderType
+  }
+
+-- | Peel outermost forall quantifiers and constraints from the AST.
+-- | Nested foralls/constraints (rank-N, inside parens) are left intact.
+peelSignature :: RenderType -> PeeledSig
+peelSignature (TForall vars inner) =
+  let rest = peelSignature inner
+  in rest { forallVars = vars <> rest.forallVars }
+peelSignature (TConstrained cs inner) =
+  let rest = peelSignature inner
+  in rest { constraints = cs <> rest.constraints }
+peelSignature body =
+  { forallVars: [], constraints: [], body }
+
+-- | Render the preamble: quantifier (left) · · · constraints (right).
+-- | A dot leader connects quantifier to constraints when both present.
+renderPreamble :: TreeCtx -> PeeledSig -> Tree
+renderPreamble ctx peeled =
+  let
+    hasForall = not (Array.null peeled.forallVars)
+    hasConstraints = not (Array.null peeled.constraints)
+  in
+  elem Div [staticStr "class" "sig-preamble"]
+    ( (if hasForall
+        then [ elem Div [staticStr "class" "sig-quant"]
+                 ( [ elem Small [staticStr "class" "sig-quant-sym", staticStr "textContent" "\x2200"] [] ]
+                   <> (peeled.forallVars <#> varPill ctx)
+                   <> [ elem Small [staticStr "class" "sig-quant-dot", staticStr "textContent" "."] [] ]
+                 )
+             ]
+        else [])
+      -- Dot leader between quantifier and constraints
+      <> (if hasForall && hasConstraints
+           then [ elem Small [staticStr "class" "sig-leader"] [] ]
+           else [])
+      <> (if hasConstraints
+           then [ elem Div [staticStr "class" "sig-ctx"]
+                    (peeled.constraints <#> renderCtxItem ctx)
+                ]
+           else [])
+    )
+
+-- | Render a constraint in the preamble (annotation style, not pill).
+renderCtxItem :: TreeCtx -> Constraint -> Tree
+renderCtxItem ctx c =
+  elem Em [staticStr "class" "sig-ctx-item"]
+    ( [ elem Code [staticStr "class" "sig-ctx-class", staticStr "textContent" c.className] [] ]
+      <> if Array.null c.args then []
+         else c.args <#> renderTypeTree ctx
+    )
 
 -- =============================================================================
 -- Full-size type tree builder
@@ -163,21 +250,37 @@ renderTypeTree ctx = case _ of
   TWildcard ->
     elem Var [staticStr "class" "sig-var sig-wildcard", staticStr "textContent" "_"] []
 
--- | Type variable as a <var> element with colored background.
+-- | Type variable as a <var> element with color via --vc custom property.
+-- | CSS context determines rendering: colored text (default) or pill (siglet).
 varPill :: TreeCtx -> String -> Tree
 varPill ctx name =
   let color = fromMaybe "#0369a1" (Map.lookup name ctx.varColors)
   in elem Var
        [ staticStr "class" "sig-var"
-       , staticStr "style" ("background:" <> color)
+       , staticStr "style" ("--vc:" <> color)
        , staticStr "textContent" name
        ]
        []
 
 -- | Type application: head arg1 arg2
--- | HKT applications (where head is a TVar) get a distinguishing class.
+-- | Special-cases Record types to drop the keyword and render as table.
 renderAppTree :: TreeCtx -> RenderType -> Array RenderType -> Tree
-renderAppTree ctx head args =
+renderAppTree ctx head args = case head, args of
+  -- Record (row) → closed record table, drop "Record" keyword
+  TCon "Record", [TRow fields tail] ->
+    renderRecordTree ctx fields tail false
+  -- Record (+ combination) → row combo table
+  TCon "Record", [TParens inner] ->
+    let operands = collectPlusOperands inner
+    in if Array.length operands > 1
+       then renderRowComboTree ctx operands
+       else defaultAppTree ctx head args
+  -- Default application
+  _, _ -> defaultAppTree ctx head args
+
+-- | Default application rendering: HKT gets distinguishing class.
+defaultAppTree :: TreeCtx -> RenderType -> Array RenderType -> Tree
+defaultAppTree ctx head args =
   let
     isHkt = case head of
       TVar _ -> true
@@ -185,6 +288,25 @@ renderAppTree ctx head args =
     inner = [ renderTypeTree ctx head ] <> (args <#> renderAppArgTree ctx)
     cls = if isHkt then "sig-app sig-hkt" else "sig-app"
   in elem Code [staticStr "class" cls] inner
+
+-- | Collect operands from a + operator chain (row combination).
+collectPlusOperands :: RenderType -> Array RenderType
+collectPlusOperands (TOperator l "+" r) = collectPlusOperands l <> [r]
+collectPlusOperands other = [other]
+
+-- | Render row combination as a single-column table of operands.
+renderRowComboTree :: TreeCtx -> Array RenderType -> Tree
+renderRowComboTree ctx operands =
+  let len = Array.length operands
+  in elem Ol [staticStr "class" "sig-row-combo"]
+       (Array.mapWithIndex (\i op ->
+         let isLast = i == len - 1
+         in elem Li [staticStr "class" "sig-combo-item"]
+              ( [ renderTypeTree ctx op ]
+                <> if isLast then []
+                   else [ elem Small [staticStr "class" "sig-op", staticStr "textContent" " +"] [] ]
+              )
+       ) operands)
 
 -- | Wrap complex args in parens in application context.
 renderAppArgTree :: TreeCtx -> RenderType -> Tree
@@ -239,7 +361,8 @@ constraintPillTree ctx c =
         else c.args <#> renderTypeTree ctx
     )
 
--- | Record or row as a definition list: field name → field type.
+-- | Record or row as a 3-column definition list: name | :: | type.
+-- | Row tail uses the middle column for | alignment.
 renderRecordTree :: TreeCtx -> Array { label :: String, value :: RenderType } -> Maybe String -> Boolean -> Tree
 renderRecordTree ctx fields tail isRow =
   let
@@ -253,15 +376,15 @@ renderRecordTree ctx fields tail isRow =
     elem Dl [staticStr "class" openClass]
       (Array.concatMap (\f ->
         [ elem Dt [staticStr "class" "sig-field-name", staticStr "textContent" f.label] []
+        , elem Dd [staticStr "class" "sig-field-sep", staticStr "textContent" "::"] []
         , elem Dd [staticStr "class" "sig-field-type"] [ renderTypeTree ctx f.value ]
         ]
       ) fields
       <> case tail of
            Just v ->
-             [ elem Dd [staticStr "class" "sig-row-tail"]
-                 [ elem Small [staticStr "class" "sig-paren", staticStr "textContent" "| "] []
-                 , varPill ctx v
-                 ]
+             [ elem Dt [staticStr "class" "sig-field-name"] []
+             , elem Dd [staticStr "class" "sig-field-sep", staticStr "textContent" "|"] []
+             , elem Dd [staticStr "class" "sig-row-tail"] [ varPill ctx v ]
              ]
            Nothing -> []
       )

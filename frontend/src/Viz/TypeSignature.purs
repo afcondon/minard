@@ -13,6 +13,8 @@ module CE2.Viz.TypeSignature
   , renderADTSVG
   , renderClassDefSVG
   , insertSVGIntoCell
+  , measureElementHeight
+  , clearElement
   , showSigletTooltip
   , hideSigletTooltip
   , RenderedSVG
@@ -54,6 +56,10 @@ type SparklineCell =
 foreign import replaceContainerContent :: String -> Element -> Effect Unit
 foreign import showFallbackText :: String -> String -> Effect Unit
 foreign import insertSVGIntoCell :: String -> Element -> Number -> Number -> Effect Unit
+
+-- Element measurement and clearing
+foreign import measureElementHeight :: String -> Effect Number
+foreign import clearElement :: String -> Effect Unit
 
 -- Siglet tooltip
 foreign import showSigletTooltip :: String -> String -> String -> Effect Unit

@@ -150,7 +150,7 @@ renderValuesLane lane =
   HH.div [ HP.style "margin-bottom: 16px;" ]
     [ renderLaneHeader lane
     , HH.div
-        [ HP.style "column-count: 3; column-gap: 6px;" ]
+        [ HP.style "column-count: 1; column-gap: 6px;" ]
         (if useGrouping
           then Array.concatMap renderLetterGroup groups
           else sorted <#> renderSigletCell)
@@ -335,7 +335,8 @@ makeDeclarationClickCallback mListener pkgName modName declName = case mListener
   Nothing -> log $ "[ModuleSignatureMapViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
 
 -- | Insert HATS HTML trees into cells that have AST but no SVG.
--- | Value cells get both siglet (sparkline) and hidden full-size (tooltip).
+-- | Value cells use adaptive rendering: try full sigil body first, fall back
+-- | to siglet if the rendered height exceeds ~40px (roughly 2 lines).
 -- | Type synonym/foreign cells get full-size rendering.
 insertHtmlIntoCells :: Array MSM.MeasuredCell -> Effect Unit
 insertHtmlIntoCells cells =
@@ -344,11 +345,19 @@ insertHtmlIntoCells cells =
       Just _ -> pure unit  -- SVG cells handled by insertSVGsIntoCells
       Nothing -> case cell.ast of
         Just ast -> do
-          -- Value cells: render siglet into sparkline container
-          when (cell.kind == "value") $
-            SigTree.renderSigletInto ("#sig-sparkline-" <> cell.name)
-              { ast: elideAST ast, maxWidth: 360.0 }
-          -- All non-SVG cells with AST: render full-size signature
+          -- Value cells: adaptive sigil/siglet rendering
+          when (cell.kind == "value") do
+            let sparkSelector = "#sig-sparkline-" <> cell.name
+            -- 1. Render full sigil body (no name header)
+            SigTree.renderSigilBodyInto sparkSelector { ast }
+            -- 2. Measure rendered height
+            h <- TS.measureElementHeight sparkSelector
+            -- 3. If too tall (>40px ≈ 2 lines), clear and fall back to siglet
+            when (h > 40.0) do
+              TS.clearElement sparkSelector
+              SigTree.renderSigletInto sparkSelector
+                { ast: elideAST ast, maxWidth: 360.0 }
+          -- All non-SVG cells with AST: render full-size signature (for tooltip)
           SigTree.renderSignatureInto ("#sig-cell-" <> cell.name)
             { name: cell.name, sig: cell.sig, ast, typeParams: [], className: Nothing }
         Nothing -> pure unit

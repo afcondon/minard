@@ -54,6 +54,19 @@ export const appendSvgChild = (parent) => (child) => () => {
   parent.appendChild(child);
 };
 
+// --- Element measurement ---
+
+export const measureElementHeight = (selector) => () => {
+  const el = document.querySelector(selector);
+  if (!el) return 0;
+  return el.scrollHeight;
+};
+
+export const clearElement = (selector) => () => {
+  const el = document.querySelector(selector);
+  if (el) el.innerHTML = '';
+};
+
 // --- Siglet tooltip ---
 
 export const showSigletTooltip = (tooltipId) => (sourceId) => (cellId) => () => {

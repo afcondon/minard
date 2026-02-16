@@ -7,6 +7,10 @@
 window.__typeSigVizInit = function() {
   'use strict';
 
+  // Guard against double-init
+  if (window.__typeSigVizInitDone) return;
+  window.__typeSigVizInitDone = true;
+
   const parse = window.TypeSigViz.parse;
   const gallery = document.getElementById('gallery');
   const nav = document.getElementById('category-nav');
@@ -14,7 +18,8 @@ window.__typeSigVizInit = function() {
   let activeCategory = null;
 
   function buildNav() {
-    nav.innerHTML = '';
+    while (nav.firstChild) nav.removeChild(nav.firstChild);
+
     const allBtn = document.createElement('button');
     allBtn.textContent = 'All';
     allBtn.className = activeCategory === null ? 'active' : '';
@@ -33,19 +38,19 @@ window.__typeSigVizInit = function() {
   }
 
   function renderGallery() {
-    gallery.innerHTML = '';
+    while (gallery.firstChild) gallery.removeChild(gallery.firstChild);
 
     const filtered = activeCategory
       ? SIGNATURES.filter(s => s.category === activeCategory)
       : SIGNATURES;
 
-    const grouped = Object.create(null);
+    const grouped = new Map();
     for (const sig of filtered) {
-      if (!grouped[sig.category]) grouped[sig.category] = [];
-      grouped[sig.category].push(sig);
+      if (!grouped.has(sig.category)) grouped.set(sig.category, []);
+      grouped.get(sig.category).push(sig);
     }
 
-    for (const [cat, sigs] of Object.entries(grouped)) {
+    for (const [cat, sigs] of grouped) {
       const meta = CATEGORIES[cat] || { label: cat, color: '#888' };
       const section = document.createElement('div');
       section.className = 'category-section';
@@ -213,3 +218,8 @@ window.__typeSigVizInit = function() {
   renderGallery();
   console.log('[TypeSigViz] Gallery rendered with', SIGNATURES.length, 'signatures');
 };
+
+// Fallback: if bundle.js loads before app.js or parser is already ready, trigger init
+if (window.TypeSigViz && window.TypeSigViz.parse && !window.__typeSigVizInitDone) {
+  window.__typeSigVizInit();
+}
