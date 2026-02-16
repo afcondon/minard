@@ -1,6 +1,6 @@
 -- | Type Signature SVG Visualization
 -- |
--- | Parses type signatures and renders them as SVG using hylograph-sigil.
+-- | Parses type signatures and renders them as SVG using sigil.
 -- | Replaces the old JS-based TypeSigRenderer global.
 module CE2.Viz.TypeSignature
   ( renderInto
@@ -30,8 +30,8 @@ import Data.Set as Set
 import Effect (Effect)
 import Web.DOM (Element)
 
-import Hylograph.Sigil (layoutSignature, layoutADT, layoutClassDef, layoutSparkline, layoutSiglet, emit, emitNode)
-import Hylograph.Sigil.Types (RenderType, SuperclassInfo)
+import Sigil (layoutSignature, layoutADT, layoutClassDef, layoutSparkline, layoutSiglet, emit, emitNode)
+import Sigil.Types (RenderType, SuperclassInfo)
 import CE2.Viz.TypeSignature.TypeAST (parseToRenderType, collectTypeVars, elideAST)
 
 -- =============================================================================

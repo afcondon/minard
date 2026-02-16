@@ -135,16 +135,13 @@
               "hylograph-layout": ">=0.1.0 <0.2.0"
             },
             {
-              "hylograph-selection": "*"
+              "hylograph-selection": ">=0.2.0 <0.3.0"
             },
             {
-              "hylograph-sigil": "*"
+              "hylograph-simulation": ">=0.2.0 <0.3.0"
             },
             {
-              "hylograph-simulation": "*"
-            },
-            {
-              "hylograph-simulation-halogen": "*"
+              "hylograph-simulation-halogen": ">=0.2.0 <0.3.0"
             },
             {
               "integers": ">=6.0.0 <7.0.0"
@@ -172,6 +169,9 @@
             },
             {
               "random": ">=6.0.0 <7.0.0"
+            },
+            {
+              "sigil": ">=0.1.0 <0.2.0"
             },
             {
               "strings": ">=6.0.1 <7.0.0"
@@ -314,20 +314,7 @@
         }
       }
     },
-    "extra_packages": {
-      "hylograph-selection": {
-        "path": "../../purescript-hylograph-libs/purescript-hylograph-selection"
-      },
-      "hylograph-sigil": {
-        "path": "../../purescript-hylograph-libs/purescript-hylograph-sigil"
-      },
-      "hylograph-simulation": {
-        "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation"
-      },
-      "hylograph-simulation-halogen": {
-        "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation-halogen"
-      }
-    }
+    "extra_packages": {}
   },
   "packages": {
     "aff": {
@@ -1062,12 +1049,12 @@
       ]
     },
     "hylograph-selection": {
-      "type": "local",
-      "path": "../../purescript-hylograph-libs/purescript-hylograph-selection",
+      "type": "registry",
+      "version": "0.2.0",
+      "integrity": "sha256-KTsBdX9zmTupTFnqxQ9hs6UjxrM+gCj0y4u9YYzY3+8=",
       "dependencies": [
         "arrays",
         "colors",
-        "console",
         "contravariant",
         "datetime",
         "effect",
@@ -1084,7 +1071,6 @@
         "nullable",
         "numbers",
         "ordered-collections",
-        "partial",
         "prelude",
         "refs",
         "strings",
@@ -1093,32 +1079,17 @@
         "tuples",
         "typelevel-prelude",
         "unsafe-coerce",
-        "unsafe-reference",
         "web-dom",
+        "web-events",
         "web-html",
         "web-pointerevents",
         "web-uievents"
       ]
     },
-    "hylograph-sigil": {
-      "type": "local",
-      "path": "../../purescript-hylograph-libs/purescript-hylograph-sigil",
-      "dependencies": [
-        "arrays",
-        "effect",
-        "foldable-traversable",
-        "integers",
-        "maybe",
-        "numbers",
-        "ordered-collections",
-        "prelude",
-        "strings",
-        "web-dom"
-      ]
-    },
     "hylograph-simulation": {
-      "type": "local",
-      "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation",
+      "type": "registry",
+      "version": "0.2.0",
+      "integrity": "sha256-kjyoBdf50CPbhzIL1FMwmC+2+jxnY59uf8rWkNJG1No=",
       "dependencies": [
         "aff",
         "arrays",
@@ -1159,8 +1130,9 @@
       ]
     },
     "hylograph-simulation-halogen": {
-      "type": "local",
-      "path": "../../purescript-hylograph-libs/purescript-hylograph-simulation-halogen",
+      "type": "registry",
+      "version": "0.2.0",
+      "integrity": "sha256-/OLFj2jwlBcTgVDaBf3PjBzqjMoTjRUXDkt+5nTfe2Q=",
       "dependencies": [
         "effect",
         "halogen-subscriptions",
@@ -1738,6 +1710,24 @@
       "integrity": "sha256-EJrxtKt5xC7TYjBZrSBO/J7Aw3DmtilYjt4olpAXWVc=",
       "dependencies": [
         "unsafe-coerce"
+      ]
+    },
+    "sigil": {
+      "type": "registry",
+      "version": "0.1.0",
+      "integrity": "sha256-Rx1ErB3EAZ0OHMB4KLttT8w43iv7Uksret7LYAOLDiU=",
+      "dependencies": [
+        "arrays",
+        "effect",
+        "integers",
+        "language-cst-parser",
+        "maybe",
+        "ordered-collections",
+        "prelude",
+        "strings",
+        "tuples",
+        "unsafe-coerce",
+        "web-dom"
       ]
     },
     "st": {

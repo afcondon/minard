@@ -14,9 +14,7 @@ module CE2.Component.ModuleSignatureMapViz
 import Prelude
 
 import Data.Array as Array
-import Data.Array.NonEmpty as NEA
 import Data.Maybe (Maybe(..))
-import Data.String as String
 import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (liftEffect)
@@ -30,8 +28,6 @@ import Halogen.Subscription as HS
 import CE2.Data.Loader as Loader
 import CE2.Viz.ModuleSignatureMap as MSM
 import CE2.Viz.SignatureTree as SigTree
-import CE2.Viz.TypeSignature as TS
-import CE2.Viz.TypeSignature.TypeAST (elideAST)
 
 -- =============================================================================
 -- Types
@@ -63,8 +59,6 @@ data Action
   | Finalize
   | HandleDeclarationClick String String String
   | CellClicked (Effect Unit)
-  | ShowTooltip String  -- cell name
-  | HideTooltip
 
 -- =============================================================================
 -- Component
@@ -92,13 +86,6 @@ initialState input =
   }
 
 -- =============================================================================
--- Constants
--- =============================================================================
-
-tooltipId :: String
-tooltipId = "sigmap-tooltip"
-
--- =============================================================================
 -- Render
 -- =============================================================================
 
@@ -114,46 +101,15 @@ render state =
           [ HH.text "No declarations" ]
       ]
     else
-      (state.lanes <#> renderLane) <>
-      [ -- Fixed-position tooltip (outside columns, rendered at end)
-        HH.div
-          [ HP.id tooltipId
-          , HP.class_ (HH.ClassName "sigmap-tooltip")
-          ]
-          []
-      ]
+      (state.lanes <#> renderLane)
 
 renderLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
 renderLane lane =
-  if lane.key == "values"
-    then renderValuesLane lane
-    else renderStandardLane lane
-
--- | Standard lane for types, data, classes etc — full-size SVG cards in columns
-renderStandardLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
-renderStandardLane lane =
   HH.div [ HP.style "margin-bottom: 16px;" ]
     [ renderLaneHeader lane
     , HH.div
-        [ HP.style "columns: 300px; column-gap: 6px;" ]
+        [ HP.style "columns: 440px; column-gap: 8px;" ]
         (lane.cells <#> renderFullCell)
-    ]
-
--- | Values lane — siglet cells, alphabetically grouped when large
-renderValuesLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
-renderValuesLane lane =
-  let
-    sorted = Array.sortBy (comparing _.name) lane.cells
-    groups = groupByFirstLetter sorted
-    useGrouping = Array.length lane.cells >= 12
-  in
-  HH.div [ HP.style "margin-bottom: 16px;" ]
-    [ renderLaneHeader lane
-    , HH.div
-        [ HP.style "column-count: 1; column-gap: 6px;" ]
-        (if useGrouping
-          then Array.concatMap renderLetterGroup groups
-          else sorted <#> renderSigletCell)
     ]
 
 -- | Shared lane header
@@ -170,71 +126,11 @@ renderLaneHeader lane =
     ]
 
 -- =============================================================================
--- Alphabetical grouping
--- =============================================================================
-
-type LetterGroup = { letter :: String, cells :: Array MSM.MeasuredCell }
-
-groupByFirstLetter :: Array MSM.MeasuredCell -> Array LetterGroup
-groupByFirstLetter sorted =
-  let
-    firstLetter c = String.toUpper (String.take 1 c.name)
-  in
-    Array.groupBy (\a b -> firstLetter a == firstLetter b) sorted
-      # map (\group ->
-          { letter: firstLetter (NEA.head group)
-          , cells: NEA.toArray group
-          })
-
-renderLetterGroup :: forall m. LetterGroup -> Array (H.ComponentHTML Action () m)
-renderLetterGroup group =
-  [ renderLetterHeader group.letter ] <> (group.cells <#> renderSigletCell)
-
-renderLetterHeader :: forall m. String -> H.ComponentHTML Action () m
-renderLetterHeader letter =
-  HH.div
-    [ HP.style "column-span: all; font-size: 13px; font-weight: 700; color: #aaa; padding: 10px 0 2px; letter-spacing: 0.5px;" ]
-    [ HH.text letter ]
-
--- =============================================================================
 -- Cell renderers
 -- =============================================================================
 
--- | Render a value cell: name header + empty containers filled by HATS post-render
-renderSigletCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
-renderSigletCell cell =
-  HH.div
-    [ HP.id ("sigmap-cell-" <> cell.name)
-    , HP.classes [ HH.ClassName "sigmap-cell", HH.ClassName "sigmap-cell-sparkline" ]
-    , HP.style $ "break-inside:avoid;"
-        <> " margin-bottom:6px;"
-        <> " overflow:visible;"
-        <> " padding:" <> show MSM.cellPad <> "px;"
-        <> " box-sizing:border-box;"
-        <> " background:" <> MSM.kindBackground cell.kind <> ";"
-        <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
-        <> " border-radius:3px;"
-        <> " cursor:pointer;"
-    , HE.onClick \_ -> CellClicked cell.onClick
-    , HE.onMouseEnter \_ -> ShowTooltip cell.name
-    , HE.onMouseLeave \_ -> HideTooltip
-    ]
-    [ -- Name header (Halogen)
-      HH.div
-        [ HP.style "font-family:'Fira Code','SF Mono',monospace; font-size:12px; font-weight:700; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" ]
-        [ HH.text cell.name ]
-    -- Siglet container (filled by HATS after render)
-    , HH.div [ HP.id ("sig-sparkline-" <> cell.name) ] []
-    -- Hidden full-size for tooltip (filled by HATS after render)
-    , HH.div
-        [ HP.id ("sig-cell-" <> cell.name)
-        , HP.style "display:none;"
-        ]
-        []
-    ]
-
--- | Render a regular full-size cell (types, data, classes, type synonyms)
--- | Content inserted post-render: SVG for ADT/ClassDef, HATS HTML for others
+-- | Render a full-size cell for all declaration kinds
+-- | Content inserted post-render via insertHtmlIntoCells
 renderFullCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
 renderFullCell cell =
   HH.div
@@ -242,9 +138,6 @@ renderFullCell cell =
     , HP.class_ (HH.ClassName "sigmap-cell")
     , HP.style $ "break-inside:avoid;"
         <> " margin-bottom:6px;"
-        <> (case cell.svg of
-              Just _ -> " height:" <> show cell.cellHeight <> "px;"
-              Nothing -> "")
         <> " overflow:auto;"
         <> " padding:" <> show MSM.cellPad <> "px;"
         <> " box-sizing:border-box;"
@@ -254,17 +147,21 @@ renderFullCell cell =
         <> " cursor:pointer;"
     , HE.onClick \_ -> CellClicked cell.onClick
     ]
-    -- All content inserted post-render (SVG or HATS HTML)
-    -- Only plain-text fallback for cells with no SVG and no AST
-    (case cell.svg of
-      Just _ -> []  -- SVG inserted by insertSVGsIntoCells
-      Nothing -> case cell.ast of
-        Just _ -> []  -- HATS HTML inserted by insertHtmlIntoCells
-        Nothing ->
-          [ HH.div
-              [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
-              [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
-          ])
+    -- All content inserted post-render by insertHtmlIntoCells
+    -- Only plain-text fallback for cells with no structured data and no AST
+    (case cell.dataDecl of
+      Just _ -> []
+      Nothing -> case cell.classDecl of
+        Just _ -> []
+        Nothing -> case cell.typeSynonym of
+          Just _ -> []
+          Nothing -> case cell.ast of
+            Just _ -> []
+            Nothing ->
+              [ HH.div
+                  [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
+                  [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
+              ])
 
 -- =============================================================================
 -- Action Handlers
@@ -303,13 +200,7 @@ handleAction = case _ of
   CellClicked handler -> do
     liftEffect handler
 
-  ShowTooltip name -> do
-    liftEffect $ TS.showSigletTooltip tooltipId ("sig-cell-" <> name) ("sigmap-cell-" <> name)
-
-  HideTooltip -> do
-    liftEffect $ TS.hideSigletTooltip tooltipId
-
--- | Pre-render SVGs, measure, group into lanes, then insert content after render.
+-- | Prepare cells, group into lanes, then insert HTML content after render.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
 renderSignatureMap input = do
   state <- H.get
@@ -323,9 +214,7 @@ renderSignatureMap input = do
     input.declarations
   let newLanes = MSM.groupIntoLanes measured
   H.modify_ _ { lanes = newLanes }
-  -- After Halogen re-renders, insert SVGs for ADT/ClassDef cells
-  liftEffect $ MSM.insertSVGsIntoCells measured
-  -- Insert HATS HTML trees for value/type synonym cells
+  -- Insert HTML for all cell types (data decls, class decls, values, type synonyms)
   liftEffect $ insertHtmlIntoCells measured
 
 -- | Create a declaration click callback that notifies the Halogen listener
@@ -334,31 +223,55 @@ makeDeclarationClickCallback mListener pkgName modName declName = case mListener
   Just listener -> HS.notify listener (HandleDeclarationClick pkgName modName declName)
   Nothing -> log $ "[ModuleSignatureMapViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
 
--- | Insert HATS HTML trees into cells that have AST but no SVG.
--- | Value cells use adaptive rendering: try full sigil body first, fall back
--- | to siglet if the rendered height exceeds ~40px (roughly 2 lines).
--- | Type synonym/foreign cells get full-size rendering.
+-- | Insert HTML content into all cell types after Halogen render.
+-- | Data decls → renderDataDeclInto, class decls → renderClassDeclInto,
+-- | value cells → adaptive sigil/siglet, type synonyms → full-size signature.
 insertHtmlIntoCells :: Array MSM.MeasuredCell -> Effect Unit
 insertHtmlIntoCells cells =
   Array.foldM (\_ cell ->
-    case cell.svg of
-      Just _ -> pure unit  -- SVG cells handled by insertSVGsIntoCells
-      Nothing -> case cell.ast of
-        Just ast -> do
-          -- Value cells: adaptive sigil/siglet rendering
-          when (cell.kind == "value") do
-            let sparkSelector = "#sig-sparkline-" <> cell.name
-            -- 1. Render full sigil body (no name header)
-            SigTree.renderSigilBodyInto sparkSelector { ast }
-            -- 2. Measure rendered height
-            h <- TS.measureElementHeight sparkSelector
-            -- 3. If too tall (>40px ≈ 2 lines), clear and fall back to siglet
-            when (h > 40.0) do
-              TS.clearElement sparkSelector
-              SigTree.renderSigletInto sparkSelector
-                { ast: elideAST ast, maxWidth: 360.0 }
-          -- All non-SVG cells with AST: render full-size signature (for tooltip)
-          SigTree.renderSignatureInto ("#sig-cell-" <> cell.name)
-            { name: cell.name, sig: cell.sig, ast, typeParams: [], className: Nothing }
-        Nothing -> pure unit
+    let cellSelector = "#sig-cell-" <> cell.name
+    in case cell.dataDecl of
+      Just dd ->
+        SigTree.renderDataDeclInto cellSelector
+          { name: cell.name, typeParams: dd.typeParams, constructors: dd.constructors, keyword: dd.keyword }
+      Nothing -> case cell.classDecl of
+        Just cd -> do
+          SigTree.renderClassDeclInto cellSelector
+            { name: cell.name, typeParams: cd.typeParams, superclasses: cd.superclasses, methods: cd.methods }
+          -- Append instances section if any
+          when (not (Array.null cd.instances)) do
+            SigTree.appendHtmlInto cellSelector (renderInstancesHtml cd.instances)
+        Nothing -> case cell.typeSynonym of
+          Just ts ->
+            SigTree.renderTypeSynonymInto cellSelector
+              { name: cell.name, typeParams: ts.typeParams, body: ts.body }
+          Nothing -> case cell.ast of
+            Just ast ->
+              if cell.foreignImport then
+                -- Foreign imports: dedicated renderer
+                SigTree.renderForeignImportInto cellSelector
+                  { name: cell.name, ast }
+              else
+                -- Value cells: full sigil rendering
+                SigTree.renderSignatureInto cellSelector
+                  { name: cell.name, sig: cell.sig, ast, typeParams: [], className: Nothing }
+            Nothing -> pure unit
   ) unit cells
+
+-- | Build HTML for the instances section of a class card.
+renderInstancesHtml :: Array { name :: String, sig :: Maybe String } -> String
+renderInstancesHtml instances =
+  let
+    count = Array.length instances
+    instanceItems = Array.foldl (\acc inst ->
+      acc <> "<li class=\"sig-class-instance\">"
+        <> "<code class=\"sig-class-instance-name\">" <> inst.name <> "</code>"
+        <> "</li>"
+    ) "" instances
+  in
+    "<div class=\"sig-class-instances\">"
+    <> "<div class=\"sig-class-instances-header\">"
+    <> show count <> " instance" <> (if count == 1 then "" else "s")
+    <> "</div>"
+    <> "<ul class=\"sig-class-instance-list\">" <> instanceItems <> "</ul>"
+    <> "</div>"

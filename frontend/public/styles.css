@@ -2583,13 +2583,161 @@ svg [data-tooltip]::before {
 .sig-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle;
            font-size: 0; overflow: hidden; padding: 0; }
 .sig-dot-con { border: 1.5px solid #16653e; background: none; }
+.sig-dot-head { width: 11px; height: 11px; }
 .sig-dot-effect { background: #9333ea; border: none; }
+.sig-dot.sig-wildcard { background: #71717a; }
 
 .sig-siglet { display: inline-flex; flex-direction: column; gap: 1px; margin-top: 2px;
               font-style: normal; }
-/* Siglet: type variables revert to colored-pill style */
-.sig-siglet .sig-var { display: inline-block; background: var(--vc, #0369a1); color: white;
-                       padding: 1px 5px; border-radius: 3px; }
+/* Siglet: constrained type variables get pill style */
+.sig-siglet .sig-var-pill { display: inline-block; background: var(--vc, #0369a1); color: white;
+                            padding: 1px 5px; border-radius: 3px; }
+
+/* Siglet record/row: { ○ ○ ○ } or { ○ ○ ○ |r } */
+.sig-record-mini { display: inline-flex; align-items: center; gap: 2px; }
+.sig-brace { color: #999; font-weight: 600; font-size: inherit; }
+.sig-pipe { color: #999; font-weight: 600; font-size: inherit; }
+
+/* =============================================================================
+   ADT (data/newtype declaration) HTML rendering
+   ============================================================================= */
+
+.sig-adt { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+           width: fit-content; min-width: 180px; }
+
+/* Header bar: amber background */
+.sig-adt-header { display: flex; align-items: baseline; gap: 5px;
+                  background: #fef3c7; border: 1px solid #d97706; border-radius: 4px;
+                  padding: 4px 10px; }
+.sig-adt-name { color: #92400e; font-weight: 700; font-style: normal; }
+
+/* Keyword (shared between ADT and class) */
+.sig-kw { color: #7b61ff; font-weight: 600; font-size: 12px; }
+
+/* Constructor list: rail drawn per-item so it terminates at the last dot */
+.sig-adt-ctors { list-style: none; margin: 0; padding: 8px 0 4px 0;
+                 margin-left: 16px; }
+
+.sig-adt-ctor { position: relative; display: flex; align-items: baseline; gap: 6px;
+                padding: 2px 0 2px 24px; min-height: 24px;
+                border-left: 2px solid #d97706; }
+
+/* Last item: rail stops at the dot (50%) */
+.sig-adt-ctor:last-child {
+  border-image: linear-gradient(to bottom, #d97706 50%, transparent 50%) 1;
+}
+/* Single constructor: no rail */
+.sig-adt-ctor:only-child { border-left-color: transparent; border-image: none; }
+
+/* Branch stub: horizontal line from rail center */
+.sig-adt-ctor::before { content: ""; position: absolute; left: -1px; top: 50%;
+                        width: 17px; height: 0; border-top: 2px solid #d97706; }
+
+/* Junction dot centered on rail */
+.sig-adt-ctor::after { content: ""; position: absolute; left: -1px; top: 50%;
+                       width: 6px; height: 6px; border-radius: 50%; background: white;
+                       border: 1.5px solid #d97706; transform: translate(-50%, -50%); }
+
+.sig-adt-ctor-name { color: #b45309; font-weight: 700; font-style: normal; }
+.sig-adt-ctor-args { display: inline-flex; align-items: center; gap: 5px; }
+.sig-adt-ctor-dash { color: #ddd; font-size: 10px; }
+
+/* Opaque type indicator */
+.sig-adt-opaque-label { display: flex; justify-content: center; padding: 8px 0 4px;
+                        color: #bbb; font-size: 11px; font-style: italic; }
+
+/* =============================================================================
+   Type class definition HTML rendering
+   ============================================================================= */
+
+.sig-class { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+             width: fit-content; min-width: 200px; }
+
+/* Header bar: indigo background */
+.sig-class-header { display: flex; align-items: baseline; gap: 5px;
+                    background: #f0f4ff; border: 1px solid #6366f1; border-radius: 4px;
+                    padding: 4px 10px; }
+.sig-class-name { color: #4338ca; font-weight: 700; font-style: normal; }
+
+/* Superclass row: right-justified above header (like constraints above signatures) */
+.sig-class-supers { display: flex; align-items: baseline; justify-content: flex-end;
+                    gap: 4px; padding: 0 4px 2px 0; font-size: 11px; }
+.sig-class-arrow { color: #d97706; font-size: 12px; }
+.sig-class-comma { color: #aaa; }
+.sig-class-super { color: #92400e; font-weight: 600; font-style: normal; }
+
+/* Methods container */
+.sig-class-methods { padding: 4px 0 4px 12px; }
+.sig-class-no-methods { color: #aaa; font-size: 11px; }
+.sig-class-empty { font-style: italic; }
+
+/* Single method entry */
+.sig-method { padding: 4px 0; }
+.sig-method + .sig-method { border-top: 1px solid #e8e8f0; }
+.sig-method-constraints { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 2px; }
+.sig-method-decl { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0; }
+.sig-method-name { color: #1a1a1a; font-weight: 700; font-style: normal; }
+.sig-method-sep { color: #aaa; font-size: inherit; white-space: pre; }
+.sig-method-forall { display: flex; align-items: center; gap: 3px;
+                     font-size: 12px; margin-top: 2px; }
+
+/* Inherited methods section */
+.sig-class-inherited { border-top: 1px dashed #d4d4d8; margin-top: 4px; padding-top: 4px; }
+.sig-class-via-group { padding: 2px 0 2px 12px; }
+.sig-class-via { font-size: 10px; font-weight: 600; font-style: italic;
+                 color: #92400e; padding: 2px 0; }
+
+/* Inherited methods rendered slightly muted */
+.sig-class-inherited .sig-method { opacity: 0.7; }
+
+/* Instances section */
+.sig-class-instances { border-top: 1px dashed #c7d2fe; margin-top: 6px; padding-top: 4px; }
+.sig-class-instances-header { font-size: 10px; font-weight: 600; color: #6366f1;
+                              letter-spacing: 0.3px; padding: 2px 0 4px; }
+.sig-class-instance-list { list-style: none; margin: 0; padding: 0;
+                           display: flex; flex-wrap: wrap; gap: 3px; }
+.sig-class-instance { display: inline; }
+.sig-class-instance-name { font-family: 'Fira Code', 'SF Mono', monospace;
+                           font-size: 10px; color: #4338ca;
+                           background: #eef2ff; border: 1px solid #c7d2fe;
+                           border-radius: 3px; padding: 1px 5px; }
+
+/* =============================================================================
+   Type synonym (type alias) HTML rendering
+   ============================================================================= */
+
+.sig-type-alias { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+                  width: fit-content; min-width: 140px; }
+
+/* Header bar: gold/yellow background */
+.sig-type-alias-header { display: flex; align-items: baseline; gap: 5px;
+                         background: #fdf9ec; border: 1px solid #edc948; border-radius: 4px;
+                         padding: 4px 10px; }
+.sig-type-alias-name { color: #92700e; font-weight: 700; font-style: normal; }
+
+/* Body: = expansion */
+.sig-type-alias-body { display: flex; flex-direction: column; gap: 2px;
+                       padding: 4px 0 2px 12px; }
+.sig-type-alias-eq { color: #71717a; font-weight: 600; font-size: inherit;
+                     margin-right: 6px; }
+
+/* =============================================================================
+   Foreign import HTML rendering
+   ============================================================================= */
+
+.sig-foreign { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+               width: fit-content; min-width: 140px; }
+
+/* Header bar: rose/red background */
+.sig-foreign-header { display: flex; align-items: baseline; gap: 5px;
+                      background: #fdf0f0; border: 1px solid #e15759; border-radius: 4px;
+                      padding: 4px 10px; }
+.sig-foreign-name { color: #9b2c2c; font-weight: 700; font-style: normal; }
+
+/* Body: type expression */
+.sig-foreign-body { display: flex; flex-direction: column; gap: 2px;
+                    border-left: 2px solid #d0ccc4; padding-left: 12px; margin-left: 4px;
+                    margin-top: 2px; }
 
 /* =============================================================================
    PureScript Source Code Syntax Highlighting
