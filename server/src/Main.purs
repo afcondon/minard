@@ -11,9 +11,11 @@ import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Console (log)
 import Foreign.Object as Object
-import HTTPurple (serve, ok)
+import HTTPurple (Method(..), serve, ok, ok', toString)
+import HTTPurple.Headers (headers)
 import Routing.Duplex (RouteDuplex', root, path, int, segment)
 import Routing.Duplex.Generic (noArgs, sum)
+import API.Annotations as Annotations
 import API.Unified as Unified
 
 -- =============================================================================
@@ -52,6 +54,9 @@ data Route
   | V2GetDeclarationUsage
   -- Module source (read .purs file from disk)
   | V2GetModuleSource
+  -- Annotations
+  | V2Annotations        -- GET (list/filter) and POST (create)
+  | V2Annotation Int     -- GET (single) and PATCH (update)
   -- Health
   | Health
 
@@ -80,6 +85,8 @@ route = root $ sum
   , "V2GitStatus": path "api/v2/git/status" noArgs
   , "V2GetDeclarationUsage": path "api/v2/declaration-usage" noArgs
   , "V2GetModuleSource": path "api/v2/module-source" noArgs
+  , "V2Annotations": path "api/v2/annotations" noArgs
+  , "V2Annotation": path "api/v2/annotations" (int segment)
   , "Health": path "health" noArgs
   }
 
@@ -94,6 +101,30 @@ main :: Effect Unit
 main = launchAff_ do
   db <- DB.openDB dbPath
   liftEffect $ log $ "Connected to database: " <> dbPath
+
+  -- Ensure annotations table exists (idempotent migration)
+  DB.exec db """
+    CREATE SEQUENCE IF NOT EXISTS seq_annotation_id START 1;
+    CREATE TABLE IF NOT EXISTS annotations (
+      id              INTEGER PRIMARY KEY DEFAULT nextval('seq_annotation_id'),
+      target_type     VARCHAR NOT NULL,
+      target_id       VARCHAR NOT NULL,
+      target_id_2     VARCHAR,
+      kind            VARCHAR NOT NULL,
+      value           TEXT NOT NULL,
+      source          VARCHAR NOT NULL,
+      confidence      REAL DEFAULT 1.0,
+      status          VARCHAR DEFAULT 'proposed',
+      supersedes      INTEGER,
+      session_id      VARCHAR,
+      created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_annotations_target ON annotations(target_type, target_id);
+    CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind);
+    CREATE INDEX IF NOT EXISTS idx_annotations_status ON annotations(status);
+    CREATE INDEX IF NOT EXISTS idx_annotations_session ON annotations(session_id);
+  """
+  liftEffect $ log "Annotations table ready"
 
   liftEffect do
     _ <- serve { port: 3000 } { route, router: mkRouter db }
@@ -121,9 +152,12 @@ main = launchAff_ do
     log "  GET /api/v2/git/status                   - Live git status (modified/staged)"
     log "  GET /api/v2/declaration-usage?module=&decl= - Cross-module usage graph"
     log "  GET /api/v2/module-source?module=         - Read module .purs source file"
+    log "  GET/POST /api/v2/annotations             - List/create annotations"
+    log "  GET/PATCH /api/v2/annotations/:id        - Get/update annotation"
     log "  GET /health                              - Health check"
   where
-  mkRouter db { route: r, query } =
+  corsHeaders = headers { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
+  mkRouter db { route: r, query, method, body } =
     let mProject = Object.lookup "project" query >>= Int.fromString
     in case r of
     V2Stats -> Unified.getStats db
@@ -155,4 +189,18 @@ main = launchAff_ do
       case Object.lookup "module" query of
         Just moduleName -> Unified.getModuleSource db moduleName
         Nothing -> ok "{ \"error\": \"module query param required\" }"
+    V2Annotations -> case method of
+      Get -> Annotations.list db query
+      Post -> do
+        bodyStr <- toString body
+        Annotations.create db bodyStr
+      Options -> ok' corsHeaders ""
+      _ -> ok "{ \"error\": \"Method not allowed\" }"
+    V2Annotation annId -> case method of
+      Get -> Annotations.get db annId
+      Patch -> do
+        bodyStr <- toString body
+        Annotations.update db annId bodyStr
+      Options -> ok' corsHeaders ""
+      _ -> ok "{ \"error\": \"Method not allowed\" }"
     Health -> ok "OK"

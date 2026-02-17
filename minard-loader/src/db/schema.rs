@@ -254,6 +254,32 @@ CREATE TABLE IF NOT EXISTS declaration_metrics (
 );
 
 -- =============================================================================
+-- ANNOTATION LAYER
+-- =============================================================================
+
+CREATE SEQUENCE IF NOT EXISTS seq_annotation_id START 1;
+
+CREATE TABLE IF NOT EXISTS annotations (
+    id              INTEGER PRIMARY KEY DEFAULT nextval('seq_annotation_id'),
+    target_type     VARCHAR NOT NULL,
+    target_id       VARCHAR NOT NULL,
+    target_id_2     VARCHAR,
+    kind            VARCHAR NOT NULL,
+    value           TEXT NOT NULL,
+    source          VARCHAR NOT NULL,
+    confidence      REAL DEFAULT 1.0,
+    status          VARCHAR DEFAULT 'proposed',
+    supersedes      INTEGER,
+    session_id      VARCHAR,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_annotations_target ON annotations(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind);
+CREATE INDEX IF NOT EXISTS idx_annotations_status ON annotations(status);
+CREATE INDEX IF NOT EXISTS idx_annotations_session ON annotations(session_id);
+
+-- =============================================================================
 -- METADATA
 -- =============================================================================
 
@@ -262,7 +288,7 @@ CREATE TABLE IF NOT EXISTS metadata (
     value   VARCHAR
 );
 
-INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.3');
+INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.4');
 INSERT OR REPLACE INTO metadata (key, value) VALUES ('created_at', CURRENT_TIMESTAMP);
 "#;
 
@@ -421,6 +447,8 @@ pub fn drop_all_tables(conn: &Connection) -> Result<()> {
         DROP VIEW IF EXISTS module_details;
         DROP VIEW IF EXISTS snapshot_package_summary;
         DROP VIEW IF EXISTS namespace_stats;
+        DROP TABLE IF EXISTS annotations;
+        DROP SEQUENCE IF EXISTS seq_annotation_id;
         DROP TABLE IF EXISTS declaration_metrics;
         DROP TABLE IF EXISTS module_metrics;
         DROP TABLE IF EXISTS module_commits;

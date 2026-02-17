@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+minard-annotate: Create, list, and manage annotations on the Minard codebase.
+
+Annotations attach semantic metadata (tags, summaries, quality notes, architecture
+labels) to codebase entities (declarations, modules, packages, relationships).
+
+Usage:
+  minard-annotate list                                  # List all annotations
+  minard-annotate list --module Data.Maybe              # Filter by module
+  minard-annotate list --kind quality                   # Filter by kind
+  minard-annotate list --status proposed                # Filter by status
+
+  minard-annotate add --module Data.Maybe \\
+    --kind architecture --value "Core utility" \\
+    --source ai --confidence 0.8
+
+  minard-annotate add --decl Data.Maybe.fromMaybe \\
+    --kind summary --value "Unwraps Maybe with default" \\
+    --source ai
+
+  minard-annotate confirm 42                            # Set status=confirmed
+  minard-annotate reject 42                             # Set status=rejected
+  minard-annotate update 42 --value "New text" --confidence 1.0
+
+  minard-annotate --json list                           # JSON output
+
+Requires the Minard server running (default: http://localhost:3000).
+"""
+
+import argparse
+import json
+import sys
+from urllib.request import urlopen, Request
+from urllib.error import URLError, HTTPError
+
+
+def fetch_json(url, method="GET", data=None):
+    """Fetch JSON from URL, optionally POST/PATCH with JSON body."""
+    headers = {"Accept": "application/json"}
+    body = None
+    if data is not None:
+        body = json.dumps(data).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = Request(url, data=body, headers=headers, method=method)
+    try:
+        with urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except HTTPError as e:
+        try:
+            err = json.loads(e.read().decode())
+            return err
+        except Exception:
+            return {"error": f"HTTP {e.code}: {e.reason}"}
+
+
+def format_annotation(ann, compact=False):
+    """Format a single annotation for display."""
+    if compact:
+        status_icon = {
+            "proposed": "?",
+            "confirmed": "+",
+            "rejected": "x",
+            "superseded": "~",
+        }.get(ann.get("status", ""), " ")
+        conf = ann.get("confidence", 1.0)
+        conf_str = f"{conf:.0%}" if conf is not None else "   "
+        return (
+            f"  [{status_icon}] #{ann['id']:<4} "
+            f"{ann['targetType']:<12} {ann['targetId']:<35} "
+            f"{ann['kind']:<14} {conf_str:>4}  "
+            f"{ann['source']:<8} "
+            f"{truncate(ann.get('value', ''), 50)}"
+        )
+    else:
+        lines = [
+            f"  Annotation #{ann['id']}",
+            f"    Target:     {ann['targetType']}:{ann['targetId']}",
+        ]
+        if ann.get("targetId2"):
+            lines.append(f"    Target 2:   {ann['targetId2']}")
+        lines.extend([
+            f"    Kind:       {ann['kind']}",
+            f"    Value:      {ann.get('value', '')}",
+            f"    Source:     {ann['source']}",
+            f"    Confidence: {ann.get('confidence', 1.0):.0%}",
+            f"    Status:     {ann.get('status', 'proposed')}",
+        ])
+        if ann.get("sessionId"):
+            lines.append(f"    Session:    {ann['sessionId']}")
+        if ann.get("createdAt"):
+            lines.append(f"    Created:    {ann['createdAt']}")
+        return "\n".join(lines)
+
+
+def truncate(s, maxlen):
+    """Truncate string with ellipsis."""
+    s = s.replace("\n", " ").strip()
+    return s if len(s) <= maxlen else s[: maxlen - 3] + "..."
+
+
+def cmd_list(args):
+    """List annotations with optional filters."""
+    base = args.server.rstrip("/")
+    params = []
+    if args.module:
+        params.append("target_type=module")
+        params.append(f"target_id={args.module}")
+    if args.decl:
+        params.append("target_type=declaration")
+        params.append(f"target_id={args.decl}")
+    if args.package:
+        params.append("target_type=package")
+        params.append(f"target_id={args.package}")
+    if args.target_type:
+        params.append(f"target_type={args.target_type}")
+    if args.target_id:
+        params.append(f"target_id={args.target_id}")
+    if args.kind:
+        params.append(f"kind={args.kind}")
+    if args.status:
+        params.append(f"status={args.status}")
+    if args.session_id:
+        params.append(f"session_id={args.session_id}")
+
+    query = "&".join(params)
+    url = f"{base}/api/v2/annotations"
+    if query:
+        url += f"?{query}"
+
+    result = fetch_json(url)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+
+    annotations = result.get("annotations", [])
+    count = result.get("count", len(annotations))
+
+    if not annotations:
+        print("  No annotations found.")
+        return
+
+    print(f"\n  {'St':<4} {'#':<5} {'Type':<12} {'Target':<35} {'Kind':<14} {'Conf':>4}  {'Source':<8} Value")
+    print(f"  {'--':<4} {'--':<5} {'----':<12} {'------':<35} {'----':<14} {'----':>4}  {'------':<8} -----")
+    for ann in annotations:
+        print(format_annotation(ann, compact=True))
+    print(f"\n  {count} annotation(s)")
+
+
+def cmd_add(args):
+    """Create a new annotation."""
+    base = args.server.rstrip("/")
+
+    # Determine target type and id
+    if args.module:
+        target_type = "module"
+        target_id = args.module
+    elif args.decl:
+        target_type = "declaration"
+        target_id = args.decl
+    elif args.package:
+        target_type = "package"
+        target_id = args.package
+    elif args.target_type and args.target_id:
+        target_type = args.target_type
+        target_id = args.target_id
+    else:
+        print("Error: Must specify --module, --decl, --package, or --target-type + --target-id", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.kind:
+        print("Error: --kind is required", file=sys.stderr)
+        sys.exit(1)
+    if not args.value:
+        print("Error: --value is required", file=sys.stderr)
+        sys.exit(1)
+
+    body = {
+        "target_type": target_type,
+        "target_id": target_id,
+        "kind": args.kind,
+        "value": args.value,
+        "source": args.source or "human",
+    }
+    if args.confidence is not None:
+        body["confidence"] = args.confidence
+    if args.session_id:
+        body["session_id"] = args.session_id
+    if args.target_id_2:
+        body["target_id_2"] = args.target_id_2
+
+    result = fetch_json(f"{base}/api/v2/annotations", method="POST", data=body)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif "error" in result:
+        print(f"Error: {result['error']}", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"  Created annotation #{result.get('id', '?')}")
+        print(format_annotation(result))
+
+
+def cmd_confirm(args):
+    """Set annotation status to confirmed."""
+    _patch_status(args, "confirmed")
+
+
+def cmd_reject(args):
+    """Set annotation status to rejected."""
+    _patch_status(args, "rejected")
+
+
+def cmd_update(args):
+    """Update annotation fields."""
+    base = args.server.rstrip("/")
+    body = {}
+    if args.value is not None:
+        body["value"] = args.value
+    if args.confidence is not None:
+        body["confidence"] = args.confidence
+    if args.status:
+        body["status"] = args.status
+    if args.kind:
+        body["kind"] = args.kind
+
+    if not body:
+        print("Error: No fields to update. Use --value, --confidence, --status, or --kind.", file=sys.stderr)
+        sys.exit(1)
+
+    result = fetch_json(f"{base}/api/v2/annotations/{args.id}", method="PATCH", data=body)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif "error" in result:
+        print(f"Error: {result['error']}", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"  Updated annotation #{args.id}")
+        print(format_annotation(result))
+
+
+def _patch_status(args, status):
+    """Helper to set annotation status."""
+    base = args.server.rstrip("/")
+    result = fetch_json(
+        f"{base}/api/v2/annotations/{args.id}",
+        method="PATCH",
+        data={"status": status},
+    )
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif "error" in result:
+        print(f"Error: {result['error']}", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"  Annotation #{args.id} → {status}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="minard-annotate",
+        description="Create, list, and manage Minard codebase annotations.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  minard-annotate list                                      List all
+  minard-annotate list --module Data.Maybe                  Filter by module
+  minard-annotate list --kind architecture --status proposed Filter by kind+status
+  minard-annotate add --module Data.Maybe --kind architecture --value "Core utility" --source ai
+  minard-annotate add --decl Data.Maybe.fromMaybe --kind summary --value "Unwraps Maybe with default"
+  minard-annotate confirm 1                                 Confirm annotation #1
+  minard-annotate reject 2                                  Reject annotation #2
+  minard-annotate update 1 --value "Updated text" --confidence 1.0
+  minard-annotate --json list                               JSON output
+        """,
+    )
+    parser.add_argument(
+        "--server",
+        default="http://localhost:3000",
+        help="Minard server URL (default: http://localhost:3000)",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Output as JSON"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Command")
+
+    # --- list ---
+    p_list = subparsers.add_parser("list", help="List annotations")
+    p_list.add_argument("--module", help="Filter by module name")
+    p_list.add_argument("--decl", help="Filter by declaration (qualified name)")
+    p_list.add_argument("--package", help="Filter by package name")
+    p_list.add_argument("--target-type", dest="target_type", help="Filter by target type")
+    p_list.add_argument("--target-id", dest="target_id", help="Filter by target id")
+    p_list.add_argument("--kind", help="Filter by annotation kind")
+    p_list.add_argument("--status", help="Filter by status (proposed/confirmed/rejected)")
+    p_list.add_argument("--session-id", dest="session_id", help="Filter by session id")
+
+    # --- add ---
+    p_add = subparsers.add_parser("add", help="Create an annotation")
+    p_add.add_argument("--module", help="Target module name")
+    p_add.add_argument("--decl", help="Target declaration (qualified name)")
+    p_add.add_argument("--package", help="Target package name")
+    p_add.add_argument("--target-type", dest="target_type", help="Target type (if not using --module/--decl/--package)")
+    p_add.add_argument("--target-id", dest="target_id", help="Target id (if not using --module/--decl/--package)")
+    p_add.add_argument("--target-id-2", dest="target_id_2", help="Second target (for relationships)")
+    p_add.add_argument("--kind", required=True, help="Annotation kind (semantic_tag, quality, architecture, relationship, summary, context)")
+    p_add.add_argument("--value", required=True, help="Annotation value/text")
+    p_add.add_argument("--source", default="human", help="Source (human, ai, static_analysis; default: human)")
+    p_add.add_argument("--confidence", type=float, help="Confidence 0.0-1.0 (default: 1.0)")
+    p_add.add_argument("--session-id", dest="session_id", help="Session id for grouping")
+
+    # --- confirm ---
+    p_confirm = subparsers.add_parser("confirm", help="Confirm an annotation")
+    p_confirm.add_argument("id", type=int, help="Annotation ID")
+
+    # --- reject ---
+    p_reject = subparsers.add_parser("reject", help="Reject an annotation")
+    p_reject.add_argument("id", type=int, help="Annotation ID")
+
+    # --- update ---
+    p_update = subparsers.add_parser("update", help="Update annotation fields")
+    p_update.add_argument("id", type=int, help="Annotation ID")
+    p_update.add_argument("--value", help="New value")
+    p_update.add_argument("--confidence", type=float, help="New confidence")
+    p_update.add_argument("--status", help="New status")
+    p_update.add_argument("--kind", help="New kind")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    try:
+        if args.command == "list":
+            cmd_list(args)
+        elif args.command == "add":
+            cmd_add(args)
+        elif args.command == "confirm":
+            cmd_confirm(args)
+        elif args.command == "reject":
+            cmd_reject(args)
+        elif args.command == "update":
+            cmd_update(args)
+    except URLError as e:
+        print(f"Error: Cannot connect to server at {args.server}", file=sys.stderr)
+        print(f"  {e}", file=sys.stderr)
+        print(f"  Is the Minard server running?", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
