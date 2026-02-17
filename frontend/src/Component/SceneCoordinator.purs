@@ -74,7 +74,8 @@ import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromStrin
 import CE2.Viz.DependencyMatrix as DependencyMatrix
 import CE2.Viz.SourceCode as SourceCode
 import Data.Graph.Algorithms (reachableFrom, connectedComponents, labelPropagation) as GraphAlgo
-import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus, PackageReachability, PackageClusters)
+import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus, PackageReachability, PackageClusters, PackagePurity)
+import CE2.Viz.DeclarationArcDiagram (isEffectful) as ArcDiagram
 
 -- FFI declarations for browser history integration
 foreign import pushHistoryState :: String -> String -> Effect Unit
@@ -275,6 +276,10 @@ type State =
     -- Cluster data (lazy computed when Cluster mode activated)
   , clusterData :: Maybe PackageClusters
 
+    -- Purity data (lazy computed when P key peek activated)
+  , purityData :: Maybe PackagePurity
+  , purityPeek :: Boolean
+
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
@@ -314,6 +319,8 @@ data Action
   | ToggleClusterMode                     -- Toggle cluster coloring (connected components)
   | ReachabilityPeekOn                    -- R key pressed - show peek overlay
   | ReachabilityPeekOff                   -- R key released - hide peek overlay
+  | PurityPeekOn                          -- P key pressed - show purity overlay
+  | PurityPeekOff                         -- P key released - hide purity overlay
   -- Search typeahead
   | SearchInput String                    -- User typed in search box
   | SearchResultsReceived Int (Array Loader.UnifiedSearchResult)  -- Results arrived (seqId, results)
@@ -365,6 +372,8 @@ initialState input =
   , reachabilityPeek: false
   , keyboardCleanup: Nothing
   , clusterData: Nothing
+  , purityData: Nothing
+  , purityPeek: false
   , hideInfraLinks: false
   , historyCleanup: Nothing
   , searchQuery: ""
@@ -888,6 +897,8 @@ renderScene state =
                   , reachabilityPeek: state.reachabilityPeek
                   , clusterData: state.clusterData
                   , isAppPackage: fromMaybe false (state.reachabilityData <#> _.isApp)
+                  , purityData: state.purityData
+                  , purityPeek: state.purityPeek
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1047,12 +1058,16 @@ handleAction = case _ of
       case KE.fromEvent e of
         Just ke | key ke == "r" && not (repeat ke) ->
           HS.notify keyListener ReachabilityPeekOn
+        Just ke | key ke == "p" && not (repeat ke) ->
+          HS.notify keyListener PurityPeekOn
         _ -> pure unit
 
     keyupListener <- liftEffect $ ET.eventListener \e ->
       case KE.fromEvent e of
         Just ke | key ke == "r" ->
           HS.notify keyListener ReachabilityPeekOff
+        Just ke | key ke == "p" ->
+          HS.notify keyListener PurityPeekOff
         _ -> pure unit
 
     liftEffect do
@@ -1123,6 +1138,7 @@ handleAction = case _ of
       , capturedPositions = capturedPos
       , reachabilityData = Nothing  -- Clear stale reachability (package-specific)
       , clusterData = Nothing       -- Clear stale cluster data (package-specific)
+      , purityData = Nothing        -- Clear stale purity data (package-specific)
       }
 
     -- Push to browser history (enables back/forward buttons)
@@ -1170,6 +1186,7 @@ handleAction = case _ of
         , focalPackage = Nothing  -- Clear focal when navigating via history
         , reachabilityData = Nothing  -- Clear stale reachability (package-specific)
         , clusterData = Nothing       -- Clear stale cluster data (package-specific)
+        , purityData = Nothing        -- Clear stale purity data (package-specific)
         }
 
       H.raise (SceneChanged targetScene)
@@ -1247,6 +1264,14 @@ handleAction = case _ of
     ModuleSignatureMapViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in signature map: " <> declName
       handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+    ModuleSignatureMapViz.AnnotationStatusChanged annId newStatus -> do
+      log $ "[SceneCoordinator] Annotation " <> show annId <> " -> " <> newStatus
+      void $ liftAff $ Loader.patchAnnotationStatus annId newStatus
+      -- Optimistically update cached annotations
+      state <- H.get
+      let updated = map (map (\a -> if a.id == annId then a { status = newStatus } else a))
+                        state.moduleAnnotations
+      H.modify_ _ { moduleAnnotations = updated }
 
   HandleDeclarationDetailOutput output -> case output of
     DeclarationDetailViz.BackToModuleOverview -> do
@@ -1389,6 +1414,18 @@ handleAction = case _ of
 
   ReachabilityPeekOff -> do
     H.modify_ _ { reachabilityPeek = false }
+
+  PurityPeekOn -> do
+    state <- H.get
+    when (not state.searchOpen) do
+      H.modify_ _ { purityPeek = true }
+      when (state.purityData == Nothing) $ case state.scene of
+        PkgTreemap pkg -> computeAndStorePurityForPeek pkg
+        PkgModuleBeeswarm pkg -> computeAndStorePurityForPeek pkg
+        _ -> pure unit
+
+  PurityPeekOff -> do
+    H.modify_ _ { purityPeek = false }
 
   -- =========================================================================
   -- Search Typeahead Actions
@@ -2098,4 +2135,24 @@ computeAndStoreReachabilityForPeek pkg = do
           <> show (Set.size reach.reachable) <> " reachable, "
           <> show (Set.size reach.entryPoints) <> " entry points"
       H.modify_ _ { reachabilityData = Just reach }
+    Nothing -> pure unit
+
+-- | Helper: compute and store purity data for peek overlay
+computeAndStorePurityForPeek :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
+computeAndStorePurityForPeek pkg = do
+  state <- H.get
+  case state.v2Data of
+    Just v2 -> do
+      let pkgModules = Array.filter (\m -> m.package.name == pkg) v2.modules
+          modulePurity = Map.fromFoldable $ pkgModules <#> \m ->
+            let
+              decls = fromMaybe [] $ Map.lookup m.id state.packageDeclarations
+              valueDecls = Array.filter (\d -> d.kind == "value" && d.typeSignature /= Nothing) decls
+              effectfulCount = Array.length $ Array.filter (\d -> ArcDiagram.isEffectful d.typeSignature) valueDecls
+              totalCount = Array.length valueDecls
+            in Tuple m.name { effectfulCount, totalCount }
+          purity = { modulePurity, packageName: pkg }
+      log $ "[SceneCoordinator] Purity for " <> pkg <> ": "
+          <> show (Map.size modulePurity) <> " modules analyzed"
+      H.modify_ _ { purityData = Just purity }
     Nothing -> pure unit

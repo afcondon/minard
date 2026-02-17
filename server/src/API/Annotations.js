@@ -69,6 +69,104 @@ export const validateCreateFields = (body) => {
 };
 
 // =============================================================================
+// Report Builder
+// =============================================================================
+
+// Build a markdown codebase report from annotation rows and module stats rows.
+// annotationRows: array of { target_type, target_id, kind, value, status, source, confidence, package_name, module_name }
+// moduleStatsRows: array of { module_name, package_name, decl_count, loc }
+export const buildReportMarkdown = (annotationRows) => (moduleStatsRows) => {
+  const today = new Date().toISOString().split('T')[0];
+  const lines = [];
+  lines.push('# Codebase Report');
+  lines.push(`*Generated ${today}*`);
+  lines.push('');
+
+  // Build module stats lookup: package -> module -> { decl_count, loc }
+  const moduleStats = {};
+  for (const row of moduleStatsRows || []) {
+    const pkg = row.package_name || 'unknown';
+    const mod = row.module_name || 'unknown';
+    if (!moduleStats[pkg]) moduleStats[pkg] = {};
+    moduleStats[pkg][mod] = {
+      declCount: Number(row.decl_count) || 0,
+      loc: Number(row.loc) || 0
+    };
+  }
+
+  // Group annotations: package -> module -> kind -> [annotations]
+  const tree = {};
+  for (const row of annotationRows || []) {
+    const pkg = row.package_name || 'unknown';
+    const mod = row.target_id || 'unknown';
+    const kind = row.kind || 'uncategorized';
+    if (!tree[pkg]) tree[pkg] = {};
+    if (!tree[pkg][mod]) tree[pkg][mod] = {};
+    if (!tree[pkg][mod][kind]) tree[pkg][mod][kind] = [];
+    tree[pkg][mod][kind].push({
+      value: row.value,
+      status: row.status || 'proposed',
+      source: row.source || '',
+      confidence: row.confidence != null ? Number(row.confidence) : 1.0
+    });
+  }
+
+  const statusIcon = (s) => {
+    switch (s) {
+      case 'confirmed': return '\u2713';
+      case 'rejected': return '\u2717';
+      case 'stale': return '\u26a0';
+      default: return '\u2022';
+    }
+  };
+
+  const packages = Object.keys(tree).sort();
+  for (const pkg of packages) {
+    lines.push(`## Package: ${pkg}`);
+    lines.push('');
+
+    const modules = Object.keys(tree[pkg]).sort();
+    for (const mod of modules) {
+      const stats = (moduleStats[pkg] && moduleStats[pkg][mod]) || {};
+      const declStr = stats.declCount != null ? `${stats.declCount} declarations` : '';
+      const locStr = stats.loc ? `${stats.loc} LOC` : '';
+      const statsStr = [declStr, locStr].filter(Boolean).join(', ');
+      const header = statsStr ? `### ${mod} (${statsStr})` : `### ${mod}`;
+      lines.push(header);
+      lines.push('');
+
+      const kinds = Object.keys(tree[pkg][mod]).sort();
+      for (const kind of kinds) {
+        lines.push(`**${kind}**`);
+        for (const ann of tree[pkg][mod][kind]) {
+          const icon = statusIcon(ann.status);
+          const tag = ann.status !== 'proposed' ? ` [${ann.status}]` : '';
+          lines.push(`- ${icon} ${ann.value}${tag}`);
+        }
+        lines.push('');
+      }
+    }
+  }
+
+  // Summary stats
+  const total = (annotationRows || []).length;
+  const byStatus = {};
+  for (const row of annotationRows || []) {
+    const s = row.status || 'proposed';
+    byStatus[s] = (byStatus[s] || 0) + 1;
+  }
+  lines.push('---');
+  lines.push('');
+  lines.push(`**Total annotations:** ${total}`);
+  const statusParts = Object.entries(byStatus).map(([s, c]) => `${c} ${s}`);
+  if (statusParts.length > 0) {
+    lines.push(`**By status:** ${statusParts.join(', ')}`);
+  }
+
+  return lines.join('\n');
+};
+
+// =============================================================================
 // Update SQL Builder
 // =============================================================================
 

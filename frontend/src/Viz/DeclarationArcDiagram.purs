@@ -8,18 +8,23 @@ module CE2.Viz.DeclarationArcDiagram
   , ArcNode
   , ArcEdge
   , computeLayout
+  , heatColor
+  , isEffectful
   ) where
 
 import Prelude
 
 import Data.Array as Array
 import Data.Foldable (foldMap)
-import Data.Int (toNumber)
+import Data.Int (round, toNumber)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Number (abs) as Num
+import Data.Number (abs, sqrt) as Num
 import Data.Set as Set
+import Data.String.Common (split) as Str
+import Data.String.CodeUnits as SCU
+import Data.String.Pattern (Pattern(..))
 import Data.Tuple (Tuple(..))
 
 import CE2.Data.Loader (V2Declaration, V2FunctionCall)
@@ -33,6 +38,8 @@ type ArcNode =
   , kind :: String
   , x :: Number
   , sourceLine :: Int
+  , heat :: Number  -- 0.0 (cold) to 1.0 (hot), based on in-degree
+  , effectful :: Boolean  -- return type is Effect, Aff, ST, HalogenM, etc.
   }
 
 type ArcEdge =
@@ -43,6 +50,7 @@ type ArcEdge =
   , arcHeight :: Number
   , count :: Int
   , pathD :: String
+  , color :: String  -- heat color of the destination node
   }
 
 type ArcLayout =
@@ -76,6 +84,10 @@ computeLayout { moduleName, declarations, functionCalls, layoutWidth } =
     declLineMap :: Map String Int
     declLineMap = Map.fromFoldable $
       declarations # map (\d -> Tuple d.name (declSourceLine d))
+
+    declSigMap :: Map String (Maybe String)
+    declSigMap = Map.fromFoldable $
+      declarations # map (\d -> Tuple d.name d.typeSignature)
 
     -- Extract intra-module calls: flatten all calls, keep only calls belonging
     -- to this module (calleeModule matches moduleName for intra-module calls),
@@ -116,18 +128,38 @@ computeLayout { moduleName, declarations, functionCalls, layoutWidth } =
         spacing = if nodeCount <= 1 then 0.0
                   else usableWidth / toNumber (nodeCount - 1)
 
+        -- Compute in-degree (number of callers) per node
+        inDegreeMap :: Map String Int
+        inDegreeMap = Array.foldl (\m c ->
+          Map.insertWith add c.to 1 m) Map.empty intraCalls
+
+        maxInDeg = toNumber $ Array.foldl (\mx c ->
+          max mx (fromMaybe 0 (Map.lookup c.to inDegreeMap))) 1 intraCalls
+
+        nodeHeat :: String -> Number
+        nodeHeat name =
+          let deg = toNumber $ fromMaybe 0 (Map.lookup name inDegreeMap)
+          in if maxInDeg <= 1.0 then 0.0
+             else let r = deg / maxInDeg in r * r
+
         nodes :: Array ArcNode
         nodes = Array.mapWithIndex (\i name ->
           { name
           , kind: fromMaybe "value" (Map.lookup name declKindMap)
           , x: padding + toNumber i * spacing
           , sourceLine: fromMaybe 0 (Map.lookup name declLineMap)
+          , heat: nodeHeat name
+          , effectful: isEffectful (join (Map.lookup name declSigMap))
           }) sorted
 
-        -- Build name -> x position map
+        -- Build name -> x position map and heat map
         nodeXMap :: Map String Number
         nodeXMap = Map.fromFoldable $
           nodes # map (\n -> Tuple n.name n.x)
+
+        nodeHeatMap :: Map String Number
+        nodeHeatMap = Map.fromFoldable $
+          nodes # map (\n -> Tuple n.name n.heat)
 
         -- Baseline sits below arcs, with room for labels below
         labelSpace = 80.0
@@ -146,6 +178,7 @@ computeLayout { moduleName, declarations, functionCalls, layoutWidth } =
                 pathD = "M " <> show fx <> " " <> show baseY
                      <> " Q " <> show midX <> " " <> show (baseY - arcH)
                      <> " " <> show tx <> " " <> show baseY
+                destHeat = fromMaybe 0.0 (Map.lookup c.to nodeHeatMap)
               in Just
                 { fromName: c.from
                 , toName: c.to
@@ -154,6 +187,7 @@ computeLayout { moduleName, declarations, functionCalls, layoutWidth } =
                 , arcHeight: arcH
                 , count: c.count
                 , pathD
+                , color: heatColor destHeat
                 }
             _ -> Nothing
           )
@@ -169,6 +203,36 @@ declSourceLine :: V2Declaration -> Int
 declSourceLine d = case d.sourceSpan of
   Just ss -> fromMaybe 0 (Array.index ss.start 0)
   Nothing -> 0
+
+-- | Does a type signature's return type start with a known effectful constructor?
+isEffectful :: Maybe String -> Boolean
+isEffectful Nothing = false
+isEffectful (Just sig) =
+  let segments = Str.split (Pattern " -> ") sig
+      ret = fromMaybe "" (Array.last segments)
+      prefixes = ["Effect ", "Effect\n", "Aff ", "Aff\n", "ST ", "HalogenM ", "H.HalogenM ", "MonadEffect ", "MonadAff "]
+      exact = ["Effect", "Aff"]
+  in Array.any (\p -> SCU.take (SCU.length p) ret == p) prefixes
+     || Array.any (\e -> ret == e) exact
+
+-- | Map a heat value (0.0–1.0) to a color on a cool→hot ramp.
+-- | 0.0 = slate (#94a3b8), 0.5 = amber (#d97706), 1.0 = red (#dc2626).
+heatColor :: Number -> String
+heatColor t
+  | t <= 0.0 = "rgb(148,163,184)"  -- slate-400
+  | t >= 1.0 = "rgb(220,38,38)"    -- red-600
+  | t <= 0.5 =
+      let f = t * 2.0  -- 0→1 over first half
+          r = round (148.0 + (217.0 - 148.0) * f)
+          g = round (163.0 + (119.0 - 163.0) * f)
+          b = round (184.0 + (6.0 - 184.0) * f)
+      in "rgb(" <> show r <> "," <> show g <> "," <> show b <> ")"
+  | otherwise =
+      let f = (t - 0.5) * 2.0  -- 0→1 over second half
+          r = round (217.0 + (220.0 - 217.0) * f)
+          g = round (119.0 + (38.0 - 119.0) * f)
+          b = round (6.0 + (38.0 - 6.0) * f)
+      in "rgb(" <> show r <> "," <> show g <> "," <> show b <> ")"
 
 -- | Deduplicate calls by (from, to), summing counts.
 deduplicateCalls

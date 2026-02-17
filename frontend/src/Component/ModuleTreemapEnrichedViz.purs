@@ -29,7 +29,7 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Types (ColorMode, PackageReachability, PackageClusters)
+import CE2.Types (ColorMode, PackageReachability, PackageClusters, PackagePurity)
 import CE2.Viz.ModuleTreemapEnriched as ModuleTreemapEnriched
 
 -- =============================================================================
@@ -49,6 +49,8 @@ type Input =
   , reachabilityPeek :: Boolean              -- True while R key held (show overlay)
   , clusterData :: Maybe PackageClusters     -- For cluster coloring
   , isAppPackage :: Boolean                  -- True for app packages (Main entry point)
+  , purityData :: Maybe PackagePurity        -- For purity peek overlay
+  , purityPeek :: Boolean                    -- True while P key held (show overlay)
   }
 
 -- | Output to parent
@@ -154,11 +156,13 @@ handleAction = case _ of
         reachabilityChanged = (input.reachabilityData <#> _.packageName) /= (lastInput.reachabilityData <#> _.packageName)
         peekChanged = input.reachabilityPeek /= lastInput.reachabilityPeek
         clusterChanged = (input.clusterData <#> _.packageName) /= (lastInput.clusterData <#> _.packageName)
+        purityChanged = (input.purityData <#> _.packageName) /= (lastInput.purityData <#> _.packageName)
+        purityPeekChanged = input.purityPeek /= lastInput.purityPeek
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
-    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged || reachabilityChanged || peekChanged || clusterChanged) do
+    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged || reachabilityChanged || peekChanged || clusterChanged || purityChanged || purityPeekChanged) do
       log $ "[ModuleTreemapEnrichedViz] Input changed, re-rendering"
       renderTreemap input
 
@@ -205,6 +209,8 @@ renderTreemap input = do
     , reachabilityPeek: input.reachabilityPeek
     , clusterData: input.clusterData
     , isAppPackage: input.isAppPackage
+    , purityData: input.purityData
+    , purityPeek: input.purityPeek
     }
     pkgModules
     pkgImports

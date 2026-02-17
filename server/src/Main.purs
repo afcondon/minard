@@ -57,6 +57,7 @@ data Route
   -- Annotations
   | V2Annotations        -- GET (list/filter) and POST (create)
   | V2Annotation Int     -- GET (single) and PATCH (update)
+  | V2Report             -- GET markdown codebase report
   -- Health
   | Health
 
@@ -87,6 +88,7 @@ route = root $ sum
   , "V2GetModuleSource": path "api/v2/module-source" noArgs
   , "V2Annotations": path "api/v2/annotations" noArgs
   , "V2Annotation": path "api/v2/annotations" (int segment)
+  , "V2Report": path "api/v2/report" noArgs
   , "Health": path "health" noArgs
   }
 
@@ -154,6 +156,7 @@ main = launchAff_ do
     log "  GET /api/v2/module-source?module=         - Read module .purs source file"
     log "  GET/POST /api/v2/annotations             - List/create annotations"
     log "  GET/PATCH /api/v2/annotations/:id        - Get/update annotation"
+    log "  GET /api/v2/report                       - Markdown codebase report"
     log "  GET /health                              - Health check"
   where
   corsHeaders = headers { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
@@ -203,4 +206,5 @@ main = launchAff_ do
         Annotations.update db annId bodyStr
       Options -> ok' corsHeaders ""
       _ -> ok "{ \"error\": \"Method not allowed\" }"
+    V2Report -> Annotations.report db
     Health -> ok "OK"

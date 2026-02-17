@@ -8,6 +8,7 @@ module API.Annotations
   , get
   , create
   , update
+  , report
   ) where
 
 import Prelude
@@ -27,12 +28,17 @@ import HTTPurple.Status as Status
 jsonHeaders :: ResponseHeaders
 jsonHeaders = headers { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
 
+-- | Markdown content type header with CORS
+markdownHeaders :: ResponseHeaders
+markdownHeaders = headers { "Content-Type": "text/markdown; charset=utf-8", "Access-Control-Allow-Origin": "*" }
+
 -- =============================================================================
 -- FFI Imports
 -- =============================================================================
 
 foreign import buildAnnotationsJson :: Array Foreign -> String
 foreign import buildAnnotationJson :: Foreign -> String
+foreign import buildReportMarkdown :: Array Foreign -> Array Foreign -> String
 foreign import parseAnnotationBody :: String -> Nullable Foreign
 foreign import validateCreateFields :: Foreign -> Nullable
   { target_type :: String
@@ -144,3 +150,28 @@ update db annId bodyStr =
           case firstRow rows of
             Nothing -> notFound
             Just row -> ok' jsonHeaders (buildAnnotationJson row)
+
+-- =============================================================================
+-- GET /api/v2/report
+-- =============================================================================
+
+-- | Generate a markdown codebase report with all annotations and module stats
+report :: Database -> Aff Response
+report db = do
+  annotationRows <- queryAll db """
+    SELECT a.*, m.name as module_name, pv.name as package_name
+    FROM annotations a
+    LEFT JOIN modules m ON a.target_type = 'module' AND a.target_id = m.name
+    LEFT JOIN package_versions pv ON m.package_version_id = pv.id
+    ORDER BY pv.name, a.target_id, a.kind
+  """
+  moduleStatsRows <- queryAll db """
+    SELECT m.name as module_name, pv.name as package_name,
+           COUNT(d.id) as decl_count, COALESCE(m.loc, 0) as loc
+    FROM modules m
+    JOIN package_versions pv ON m.package_version_id = pv.id
+    LEFT JOIN declarations d ON d.module_id = m.id
+    GROUP BY m.id, m.name, pv.name, m.loc
+    ORDER BY pv.name, m.name
+  """
+  ok' markdownHeaders (buildReportMarkdown annotationRows moduleStatsRows)

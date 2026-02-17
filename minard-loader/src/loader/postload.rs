@@ -1,4 +1,5 @@
 use duckdb::{params, Connection};
+use sha2::{Sha256, Digest};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
@@ -514,4 +515,127 @@ pub fn update_coupling_metrics(conn: &Connection, package_version_id: i64) -> Re
     )?;
 
     Ok(efferent)
+}
+
+/// Snapshot existing content hashes for workspace modules before data deletion.
+/// Returns a map of module_name -> content_hash for later comparison.
+pub fn snapshot_content_hashes(conn: &Connection, workspace_pkg_ids: &[i64]) -> HashMap<String, String> {
+    let mut hashes = HashMap::new();
+    for &pkg_id in workspace_pkg_ids {
+        let mut stmt = match conn.prepare(
+            "SELECT m.name, mm.content_hash FROM module_metrics mm
+             JOIN modules m ON m.id = mm.module_id
+             WHERE m.package_version_id = ? AND mm.content_hash IS NOT NULL",
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut rows = match stmt.query(params![pkg_id]) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        while let Ok(Some(row)) = rows.next() {
+            let name: String = row.get(0).unwrap_or_default();
+            let hash: String = row.get(1).unwrap_or_default();
+            if !name.is_empty() && !hash.is_empty() {
+                hashes.insert(name, hash);
+            }
+        }
+    }
+    hashes
+}
+
+/// Compute content hashes for all modules in a workspace package.
+/// Hash is SHA-256 of sorted declarations: "kind:name:signature\n" per declaration.
+pub fn compute_content_hashes(conn: &Connection, package_version_id: i64) -> Result<usize> {
+    // Get all declarations grouped by module
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.name, d.kind, d.name, COALESCE(d.signature, '')
+         FROM modules m
+         JOIN declarations d ON d.module_id = m.id
+         WHERE m.package_version_id = ?
+         ORDER BY m.id, d.name",
+    )?;
+
+    let mut rows = stmt.query(params![package_version_id])?;
+
+    // Build module_id -> (module_name, declarations_text)
+    let mut modules: HashMap<i64, (String, Vec<String>)> = HashMap::new();
+    while let Some(row) = rows.next()? {
+        let module_id: i64 = row.get(0)?;
+        let module_name: String = row.get(1)?;
+        let kind: String = row.get(2)?;
+        let name: String = row.get(3)?;
+        let sig: String = row.get(4)?;
+        let entry = modules
+            .entry(module_id)
+            .or_insert_with(|| (module_name, Vec::new()));
+        entry.1.push(format!("{}:{}:{}", kind, name, sig));
+    }
+
+    let mut updated = 0;
+    for (module_id, (_name, mut decl_lines)) in modules {
+        decl_lines.sort();
+        let content = decl_lines.join("\n");
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+
+        conn.execute(
+            "UPDATE module_metrics SET content_hash = ? WHERE module_id = ?",
+            params![hash, module_id],
+        )?;
+        updated += 1;
+    }
+
+    Ok(updated)
+}
+
+/// Detect modules whose content hash changed and mark their annotations as stale.
+/// Compares old_hashes (from before reload) with current content_hash values.
+pub fn detect_and_mark_stale_annotations(
+    conn: &Connection,
+    workspace_pkg_ids: &[i64],
+    old_hashes: &HashMap<String, String>,
+) -> Result<usize> {
+    if old_hashes.is_empty() {
+        return Ok(0);
+    }
+
+    // Get current hashes
+    let mut current_hashes: HashMap<String, String> = HashMap::new();
+    for &pkg_id in workspace_pkg_ids {
+        let mut stmt = conn.prepare(
+            "SELECT m.name, mm.content_hash FROM module_metrics mm
+             JOIN modules m ON m.id = mm.module_id
+             WHERE m.package_version_id = ? AND mm.content_hash IS NOT NULL",
+        )?;
+        let mut rows = stmt.query(params![pkg_id])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(0)?;
+            let hash: String = row.get(1)?;
+            current_hashes.insert(name, hash);
+        }
+    }
+
+    // Find changed modules
+    let mut stale_count = 0;
+    for (module_name, old_hash) in old_hashes {
+        let changed = match current_hashes.get(module_name) {
+            Some(new_hash) => new_hash != old_hash,
+            None => true, // Module removed
+        };
+        if changed {
+            let updated = conn.execute(
+                "UPDATE annotations SET status = 'stale'
+                 WHERE status IN ('proposed', 'confirmed')
+                   AND target_type = 'module'
+                   AND target_id = ?",
+                params![module_name],
+            )?;
+            stale_count += updated;
+        }
+    }
+
+    Ok(stale_count)
 }

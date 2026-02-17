@@ -32,7 +32,7 @@ import Prelude
 
 import Data.Array as Array
 import Data.Foldable (foldl)
-import Data.Int (toNumber, floor)
+import Data.Int (toNumber, floor, round)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
@@ -57,7 +57,7 @@ import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreema
 import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
 import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall, GitStatusData)
-import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor, PackageReachability, PackageClusters, ReachabilityStatus(..), getModuleReachability)
+import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor, PackageReachability, PackageClusters, PackagePurity, ReachabilityStatus(..), getModuleReachability)
 
 -- =============================================================================
 -- Types
@@ -77,6 +77,8 @@ type Config =
   , reachabilityPeek :: Boolean  -- True while R key held (show text overlay)
   , clusterData :: Maybe PackageClusters  -- Cluster data for ClusterView coloring
   , isAppPackage :: Boolean      -- True for app packages (peek labels differ)
+  , purityData :: Maybe PackagePurity  -- Purity data for purity peek overlay
+  , purityPeek :: Boolean        -- True while P key held (show purity overlay)
   }
 
 -- | Module with computed treemap position
@@ -876,6 +878,60 @@ enrichedModuleCell config m =
                   ]
                   []
               -- Status label centered
+              , elem Text
+                  [ thunkedNum "x" (m.width / 2.0)
+                  , thunkedNum "y" (m.height / 2.0)
+                  , staticStr "text-anchor" "middle"
+                  , staticStr "dominant-baseline" "middle"
+                  , thunkedStr "font-size" fontSize
+                  , thunkedStr "fill" peekTextColor
+                  , staticStr "font-weight" "bold"
+                  , staticStr "font-family" "system-ui, sans-serif"
+                  , staticStr "pointer-events" "none"
+                  , thunkedStr "textContent" peekLabel
+                  ]
+                  []
+              ]
+        else
+          elem Group [] []  -- Empty placeholder
+
+      -- Purity peek overlay (visible when P key held)
+      , if config.purityPeek then
+          let
+            mPurity = config.purityData >>= \pd -> Map.lookup m.name pd.modulePurity
+            peekLabel = case mPurity of
+              Nothing -> ""
+              Just p
+                | p.totalCount == 0 -> "no values"
+                | p.effectfulCount == 0 -> "pure"
+                | p.effectfulCount == p.totalCount -> "all effectful"
+                | otherwise -> show p.effectfulCount <> "/" <> show p.totalCount <> " effectful"
+            ratio = case mPurity of
+              Just p | p.totalCount > 0 -> toNumber p.effectfulCount / toNumber p.totalCount
+              _ -> 0.0
+            -- Interpolate blue (pure) → amber (effectful)
+            r = round (37.0 + (217.0 - 37.0) * ratio)
+            g = round (99.0 + (119.0 - 99.0) * ratio)
+            b = round (235.0 + (6.0 - 235.0) * ratio)
+            peekBgColor = "rgba(" <> show r <> "," <> show g <> "," <> show b <> ",0.6)"
+            peekTextColor = "white"
+            fontSize = if m.width > 80.0 then "11" else if m.width > 50.0 then "9" else "7"
+            visible = m.width > 25.0 && m.height > 20.0
+          in
+            elem Group
+              [ staticStr "class" "purity-peek-overlay"
+              , thunkedStr "opacity" (if visible then "1" else "0")
+              ]
+              [ elem Rect
+                  [ staticStr "x" "0"
+                  , staticStr "y" "0"
+                  , thunkedNum "width" m.width
+                  , thunkedNum "height" m.height
+                  , thunkedStr "fill" peekBgColor
+                  , staticStr "rx" "2"
+                  , staticStr "pointer-events" "none"
+                  ]
+                  []
               , elem Text
                   [ thunkedNum "x" (m.width / 2.0)
                   , thunkedNum "y" (m.height / 2.0)

@@ -17,6 +17,7 @@ use crate::db::{
 use super::postload::{
     compute_topo_layers, insert_module_imports, insert_function_calls, collect_git_data,
     update_module_metrics, update_coupling_metrics, resolve_import_module_ids,
+    snapshot_content_hashes, compute_content_hashes, detect_and_mark_stale_annotations,
 };
 use crate::error::Result;
 use crate::git::get_git_info;
@@ -212,6 +213,14 @@ impl LoadPipeline {
             .keys()
             .cloned()
             .collect();
+
+        // Snapshot content hashes before deletion for stale annotation detection.
+        // Build temporary list of existing workspace package IDs from pkg_id_map.
+        let old_ws_pkg_ids: Vec<i64> = package_versions.iter()
+            .filter(|pkg| workspace_names.contains(&pkg.name))
+            .filter_map(|pkg| pkg_id_map.get(&(pkg.name.clone(), pkg.version.clone())).copied())
+            .collect();
+        let old_content_hashes = snapshot_content_hashes(conn, &old_ws_pkg_ids);
 
         // Track which packages are new vs reused
         // Workspace packages are always reloaded (source code may have changed)
@@ -585,6 +594,25 @@ impl LoadPipeline {
         }
 
         timer.lap("metrics");
+
+        // Phase 9b: Compute content hashes and detect stale annotations
+        progress.set_message("Computing content hashes...");
+        for &ws_pkg_id in &workspace_pkg_ids {
+            let _ = compute_content_hashes(conn, ws_pkg_id);
+        }
+        if !old_content_hashes.is_empty() {
+            match detect_and_mark_stale_annotations(conn, &workspace_pkg_ids, &old_content_hashes) {
+                Ok(stale_count) if stale_count > 0 => {
+                    if self.verbose {
+                        eprintln!("  Marked {} annotations as stale", stale_count);
+                    }
+                }
+                Err(e) if self.verbose => eprintln!("Warning: Stale detection failed: {}", e),
+                _ => {}
+            }
+        }
+
+        timer.lap("content hashes + stale detection");
 
         // Phase 10: Compute topological layers
         progress.set_message("Computing topological layers...");

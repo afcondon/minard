@@ -56,6 +56,7 @@ type Input =
 
 data Output
   = DeclarationClicked String String String  -- pkg, mod, decl
+  | AnnotationStatusChanged Int String       -- annId, newStatus
 
 type Slot = H.Slot Query Output
 
@@ -82,6 +83,8 @@ data Action
   | ArcNodeClicked String
   | ScrollToLanes
   | OpenInEditor
+  | ConfirmAnnotation Int
+  | DisputeAnnotation Int
 
 -- =============================================================================
 -- Component
@@ -190,7 +193,7 @@ renderArcEdge state _layout edge =
     svgElem "path"
       [ sa "d" edge.pathD
       , sa "fill" "none"
-      , sa "stroke" "#94a3b8"
+      , sa "stroke" edge.color
       , sa "stroke-width" (show strokeW)
       , sa "opacity" opacity
       , HP.style "transition: opacity 150ms ease;"
@@ -206,8 +209,8 @@ renderArcNode state layout node =
       Just hovered -> hovered == node.name || nodeConnected hovered node.name state.arcLayout
     r = if isHovered then "6" else "4"
     opacity = if isConnected then "1" else "0.2"
-    fillColor = MSM.kindBorder node.kind
-    strokeColor = MSM.kindAccent node.kind
+    fillColor = ArcDiagram.heatColor node.heat
+    strokeColor = ArcDiagram.heatColor (Num.min 1.0 (node.heat + 0.15))
   in
     svgElem "circle"
       [ sa "cx" (show node.x)
@@ -233,6 +236,7 @@ renderArcLabel state layout node =
     opacity = if isConnected then "1" else "0.15"
     label = if SCU.length node.name > 16 then SCU.take 15 node.name <> "\x2026" else node.name
     labelY = layout.baselineY + 10.0
+    labelColor = if node.effectful then "#d97706" else "#2563eb"
   in
     svgElem "text"
       [ sa "x" (show node.x)
@@ -240,7 +244,7 @@ renderArcLabel state layout node =
       , sa "text-anchor" "start"
       , sa "font-family" "'Fira Code', 'SF Mono', monospace"
       , sa "font-size" "8"
-      , sa "fill" "#666"
+      , sa "fill" labelColor
       , sa "opacity" opacity
       , sa "transform" ("rotate(45 " <> show node.x <> " " <> show labelY <> ")")
       , HP.style "transition: opacity 150ms ease; cursor: pointer; user-select: none;"
@@ -289,8 +293,9 @@ renderAnnotationHeader anns cells =
   [ HH.div
       [ HP.style "margin-bottom: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0;" ]
       (Array.mapWithIndex (\annIdx ann ->
-        HH.div
-          [ HP.style "padding: 10px 16px; border-right: 1px solid #e0e0e0; overflow-wrap: break-word;" ]
+        let borderColor = statusBorderColor ann.status
+        in HH.div
+          [ HP.style $ "padding: 10px 16px; border-right: 1px solid #e0e0e0; border-left: 3px solid " <> borderColor <> "; overflow-wrap: break-word;" ]
           [ HH.div
               [ HP.style "font-weight: 600; color: #999; text-transform: uppercase; font-size: 9px; letter-spacing: 1px; margin-bottom: 6px;" ]
               [ HH.text ann.kind ]
@@ -301,10 +306,51 @@ renderAnnotationHeader anns cells =
                   [ HP.style "margin-bottom: 3px;" ]
                   (annotateText annIdx sentence cells)
               )
+          , renderAnnotationFooter ann
           ]
       ) sorted)
   , HH.div [ HP.style "border-bottom: 2px solid #e0e0e0; margin: 8px 0 16px 0;" ] []
   ]
+
+-- | Border color based on annotation status
+statusBorderColor :: String -> String
+statusBorderColor = case _ of
+  "confirmed" -> "#4caf50"
+  "rejected"  -> "#e53935"
+  "stale"     -> "#f57c00"
+  _           -> "#bdbdbd"
+
+-- | Status-dependent footer for an annotation card
+renderAnnotationFooter :: forall m. Loader.V2Annotation -> H.ComponentHTML Action () m
+renderAnnotationFooter ann = case ann.status of
+  "proposed" ->
+    HH.div
+      [ HP.style "margin-top: 6px; display: flex; gap: 8px;" ]
+      [ HH.span
+          [ HP.style "font-family: 'Fira Code', monospace; font-size: 9px; color: #4caf50; cursor: pointer; padding: 1px 6px; border: 1px solid #4caf50; border-radius: 2px;"
+          , HE.onClick \_ -> ConfirmAnnotation ann.id
+          ]
+          [ HH.text "Confirm" ]
+      , HH.span
+          [ HP.style "font-family: 'Fira Code', monospace; font-size: 9px; color: #e53935; cursor: pointer; padding: 1px 6px; border: 1px solid #e53935; border-radius: 2px;"
+          , HE.onClick \_ -> DisputeAnnotation ann.id
+          ]
+          [ HH.text "Dispute" ]
+      ]
+  "confirmed" ->
+    HH.div
+      [ HP.style "margin-top: 6px; font-family: 'Fira Code', monospace; font-size: 9px; color: #4caf50;" ]
+      [ HH.text "\x2713 Confirmed" ]
+  "rejected" ->
+    HH.div
+      [ HP.style "margin-top: 6px; font-family: 'Fira Code', monospace; font-size: 9px; color: #e53935;" ]
+      [ HH.text "\x2717 Disputed" ]
+  "stale" ->
+    HH.div
+      [ HP.style "margin-top: 6px; font-family: 'Fira Code', monospace; font-size: 9px; color: #f57c00;" ]
+      [ HH.text "\x26a0 May be outdated" ]
+  _ ->
+    HH.div [] []
 
 -- | Split annotation text into sentences (on ". " boundaries).
 -- | Preserves trailing periods on each sentence.
@@ -512,6 +558,12 @@ handleAction = case _ of
   OpenInEditor -> do
     state <- H.get
     log $ "[ModuleSignatureMapViz] Open in editor (stub): " <> state.lastInput.moduleName
+
+  ConfirmAnnotation annId -> do
+    H.raise (AnnotationStatusChanged annId "confirmed")
+
+  DisputeAnnotation annId -> do
+    H.raise (AnnotationStatusChanged annId "rejected")
 
 -- | Prepare cells, group into lanes, compute arc layout, then update state.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit

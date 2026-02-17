@@ -500,6 +500,22 @@ type PackageClusters =
   , packageName :: String
   }
 
+-- =============================================================================
+-- Purity Data (for purity peek overlay)
+-- =============================================================================
+
+-- | Per-module purity stats (only "value" declarations with a type signature)
+type ModulePurity =
+  { effectfulCount :: Int
+  , totalCount :: Int
+  }
+
+-- | Package-level purity: module name -> purity stats
+type PackagePurity =
+  { modulePurity :: Map String ModulePurity
+  , packageName :: String
+  }
+
 -- | Short display name for reachability status
 showReachabilityStatus :: ReachabilityStatus -> String
 showReachabilityStatus EntryPoint = "entry point"

@@ -242,7 +242,8 @@ CREATE TABLE IF NOT EXISTS module_metrics (
     instability         REAL,
     normalized_commits  REAL,
     normalized_authors  REAL,
-    normalized_coupling REAL
+    normalized_coupling REAL,
+    content_hash        VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS declaration_metrics (
@@ -435,6 +436,20 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA_SQL)?;
     // Views created separately to handle DuckDB quirks
     conn.execute_batch(VIEWS_SQL)?;
+    // Migrations for existing databases
+    run_migrations(conn)?;
+    Ok(())
+}
+
+/// Run forward-compatible migrations for schema additions
+fn run_migrations(conn: &Connection) -> Result<()> {
+    // Add content_hash column to module_metrics if it doesn't exist
+    let has_content_hash = conn
+        .prepare("SELECT content_hash FROM module_metrics LIMIT 0")
+        .is_ok();
+    if !has_content_hash {
+        conn.execute_batch("ALTER TABLE module_metrics ADD COLUMN content_hash VARCHAR")?;
+    }
     Ok(())
 }
 

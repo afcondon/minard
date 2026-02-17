@@ -70,11 +70,13 @@ module CE2.Data.Loader
     -- Annotations
   , V2Annotation
   , fetchModuleAnnotations
+  , patchAnnotationStatus
   ) where
 
 import Prelude
 
 import Affjax.Web as AW
+import Affjax.RequestBody as RequestBody
 import Affjax.ResponseFormat as ResponseFormat
 import Data.Argonaut.Core (Json)
 import Data.Argonaut.Decode (decodeJson, printJsonDecodeError)
@@ -2084,3 +2086,13 @@ fetchModuleAnnotations moduleName = do
     json <- result
     response :: V2AnnotationsResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right response.annotations
+
+-- | Update an annotation's status (confirm/dispute)
+patchAnnotationStatus :: Int -> String -> Aff (Either String Unit)
+patchAnnotationStatus annId newStatus = do
+  let url = apiBaseUrl <> "/api/v2/annotations/" <> show annId
+      body = RequestBody.string ("{\"status\":\"" <> newStatus <> "\"}")
+  result <- AW.patch ResponseFormat.json url body
+  pure $ case result of
+    Left err -> Left $ "PATCH error: " <> AW.printError err
+    Right _ -> Right unit
