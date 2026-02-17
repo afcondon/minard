@@ -3,7 +3,14 @@
 -- | Preserves the original API surface for backward compatibility while
 -- | delegating all rendering to the standalone library.
 module CE2.Viz.SignatureTree
-  ( renderSignatureInto
+  ( renderSignature
+  , renderSiglet
+  , renderDataDecl
+  , renderClassDecl
+  , renderTypeSynonym
+  , renderForeignImport
+  , renderSignatureInto
+  , renderSigletInto
   , renderDataDeclInto
   , renderClassDeclInto
   , renderTypeSynonymInto
@@ -19,6 +26,62 @@ import Effect (Effect)
 import Sigil.Html as Sigil
 import Sigil.Types (RenderType, SuperclassInfo)
 
+-- =============================================================================
+-- Pure renderers (return HTML strings, no DOM access)
+-- =============================================================================
+
+-- | Render a full-size signature as an HTML string.
+renderSignature
+  :: { name :: String, sig :: String, ast :: RenderType, typeParams :: Array String, className :: Maybe String }
+  -> String
+renderSignature { name, ast, typeParams, className } =
+  Sigil.renderSignature { name, ast, typeParams, className }
+
+-- | Render a siglet (compact inline signature) as an HTML string.
+renderSiglet :: { ast :: RenderType } -> String
+renderSiglet = Sigil.renderSiglet
+
+-- | Render a data/newtype declaration as an HTML string.
+renderDataDecl
+  :: { name :: String
+     , typeParams :: Array String
+     , constructors :: Array { name :: String, args :: Array RenderType }
+     , keyword :: Maybe String
+     }
+  -> String
+renderDataDecl = Sigil.renderDataDecl
+
+-- | Render a type class definition as an HTML string.
+renderClassDecl
+  :: { name :: String
+     , typeParams :: Array String
+     , superclasses :: Array SuperclassInfo
+     , methods :: Array { name :: String, ast :: Maybe RenderType }
+     }
+  -> String
+renderClassDecl = Sigil.renderClassDecl
+
+-- | Render a type synonym as an HTML string.
+renderTypeSynonym
+  :: { name :: String
+     , typeParams :: Array String
+     , body :: RenderType
+     }
+  -> String
+renderTypeSynonym = Sigil.renderTypeSynonym
+
+-- | Render a foreign import as an HTML string.
+renderForeignImport
+  :: { name :: String
+     , ast :: RenderType
+     }
+  -> String
+renderForeignImport = Sigil.renderForeignImport
+
+-- =============================================================================
+-- Into renderers (querySelector + innerHTML, for backward compat)
+-- =============================================================================
+
 -- | Render a full-size signature into a container element.
 renderSignatureInto
   :: String
@@ -26,6 +89,10 @@ renderSignatureInto
   -> Effect Unit
 renderSignatureInto selector { name, ast, typeParams, className } =
   Sigil.renderSignatureInto selector { name, ast, typeParams, className }
+
+-- | Render a siglet (compact inline signature) into a container element.
+renderSigletInto :: String -> { ast :: RenderType } -> Effect Unit
+renderSigletInto = Sigil.renderSigletInto
 
 -- | Render a data/newtype declaration into a container element.
 renderDataDeclInto

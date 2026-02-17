@@ -248,6 +248,9 @@ type State =
   , packageCalls :: Map.Map Int (Array Loader.V2FunctionCall)
   , allCallsLoaded :: Boolean
 
+    -- Module annotations (lazy loaded per module, keyed by module name)
+  , moduleAnnotations :: Map.Map String (Array Loader.V2Annotation)
+
     -- Panel state (tracked by coordinator for visibility)
   , panelOpen :: Boolean
   , panelContent :: SlideOutPanel.PanelContent
@@ -351,6 +354,7 @@ initialState input =
   , packageDeclarations: Map.empty  -- Lazy loaded per package for enriched treemap
   , packageCalls: Map.empty       -- Lazy loaded once (all calls) for dependency highlighting
   , allCallsLoaded: false
+  , moduleAnnotations: Map.empty
   , panelOpen: false
   , panelContent: SlideOutPanel.NoContent
   , hoveredPackage: Nothing
@@ -977,10 +981,12 @@ renderScene state =
   ModuleSignatureMap pkgName modName ->
     case lookupModuleDeclarations state pkgName modName of
       Just decls ->
-        HH.slot _moduleSignatureMapViz unit ModuleSignatureMapViz.component
+        let anns = fromMaybe [] (Map.lookup modName state.moduleAnnotations)
+        in HH.slot _moduleSignatureMapViz unit ModuleSignatureMapViz.component
           { packageName: pkgName
           , moduleName: modName
           , declarations: decls
+          , annotations: anns
           }
           HandleModuleSignatureMapOutput
       Nothing ->
@@ -1639,9 +1645,15 @@ prepareSceneData state = case state.scene of
     ensurePackageDeclarationsLoaded state pkgName
     log "[SceneCoordinator] DeclarationDetail: rendering handled by slot"
 
-  ModuleSignatureMap pkgName _modName -> do
+  ModuleSignatureMap pkgName modName -> do
     -- Ensure declarations are loaded for this package
     ensurePackageDeclarationsLoaded state pkgName
+    -- Fetch annotations for this module if not cached
+    when (not $ Map.member modName state.moduleAnnotations) do
+      result <- liftAff $ Loader.fetchModuleAnnotations modName
+      case result of
+        Right anns -> H.modify_ _ { moduleAnnotations = Map.insert modName anns state.moduleAnnotations }
+        Left _err -> pure unit  -- Annotations are optional; silent fail
     log "[SceneCoordinator] ModuleSignatureMap: rendering handled by slot"
 
   PkgModuleBeeswarm pkgName -> do

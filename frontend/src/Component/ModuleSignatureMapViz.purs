@@ -15,12 +15,16 @@ import Prelude
 
 import Data.Array as Array
 import Data.Maybe (Maybe(..))
+import Data.String.Common as SC
+import Data.String.CodeUnits as SCU
+import Data.String.Pattern (Pattern(..))
 import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
+import Halogen.HTML.Core (PropName(..))
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
@@ -37,6 +41,7 @@ type Input =
   { packageName :: String
   , moduleName :: String
   , declarations :: Array Loader.V2Declaration
+  , annotations :: Array Loader.V2Annotation
   }
 
 data Output
@@ -51,6 +56,8 @@ type State =
   , actionListener :: Maybe (HS.Listener Action)
   , lastInput :: Input
   , lanes :: Array MSM.Lane
+  , annotations :: Array Loader.V2Annotation
+  , measuredCells :: Array MSM.MeasuredCell
   }
 
 data Action
@@ -83,6 +90,8 @@ initialState input =
   , actionListener: Nothing
   , lastInput: input
   , lanes: []
+  , annotations: input.annotations
+  , measuredCells: []
   }
 
 -- =============================================================================
@@ -95,13 +104,113 @@ render state =
     [ HP.class_ (HH.ClassName "module-signature-map")
     , HP.style "overflow-y: auto; padding: 12px 16px; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
     ]
-    if Array.null state.lanes && state.initialized then
-      [ HH.div
+    -- Stable two-child structure: annotation container + lanes container.
+    -- This prevents Halogen's index-based VDOM diff from patching lane cells
+    -- (which use innerHTML prop) into annotation columns when annotations
+    -- arrive asynchronously and shift the children array.
+    [ HH.div [] (renderAnnotationHeader state.annotations state.measuredCells)
+    , if Array.null state.lanes && state.initialized then
+        HH.div
           [ HP.style "display:flex;align-items:center;justify-content:center;height:100%;color:#999;font-size:14px;" ]
           [ HH.text "No declarations" ]
-      ]
-    else
-      (state.lanes <#> renderLane)
+      else
+        HH.div [] (state.lanes <#> renderLane)
+    ]
+
+renderAnnotationHeader :: forall m. Array Loader.V2Annotation -> Array MSM.MeasuredCell -> Array (H.ComponentHTML Action () m)
+renderAnnotationHeader anns _
+  | Array.null anns = []
+renderAnnotationHeader anns cells =
+  let sorted = anns # Array.sortBy (comparing _.kind)
+  in
+  [ HH.div
+      [ HP.style "margin-bottom: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0;" ]
+      (Array.mapWithIndex (\annIdx ann ->
+        HH.div
+          [ HP.style "padding: 10px 16px; border-right: 1px solid #e0e0e0; overflow-wrap: break-word;" ]
+          [ HH.div
+              [ HP.style "font-weight: 600; color: #999; text-transform: uppercase; font-size: 9px; letter-spacing: 1px; margin-bottom: 6px;" ]
+              [ HH.text ann.kind ]
+          , HH.ul
+              [ HP.style "margin: 0; padding: 0 0 0 16px; list-style: disc; color: #444; font-size: 12px; line-height: 1.5;" ]
+              (splitSentences ann.value <#> \sentence ->
+                HH.li
+                  [ HP.style "margin-bottom: 3px;" ]
+                  (annotateText annIdx sentence cells)
+              )
+          ]
+      ) sorted)
+  , HH.div [ HP.style "border-bottom: 2px solid #e0e0e0; margin: 8px 0 16px 0;" ] []
+  ]
+
+-- | Split annotation text into sentences (on ". " boundaries).
+-- | Preserves trailing periods on each sentence.
+splitSentences :: String -> Array String
+splitSentences text =
+  let parts = SC.split (Pattern ". ") text
+      len = Array.length parts
+  in parts # Array.mapWithIndex (\i s ->
+    if i < len - 1 then s <> "." else s)
+    # Array.filter (\s -> SCU.length s > 0)
+
+-- | A match of a declaration name found in annotation text.
+type TextMatch = { pos :: Int, cell :: MSM.MeasuredCell }
+
+-- | Find cells whose names appear in the text. Returns non-overlapping matches
+-- | sorted by position, capped at 6.
+findTextMatches :: String -> Array MSM.MeasuredCell -> Array TextMatch
+findTextMatches text cells =
+  let
+    candidates = cells
+      # Array.filter (\c -> SCU.length c.name >= 4)
+      # Array.mapMaybe (\c -> case SCU.indexOf (Pattern c.name) text of
+          Just pos -> Just { pos, cell: c }
+          Nothing -> Nothing)
+      # Array.sortBy (comparing _.pos)
+    removeOverlaps = Array.foldl (\acc m ->
+      case Array.last acc of
+        Nothing -> [m]
+        Just prev ->
+          if m.pos < prev.pos + SCU.length prev.cell.name
+          then acc
+          else Array.snoc acc m
+    ) [] candidates
+  in Array.take 6 removeOverlaps
+
+-- | Render annotation text with inline siglet placeholders where declaration
+-- | names appear. Returns a mixed array of HH.text and inline spans.
+annotateText :: forall m. Int -> String -> Array MSM.MeasuredCell -> Array (H.ComponentHTML Action () m)
+annotateText annIdx text cells =
+  let
+    matches = findTextMatches text cells
+    go :: Int -> Int -> Array TextMatch -> Array (H.ComponentHTML Action () m)
+    go cursor refIdx remaining = case Array.uncons remaining of
+      Nothing ->
+        let rest = SCU.drop cursor text
+        in if SCU.length rest > 0 then [HH.text rest] else []
+      Just { head: m, tail: ms } ->
+        let
+          before = SCU.take (m.pos - cursor) (SCU.drop cursor text)
+          nameLen = SCU.length m.cell.name
+          beforeEls = if SCU.length before > 0 then [HH.text before] else []
+          matchEl = renderInlineRef annIdx refIdx m.cell
+        in beforeEls <> [matchEl] <> go (m.pos + nameLen) (refIdx + 1) ms
+  in go 0 0 matches
+
+-- | Render an inline reference span for a declaration in annotation text.
+-- | Shows the declaration name as a styled label. (Siglet rendering via
+-- | innerHTML is used for lane cards but not here — inline-flex siglets
+-- | inside flowing text can collapse parent layout in some browsers.)
+renderInlineRef :: forall m. Int -> Int -> MSM.MeasuredCell -> H.ComponentHTML Action () m
+renderInlineRef _annIdx _refIdx cell =
+  HH.span
+    [ HP.style $ "padding: 1px 4px; border-radius: 3px;"
+        <> " background: " <> MSM.kindBackground cell.kind <> ";"
+        <> " border: 1px solid " <> MSM.kindBorder cell.kind <> ";"
+        <> " cursor: pointer; font-family: 'Fira Code','SF Mono', monospace; font-size: 10px;"
+    , HE.onClick \_ -> CellClicked cell.onClick
+    ]
+    [ HH.text cell.name ]
 
 renderLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
 renderLane lane =
@@ -129,39 +238,62 @@ renderLaneHeader lane =
 -- Cell renderers
 -- =============================================================================
 
--- | Render a full-size cell for all declaration kinds
--- | Content inserted post-render via insertHtmlIntoCells
+-- | Render a full-size cell for all declaration kinds.
+-- | Structured content is set via the innerHTML DOM property so that
+-- | Halogen applies it during its normal VDOM-to-DOM patch — no post-render
+-- | injection or timing hacks required.
 renderFullCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
 renderFullCell cell =
-  HH.div
-    [ HP.id ("sig-cell-" <> cell.name)
-    , HP.class_ (HH.ClassName "sigmap-cell")
-    , HP.style $ "break-inside:avoid;"
-        <> " margin-bottom:6px;"
-        <> " overflow:auto;"
-        <> " padding:" <> show MSM.cellPad <> "px;"
-        <> " box-sizing:border-box;"
-        <> " background:" <> MSM.kindBackground cell.kind <> ";"
-        <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
-        <> " border-radius:3px;"
-        <> " cursor:pointer;"
-    , HE.onClick \_ -> CellClicked cell.onClick
-    ]
-    -- All content inserted post-render by insertHtmlIntoCells
-    -- Only plain-text fallback for cells with no structured data and no AST
-    (case cell.dataDecl of
-      Just _ -> []
-      Nothing -> case cell.classDecl of
-        Just _ -> []
-        Nothing -> case cell.typeSynonym of
-          Just _ -> []
-          Nothing -> case cell.ast of
-            Just _ -> []
-            Nothing ->
-              [ HH.div
-                  [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
-                  [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
-              ])
+  let
+    baseProps =
+      [ HP.id ("sig-cell-" <> cell.name)
+      , HP.class_ (HH.ClassName "sigmap-cell")
+      , HP.style $ "break-inside:avoid;"
+          <> " margin-bottom:6px;"
+          <> " overflow:auto;"
+          <> " padding:" <> show MSM.cellPad <> "px;"
+          <> " box-sizing:border-box;"
+          <> " background:" <> MSM.kindBackground cell.kind <> ";"
+          <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
+          <> " border-radius:3px;"
+          <> " cursor:pointer;"
+      , HE.onClick \_ -> CellClicked cell.onClick
+      ]
+  in case cellHtml cell of
+    Just html ->
+      HH.div (baseProps <> [ HP.prop (PropName "innerHTML") html ]) []
+    Nothing ->
+      HH.div baseProps
+        [ HH.div
+            [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
+            [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
+        ]
+
+-- | Generate the HTML string for a cell's content. Returns Nothing for
+-- | plain-text-only cells (no structured data, no AST).
+cellHtml :: MSM.MeasuredCell -> Maybe String
+cellHtml cell = case cell.dataDecl of
+  Just dd -> Just $ SigTree.renderDataDecl
+    { name: cell.name, typeParams: dd.typeParams, constructors: dd.constructors, keyword: dd.keyword }
+  Nothing -> case cell.classDecl of
+    Just cd ->
+      let
+        classHtml = SigTree.renderClassDecl
+          { name: cell.name, typeParams: cd.typeParams, superclasses: cd.superclasses, methods: cd.methods }
+        instancesHtml =
+          if Array.null cd.instances then ""
+          else renderInstancesHtml cd.instances
+      in Just (classHtml <> instancesHtml)
+    Nothing -> case cell.typeSynonym of
+      Just ts -> Just $ SigTree.renderTypeSynonym
+        { name: cell.name, typeParams: ts.typeParams, body: ts.body }
+      Nothing -> case cell.ast of
+        Just ast ->
+          if cell.foreignImport
+          then Just $ SigTree.renderForeignImport { name: cell.name, ast }
+          else Just $ SigTree.renderSignature
+            { name: cell.name, sig: cell.sig, ast, typeParams: [], className: Nothing }
+        Nothing -> Nothing
 
 -- =============================================================================
 -- Action Handlers
@@ -185,9 +317,9 @@ handleAction = case _ of
     state <- H.get
     let changed = input.moduleName /= state.lastInput.moduleName
               || Array.length input.declarations /= Array.length state.lastInput.declarations
-    H.modify_ _ { lastInput = input }
+    H.modify_ _ { lastInput = input, annotations = input.annotations }
     when (changed && state.initialized) do
-      H.modify_ _ { lanes = [] }
+      H.modify_ _ { lanes = [], measuredCells = [] }
       renderSignatureMap input
 
   Finalize -> do
@@ -200,7 +332,9 @@ handleAction = case _ of
   CellClicked handler -> do
     liftEffect handler
 
--- | Prepare cells, group into lanes, then insert HTML content after render.
+-- | Prepare cells, group into lanes, then update state.
+-- | HTML content is rendered inline by the render function via innerHTML props,
+-- | so no post-render injection is needed.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
 renderSignatureMap input = do
   state <- H.get
@@ -213,50 +347,13 @@ renderSignatureMap input = do
     }
     input.declarations
   let newLanes = MSM.groupIntoLanes measured
-  H.modify_ _ { lanes = newLanes }
-  -- Insert HTML for all cell types (data decls, class decls, values, type synonyms)
-  liftEffect $ insertHtmlIntoCells measured
+  H.modify_ _ { lanes = newLanes, measuredCells = measured }
 
 -- | Create a declaration click callback that notifies the Halogen listener
 makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit
 makeDeclarationClickCallback mListener pkgName modName declName = case mListener of
   Just listener -> HS.notify listener (HandleDeclarationClick pkgName modName declName)
   Nothing -> log $ "[ModuleSignatureMapViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
-
--- | Insert HTML content into all cell types after Halogen render.
--- | Data decls → renderDataDeclInto, class decls → renderClassDeclInto,
--- | value cells → adaptive sigil/siglet, type synonyms → full-size signature.
-insertHtmlIntoCells :: Array MSM.MeasuredCell -> Effect Unit
-insertHtmlIntoCells cells =
-  Array.foldM (\_ cell ->
-    let cellSelector = "#sig-cell-" <> cell.name
-    in case cell.dataDecl of
-      Just dd ->
-        SigTree.renderDataDeclInto cellSelector
-          { name: cell.name, typeParams: dd.typeParams, constructors: dd.constructors, keyword: dd.keyword }
-      Nothing -> case cell.classDecl of
-        Just cd -> do
-          SigTree.renderClassDeclInto cellSelector
-            { name: cell.name, typeParams: cd.typeParams, superclasses: cd.superclasses, methods: cd.methods }
-          -- Append instances section if any
-          when (not (Array.null cd.instances)) do
-            SigTree.appendHtmlInto cellSelector (renderInstancesHtml cd.instances)
-        Nothing -> case cell.typeSynonym of
-          Just ts ->
-            SigTree.renderTypeSynonymInto cellSelector
-              { name: cell.name, typeParams: ts.typeParams, body: ts.body }
-          Nothing -> case cell.ast of
-            Just ast ->
-              if cell.foreignImport then
-                -- Foreign imports: dedicated renderer
-                SigTree.renderForeignImportInto cellSelector
-                  { name: cell.name, ast }
-              else
-                -- Value cells: full sigil rendering
-                SigTree.renderSignatureInto cellSelector
-                  { name: cell.name, sig: cell.sig, ast, typeParams: [], className: Nothing }
-            Nothing -> pure unit
-  ) unit cells
 
 -- | Build HTML for the instances section of a class card.
 renderInstancesHtml :: Array { name :: String, sig :: Maybe String } -> String

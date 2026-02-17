@@ -67,6 +67,9 @@ module CE2.Data.Loader
     -- Module Source
   , ModuleSource
   , fetchModuleSource
+    -- Annotations
+  , V2Annotation
+  , fetchModuleAnnotations
   ) where
 
 import Prelude
@@ -1411,6 +1414,20 @@ type V2SearchResponse = { results :: Array V2SearchResult, count :: Int }
 type V2AllImportsResponse = { imports :: Array V2ModuleImports, count :: Int }
 type V2AllCallsResponse = { calls :: Array V2ModuleCalls, count :: Int }
 
+-- | Annotation from v2 API
+type V2Annotation =
+  { id :: Int
+  , targetType :: String
+  , targetId :: String
+  , kind :: String
+  , value :: String
+  , source :: String
+  , confidence :: Number
+  , status :: String
+  }
+
+type V2AnnotationsResponse = { annotations :: Array V2Annotation, count :: Int }
+
 -- | Fetch database statistics
 fetchV2Stats :: Aff (Either String V2Stats)
 fetchV2Stats = do
@@ -2054,3 +2071,16 @@ fetchModuleSource :: String -> Aff (Either String ModuleSource)
 fetchModuleSource moduleName = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/module-source?module=" <> moduleName)
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- =============================================================================
+-- Annotations
+-- =============================================================================
+
+-- | Fetch annotations for a module
+fetchModuleAnnotations :: String -> Aff (Either String (Array V2Annotation))
+fetchModuleAnnotations moduleName = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/annotations?target_type=module&target_id=" <> moduleName)
+  pure $ do
+    json <- result
+    response :: V2AnnotationsResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.annotations
