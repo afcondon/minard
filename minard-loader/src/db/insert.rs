@@ -781,20 +781,20 @@ pub fn append_module_imports(conn: &Connection, imports: &[(i64, String)]) -> Re
 /// Caller must ensure no duplicates (Appender doesn't support OR IGNORE).
 pub fn append_function_calls(
     conn: &Connection,
-    calls: &[(i64, i64, String, String, String)], // (id, caller_module_id, caller_name, callee_module, callee_name)
+    calls: &[(i64, i64, String, String, String, bool)], // (id, caller_module_id, caller_name, callee_module, callee_name, is_cross_module)
 ) -> Result<()> {
     if calls.is_empty() {
         return Ok(());
     }
     let mut appender = conn.appender("function_calls")?;
-    for (id, caller_module_id, caller_name, callee_module, callee_name) in calls {
+    for (id, caller_module_id, caller_name, callee_module, callee_name, is_cross_module) in calls {
         appender.append_row(params![
             id,
             caller_module_id,
             caller_name,
             callee_module,
             callee_name,
-            true,  // is_cross_module
+            is_cross_module,
             1_i32, // call_count
         ])?;
     }

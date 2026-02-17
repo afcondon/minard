@@ -3,6 +3,9 @@
 -- | A Halogen component that renders a category-lane layout of a module's
 -- | type signatures. SVGs are pre-rendered and measured, then placed into
 -- | a Halogen HTML layout with CSS flexbox shelf packing.
+-- |
+-- | Includes an arc diagram of intra-module function calls between the
+-- | annotation header and the lane cards.
 module CE2.Component.ModuleSignatureMapViz
   ( component
   , Input
@@ -14,7 +17,11 @@ module CE2.Component.ModuleSignatureMapViz
 import Prelude
 
 import Data.Array as Array
+import Data.Int (toNumber) as Int
+import Data.Map (Map)
+import Data.Map as Map
 import Data.Maybe (Maybe(..))
+import Data.Number (min) as Num
 import Data.String.Common as SC
 import Data.String.CodeUnits as SCU
 import Data.String.Pattern (Pattern(..))
@@ -24,12 +31,14 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
-import Halogen.HTML.Core (PropName(..))
+import Halogen.HTML.Core (AttrName(..), ElemName(..), Namespace(..), PropName(..))
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 
 import CE2.Data.Loader as Loader
+import CE2.Viz.DeclarationArcDiagram as ArcDiagram
+import CE2.Viz.DOMHelpers as DOMHelpers
 import CE2.Viz.ModuleSignatureMap as MSM
 import CE2.Viz.SignatureTree as SigTree
 
@@ -42,6 +51,7 @@ type Input =
   , moduleName :: String
   , declarations :: Array Loader.V2Declaration
   , annotations :: Array Loader.V2Annotation
+  , functionCalls :: Map Int (Array Loader.V2FunctionCall)
   }
 
 data Output
@@ -58,6 +68,8 @@ type State =
   , lanes :: Array MSM.Lane
   , annotations :: Array Loader.V2Annotation
   , measuredCells :: Array MSM.MeasuredCell
+  , arcLayout :: Maybe ArcDiagram.ArcLayout
+  , hoveredArcNode :: Maybe String
   }
 
 data Action
@@ -66,6 +78,10 @@ data Action
   | Finalize
   | HandleDeclarationClick String String String
   | CellClicked (Effect Unit)
+  | ArcNodeHovered (Maybe String)
+  | ArcNodeClicked String
+  | ScrollToLanes
+  | OpenInEditor
 
 -- =============================================================================
 -- Component
@@ -92,7 +108,22 @@ initialState input =
   , lanes: []
   , annotations: input.annotations
   , measuredCells: []
+  , arcLayout: Nothing
+  , hoveredArcNode: Nothing
   }
+
+-- =============================================================================
+-- SVG helpers
+-- =============================================================================
+
+svgNS :: Namespace
+svgNS = Namespace "http://www.w3.org/2000/svg"
+
+svgElem :: forall r w i. String -> Array (HH.IProp r i) -> Array (HH.HTML w i) -> HH.HTML w i
+svgElem name = HH.elementNS svgNS (ElemName name)
+
+sa :: forall r i. String -> String -> HH.IProp r i
+sa name val = HP.attr (AttrName name) val
 
 -- =============================================================================
 -- Render
@@ -104,11 +135,12 @@ render state =
     [ HP.class_ (HH.ClassName "module-signature-map")
     , HP.style "overflow-y: auto; padding: 12px 16px; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
     ]
-    -- Stable two-child structure: annotation container + lanes container.
+    -- Stable three-child structure: annotation container + arc diagram + lanes container.
     -- This prevents Halogen's index-based VDOM diff from patching lane cells
     -- (which use innerHTML prop) into annotation columns when annotations
     -- arrive asynchronously and shift the children array.
     [ HH.div [] (renderAnnotationHeader state.annotations state.measuredCells)
+    , renderArcDiagram state
     , if Array.null state.lanes && state.initialized then
         HH.div
           [ HP.style "display:flex;align-items:center;justify-content:center;height:100%;color:#999;font-size:14px;" ]
@@ -116,6 +148,137 @@ render state =
       else
         HH.div [] (state.lanes <#> renderLane)
     ]
+
+-- =============================================================================
+-- Arc Diagram renderer
+-- =============================================================================
+
+renderArcDiagram :: forall m. State -> H.ComponentHTML Action () m
+renderArcDiagram state = case state.arcLayout of
+  Nothing ->
+    -- Empty placeholder to maintain three-child structure
+    HH.div [] []
+  Just layout
+    | Array.null layout.edges ->
+        HH.div [] []
+    | otherwise ->
+        let declCount = Array.length state.lastInput.declarations
+        in HH.div
+          [ HP.style "margin: 8px 0 12px 0;" ]
+          [ svgElem "svg"
+              [ sa "viewBox" ("0 0 " <> show layout.width <> " " <> show layout.height)
+              , sa "width" "100%"
+              , sa "preserveAspectRatio" "xMidYMid meet"
+              , HP.style "display: block;"
+              ]
+              ( (layout.edges <#> renderArcEdge state layout)
+              <> (layout.nodes <#> renderArcNode state layout)
+              <> (layout.nodes <#> renderArcLabel state layout)
+              )
+          , renderCtaBar declCount
+          ]
+
+renderArcEdge :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcEdge -> H.ComponentHTML Action () m
+renderArcEdge state _layout edge =
+  let
+    strokeW = Num.min 3.0 (0.75 + Int.toNumber edge.count * 0.5)
+    isConnected = case state.hoveredArcNode of
+      Nothing -> true
+      Just hovered -> edge.fromName == hovered || edge.toName == hovered
+    opacity = if isConnected then "0.7" else "0.1"
+  in
+    svgElem "path"
+      [ sa "d" edge.pathD
+      , sa "fill" "none"
+      , sa "stroke" "#94a3b8"
+      , sa "stroke-width" (show strokeW)
+      , sa "opacity" opacity
+      , HP.style "transition: opacity 150ms ease;"
+      ]
+      []
+
+renderArcNode :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcNode -> H.ComponentHTML Action () m
+renderArcNode state layout node =
+  let
+    isHovered = state.hoveredArcNode == Just node.name
+    isConnected = case state.hoveredArcNode of
+      Nothing -> true
+      Just hovered -> hovered == node.name || nodeConnected hovered node.name state.arcLayout
+    r = if isHovered then "6" else "4"
+    opacity = if isConnected then "1" else "0.2"
+    fillColor = MSM.kindBorder node.kind
+    strokeColor = MSM.kindAccent node.kind
+  in
+    svgElem "circle"
+      [ sa "cx" (show node.x)
+      , sa "cy" (show layout.baselineY)
+      , sa "r" r
+      , sa "fill" fillColor
+      , sa "stroke" strokeColor
+      , sa "stroke-width" "1.5"
+      , sa "opacity" opacity
+      , HP.style "transition: opacity 150ms ease, r 150ms ease; cursor: pointer;"
+      , HE.onMouseEnter \_ -> ArcNodeHovered (Just node.name)
+      , HE.onMouseLeave \_ -> ArcNodeHovered Nothing
+      , HE.onClick \_ -> ArcNodeClicked node.name
+      ]
+      []
+
+renderArcLabel :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcNode -> H.ComponentHTML Action () m
+renderArcLabel state layout node =
+  let
+    isConnected = case state.hoveredArcNode of
+      Nothing -> true
+      Just hovered -> hovered == node.name || nodeConnected hovered node.name state.arcLayout
+    opacity = if isConnected then "1" else "0.15"
+    label = if SCU.length node.name > 16 then SCU.take 15 node.name <> "\x2026" else node.name
+    labelY = layout.baselineY + 10.0
+  in
+    svgElem "text"
+      [ sa "x" (show node.x)
+      , sa "y" (show labelY)
+      , sa "text-anchor" "start"
+      , sa "font-family" "'Fira Code', 'SF Mono', monospace"
+      , sa "font-size" "8"
+      , sa "fill" "#666"
+      , sa "opacity" opacity
+      , sa "transform" ("rotate(45 " <> show node.x <> " " <> show labelY <> ")")
+      , HP.style "transition: opacity 150ms ease; cursor: pointer; user-select: none;"
+      , HE.onMouseEnter \_ -> ArcNodeHovered (Just node.name)
+      , HE.onMouseLeave \_ -> ArcNodeHovered Nothing
+      , HE.onClick \_ -> ArcNodeClicked node.name
+      ]
+      [ HH.text label ]
+
+-- | CTA bar shown below the arc diagram with scroll hint and editor stub.
+renderCtaBar :: forall m. Int -> H.ComponentHTML Action () m
+renderCtaBar declCount =
+  HH.div
+    [ HP.style "display: flex; justify-content: space-between; align-items: center; margin: 4px 0 0 0;" ]
+    [ HH.span
+        [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
+        , HE.onMouseEnter \_ -> ArcNodeHovered Nothing
+        , HE.onClick \_ -> ScrollToLanes
+        ]
+        [ HH.text ("\x2193 " <> show declCount <> " declarations below") ]
+    , HH.span
+        [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
+        , HE.onClick \_ -> OpenInEditor
+        ]
+        [ HH.text "Open in editor" ]
+    ]
+
+-- | Check if two nodes are connected by an edge in the arc layout.
+nodeConnected :: String -> String -> Maybe ArcDiagram.ArcLayout -> Boolean
+nodeConnected a b = case _ of
+  Nothing -> false
+  Just layout -> Array.any (\e ->
+    (e.fromName == a && e.toName == b) || (e.fromName == b && e.toName == a)
+    ) layout.edges
+
+-- =============================================================================
+-- Annotation header
+-- =============================================================================
 
 renderAnnotationHeader :: forall m. Array Loader.V2Annotation -> Array MSM.MeasuredCell -> Array (H.ComponentHTML Action () m)
 renderAnnotationHeader anns _
@@ -317,9 +480,10 @@ handleAction = case _ of
     state <- H.get
     let changed = input.moduleName /= state.lastInput.moduleName
               || Array.length input.declarations /= Array.length state.lastInput.declarations
+    let callsChanged = Map.size input.functionCalls /= Map.size state.lastInput.functionCalls
     H.modify_ _ { lastInput = input, annotations = input.annotations }
-    when (changed && state.initialized) do
-      H.modify_ _ { lanes = [], measuredCells = [] }
+    when ((changed || callsChanged) && state.initialized) do
+      H.modify_ _ { lanes = [], measuredCells = [], arcLayout = Nothing }
       renderSignatureMap input
 
   Finalize -> do
@@ -332,9 +496,24 @@ handleAction = case _ of
   CellClicked handler -> do
     liftEffect handler
 
--- | Prepare cells, group into lanes, then update state.
--- | HTML content is rendered inline by the render function via innerHTML props,
--- | so no post-render injection is needed.
+  ArcNodeHovered mName -> do
+    H.modify_ _ { hoveredArcNode = mName }
+
+  ArcNodeClicked declName -> do
+    liftEffect $ DOMHelpers.scrollElementIntoView ("sig-cell-" <> declName)
+
+  ScrollToLanes -> do
+    state <- H.get
+    case Array.head state.lanes >>= (_.cells >>> Array.head) of
+      Just firstCell ->
+        liftEffect $ DOMHelpers.scrollElementIntoView ("sig-cell-" <> firstCell.name)
+      Nothing -> pure unit
+
+  OpenInEditor -> do
+    state <- H.get
+    log $ "[ModuleSignatureMapViz] Open in editor (stub): " <> state.lastInput.moduleName
+
+-- | Prepare cells, group into lanes, compute arc layout, then update state.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
 renderSignatureMap input = do
   state <- H.get
@@ -347,7 +526,14 @@ renderSignatureMap input = do
     }
     input.declarations
   let newLanes = MSM.groupIntoLanes measured
-  H.modify_ _ { lanes = newLanes, measuredCells = measured }
+  let arcLay = ArcDiagram.computeLayout
+        { moduleName: input.moduleName
+        , declarations: input.declarations
+        , functionCalls: input.functionCalls
+        , layoutWidth: 900.0
+        }
+  let mArcLayout = if Array.null arcLay.edges then Nothing else Just arcLay
+  H.modify_ _ { lanes = newLanes, measuredCells = measured, arcLayout = mArcLayout }
 
 -- | Create a declaration click callback that notifies the Halogen listener
 makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit

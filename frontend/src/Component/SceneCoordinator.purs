@@ -987,6 +987,7 @@ renderScene state =
           , moduleName: modName
           , declarations: decls
           , annotations: anns
+          , functionCalls: state.packageCalls
           }
           HandleModuleSignatureMapOutput
       Nothing ->
@@ -1617,8 +1618,8 @@ prepareSceneData state = case state.scene of
                           { callerName: c.callerName
                           , calleeModule: c.calleeModule
                           , calleeName: c.calleeName
-                          , isCrossModule: true  -- Cross-module calls (intra-module filtered out by DB)
-                          , callCount: 1         -- Count not tracked in bulk endpoint
+                          , isCrossModule: c.isCrossModule
+                          , callCount: c.callCount
                           })
                   H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
                 Left err ->
@@ -1885,8 +1886,8 @@ ensurePackageDeclarationsLoaded state pkgName =
                     { callerName: c.callerName
                     , calleeModule: c.calleeModule
                     , calleeName: c.calleeName
-                    , isCrossModule: true
-                    , callCount: 1
+                    , isCrossModule: c.isCrossModule
+                    , callCount: c.callCount
                     })
             H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
           Left err ->

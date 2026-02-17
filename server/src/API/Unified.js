@@ -408,7 +408,9 @@ export const buildAllCallsJson = (rows) => {
       moduleCalls.get(moduleId).calls.push({
         callerName: row.caller_name,
         calleeModule: row.callee_module,
-        calleeName: row.callee_name
+        calleeName: row.callee_name,
+        isCrossModule: Boolean(row.is_cross_module),
+        callCount: Number(row.call_count) || 1
       });
     }
   }

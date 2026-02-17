@@ -1400,7 +1400,7 @@ type V2ModuleImports =
 type V2ModuleCalls =
   { moduleId :: Int
   , moduleName :: String
-  , calls :: Array { callerName :: String, calleeModule :: String, calleeName :: String }
+  , calls :: Array { callerName :: String, calleeModule :: String, calleeName :: String, isCrossModule :: Boolean, callCount :: Int }
   }
 
 -- Response wrappers for JSON decoding

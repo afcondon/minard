@@ -50,6 +50,7 @@ pub struct FunctionCall {
     pub caller_name: String,
     pub callee_module: String,
     pub callee_name: String,
+    pub is_cross_module: bool,
 }
 
 impl CoreFn {
@@ -104,7 +105,7 @@ impl CoreFn {
     }
 
     /// Extract function calls from declarations
-    /// Returns calls where the callee is from a different module
+    /// Returns both intra-module and cross-module calls
     pub fn extract_function_calls(&self) -> Vec<FunctionCall> {
         let mut calls = HashSet::new();
         let self_module = self.module_name_str();
@@ -141,12 +142,14 @@ fn extract_calls_from_expr(
                                 .collect::<Vec<_>>()
                                 .join(".");
 
-                            // Only record cross-module calls
-                            if callee_module != self_module {
+                            // Skip self-calls (same function calling itself)
+                            if !(callee_module == self_module && id == caller_name) {
+                                let is_cross_module = callee_module != self_module;
                                 calls.insert(FunctionCall {
                                     caller_name: caller_name.to_string(),
                                     callee_module,
                                     callee_name: id.clone(),
+                                    is_cross_module,
                                 });
                             }
                         }
@@ -221,5 +224,6 @@ mod tests {
         assert_eq!(calls[0].caller_name, "myFunc");
         assert_eq!(calls[0].callee_module, "Data.Functor");
         assert_eq!(calls[0].callee_name, "map");
+        assert!(calls[0].is_cross_module);
     }
 }

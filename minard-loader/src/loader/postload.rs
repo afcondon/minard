@@ -210,7 +210,7 @@ pub fn insert_function_calls(
 
     // Collect all calls, dedup via HashSet on (caller_module_id, caller_name, callee_module, callee_name)
     let mut seen: HashSet<(i64, String, String, String)> = HashSet::new();
-    let mut all_calls: Vec<(i64, i64, String, String, String)> = Vec::new();
+    let mut all_calls: Vec<(i64, i64, String, String, String, bool)> = Vec::new();
     let mut parse_time = std::time::Duration::ZERO;
     let mut files_parsed = 0usize;
 
@@ -241,6 +241,7 @@ pub fn insert_function_calls(
                             call.caller_name,
                             call.callee_module,
                             call.callee_name,
+                            call.is_cross_module,
                         ));
                         next_id += 1;
                     }

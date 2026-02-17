@@ -693,7 +693,8 @@ getAllCalls db = do
       WHERE m.package_version_id IN (SELECT id FROM active_packages WHERE rn = 1)
       GROUP BY m.name
     )
-    SELECT bm.module_id, bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name
+    SELECT bm.module_id, bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name,
+           fc.is_cross_module, fc.call_count
     FROM best_modules bm
     LEFT JOIN function_calls fc ON fc.caller_module_id = bm.module_id
     ORDER BY bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name
