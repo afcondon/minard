@@ -39,6 +39,8 @@ module CE2.Data.Loader
     -- V2 API fetchers
   , fetchV2Stats
   , fetchV2Packages
+  , fetchUnusedPackages
+  , v2PackageToPackageSetPackage
   , fetchV2Modules
   , fetchV2ModuleDeclarations
   , fetchV2PackageDeclarations
@@ -1455,6 +1457,15 @@ fetchV2Stats = do
 fetchV2Packages :: Aff (Either String (Array V2Package))
 fetchV2Packages = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/packages")
+  pure $ do
+    json <- result
+    response :: V2PackagesResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.packages
+
+-- | Fetch registry packages NOT used by the current project
+fetchUnusedPackages :: Aff (Either String (Array V2Package))
+fetchUnusedPackages = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/packages/unused")
   pure $ do
     json <- result
     response :: V2PackagesResponse <- decodeJson json # mapLeft printJsonDecodeError

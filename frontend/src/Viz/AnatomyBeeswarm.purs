@@ -25,7 +25,7 @@ import Data.Foldable (foldl)
 import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Nullable as Nullable
-import Data.Number (sqrt)
+import Data.Number (sqrt, cos, sin, pi)
 import Data.Set (Set)
 import Data.Set as Set
 import Effect (Effect)
@@ -77,6 +77,7 @@ type Config =
   , height :: Number
   , maxTopoLayer :: Int
   , onClick :: Maybe (String -> Effect Unit)
+  , unusedPackages :: Array PackageSetPackage
   }
 
 -- | Node in the anatomy simulation
@@ -173,7 +174,7 @@ render config packages = do
       directDepNames = computeDirectDepNames packages
       nodes = prepareNodes config wsNames directDepNames packages
 
-  log $ "[AnatomyBeeswarm] Starting with " <> show (Array.length nodes) <> " packages"
+  log $ "[AnatomyBeeswarm] Starting with " <> show (Array.length nodes) <> " packages, " <> show (Array.length config.unusedPackages) <> " unused"
 
   renderSVGContainer config
   simHandle <- startSimulation config nodes
@@ -304,6 +305,8 @@ renderSVGContainer config = do
             []
         -- Legend
         , renderLegend config
+        -- Unused packages blob (upper right)
+        , renderUnusedBlob config
         -- Nodes container
         , elem Group
             [ staticStr "id" "anatomy-beeswarm-nodes"
@@ -328,6 +331,7 @@ renderLegend config =
       [ legendItem 0.0 "hsl(40, 85%, 60%)" "Your code"
       , legendItem 24.0 "hsl(210, 65%, 50%)" "Direct deps"
       , legendItem 48.0 "hsl(210, 15%, 65%)" "Transitive deps"
+      , legendItem 72.0 "hsl(210, 8%, 82%)" "Not used"
       ]
 
 legendItem :: Number -> String -> String -> Tree
@@ -354,6 +358,66 @@ legendItem yOff color label =
         ]
         []
     ]
+
+-- =============================================================================
+-- Unused Packages Blob (static, upper-right)
+-- =============================================================================
+
+-- | Render unused registry packages as a compact spiral cluster
+renderUnusedBlob :: Config -> Tree
+renderUnusedBlob config =
+  let
+    n = Array.length config.unusedPackages
+  in
+    if n == 0 then elem Group [] []
+    else
+      let
+        -- Position: upper right of SVG
+        cx = config.width / 2.0 - 120.0
+        cy = -config.height / 2.0 + 120.0
+        -- Sunflower spiral packing: golden angle ≈ 2.399 radians
+        goldenAngle = pi * (3.0 - sqrt 5.0)
+        spacing = 5.8
+        circleR = 4.5
+
+        blobCircle :: Int -> Tree
+        blobCircle i =
+          let
+            fi = toNumber i
+            angle = fi * goldenAngle
+            dist = sqrt fi * spacing
+            bx = cos angle * dist
+            by = sin angle * dist
+          in
+            elem Circle
+              [ staticNum "cx" bx
+              , staticNum "cy" by
+              , staticNum "r" circleR
+              , staticStr "fill" "hsl(210, 8%, 82%)"
+              , staticStr "stroke" "hsl(210, 8%, 72%)"
+              , staticStr "stroke-width" "0.3"
+              , staticStr "opacity" "0.6"
+              ]
+              []
+      in
+        elem Group
+          [ staticStr "class" "unused-blob"
+          , staticStr "transform" ("translate(" <> show cx <> "," <> show cy <> ")")
+          ]
+          ( Array.mapWithIndex (\i _ -> blobCircle i) config.unusedPackages
+            <> [ -- Count label
+                 elem Text
+                   [ staticStr "x" "0"
+                   , staticNum "y" (sqrt (toNumber n) * spacing + 16.0)
+                   , staticStr "text-anchor" "middle"
+                   , staticStr "font-size" "11"
+                   , staticStr "font-family" "'Courier New', monospace"
+                   , staticStr "fill" "#999"
+                   , staticStr "textContent" (show n <> " more in the registry")
+                   ]
+                   []
+               ]
+          )
 
 -- | Render nodes using HATS
 renderNodesHATS :: Config -> Array AnatomyNode -> Effect Unit

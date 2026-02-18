@@ -28,6 +28,7 @@ data Route
   = V2Stats
   -- Packages
   | V2ListPackages
+  | V2UnusedPackages
   | V2GetPackage Int
   -- Modules
   | V2ListModules
@@ -73,6 +74,7 @@ route :: RouteDuplex' Route
 route = root $ sum
   { "V2Stats": path "api/v2/stats" noArgs
   , "V2ListPackages": path "api/v2/packages" noArgs
+  , "V2UnusedPackages": path "api/v2/packages/unused" noArgs
   , "V2GetPackage": path "api/v2/packages" (int segment)
   , "V2ListModules": path "api/v2/modules" noArgs
   , "V2GetModule": path "api/v2/modules" (int segment)
@@ -179,6 +181,7 @@ main = launchAff_ do
     in case r of
     V2Stats -> Unified.getStats db
     V2ListPackages -> Unified.listPackages db mProject
+    V2UnusedPackages -> Unified.listUnusedPackages db mProject
     V2GetPackage pkgId -> Unified.getPackage db pkgId
     V2ListModules -> Unified.listModules db mProject
     V2GetModule modId -> Unified.getModule db modId

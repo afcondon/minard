@@ -9,6 +9,7 @@ module API.Unified
     getStats
   -- Packages
   , listPackages
+  , listUnusedPackages
   , getPackage
   -- Modules
   , listModules
@@ -130,6 +131,50 @@ listPackages db mProject = do
   ok' jsonHeaders json
 
 foreign import buildPackagesJson :: Array Foreign -> String
+
+-- =============================================================================
+-- GET /api/v2/packages/unused
+-- =============================================================================
+
+-- | List registry packages NOT used by the current project
+-- | These are packages in the DB (from other projects) that this project doesn't depend on
+listUnusedPackages :: Database -> Maybe Int -> Aff Response
+listUnusedPackages db mProject = do
+  rows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    )
+    SELECT
+      pv.id,
+      pv.name,
+      pv.version,
+      pv.description,
+      pv.license,
+      pv.repository,
+      pv.source,
+      pv.bundle_module,
+      COUNT(DISTINCT m.id) as module_count,
+      COUNT(DISTINCT d.id) as declaration_count,
+      (SELECT COALESCE(SUM(m2.loc), 0) FROM modules m2 WHERE m2.package_version_id = pv.id) as total_loc,
+      (SELECT STRING_AGG(pd.dependency_name, ',')
+       FROM package_dependencies pd
+       WHERE pd.dependent_id = pv.id) as depends,
+      0 as topo_layer
+    FROM package_versions pv
+    LEFT JOIN modules m ON m.package_version_id = pv.id
+    LEFT JOIN declarations d ON d.module_id = m.id
+    WHERE pv.source = 'registry'
+    AND NOT EXISTS (
+      SELECT 1 FROM snapshot_packages sp
+      JOIN snapshots s ON s.id = sp.snapshot_id
+      WHERE sp.package_version_id = pv.id
+      AND s.project_id = (SELECT project_id FROM target)
+    )
+    GROUP BY pv.id, pv.name, pv.version, pv.description, pv.license, pv.repository, pv.source, pv.bundle_module
+    ORDER BY pv.name, pv.version
+  """ [unsafeToForeign (toNullable mProject)]
+  let json = buildPackagesJson rows
+  ok' jsonHeaders json
 
 -- =============================================================================
 -- GET /api/v2/packages/:id

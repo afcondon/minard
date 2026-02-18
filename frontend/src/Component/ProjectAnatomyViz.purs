@@ -14,11 +14,12 @@ module CE2.Component.ProjectAnatomyViz
 import Prelude
 
 import Data.Array as Array
+import Data.Either (Either(..))
 import Data.Foldable (foldl, sum)
 import Data.Maybe (Maybe(..))
 import Data.Set (Set)
 import Data.Set as Set
-import Effect.Aff.Class (class MonadAff)
+import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
@@ -50,6 +51,7 @@ type AnatomyStats =
   , workspaceNames :: Array String
   , directCount :: Int
   , transitiveCount :: Int
+  , unusedCount :: Int
   , totalCount :: Int
   , totalModules :: Int
   , totalDeclarations :: Int
@@ -59,6 +61,7 @@ type AnatomyStats =
 
 type State =
   { packages :: Array Loader.PackageSetPackage
+  , unusedPackages :: Array Loader.PackageSetPackage
   , stats :: AnatomyStats
   , handle :: Maybe Beeswarm.BeeswarmHandle
   , actionListener :: Maybe (HS.Listener Action)
@@ -90,7 +93,8 @@ component =
 initialState :: Input -> State
 initialState input =
   { packages: input.packages
-  , stats: computeStats input.packages
+  , unusedPackages: []
+  , stats: computeStats input.packages 0
   , handle: Nothing
   , actionListener: Nothing
   }
@@ -99,8 +103,8 @@ initialState input =
 -- Stats Computation
 -- =============================================================================
 
-computeStats :: Array Loader.PackageSetPackage -> AnatomyStats
-computeStats packages =
+computeStats :: Array Loader.PackageSetPackage -> Int -> AnatomyStats
+computeStats packages unusedCount =
   let
     wsPackages = Array.filter (\p -> p.source == "workspace") packages
     wsNames = Set.fromFoldable $ map _.name wsPackages
@@ -114,6 +118,7 @@ computeStats packages =
     , workspaceNames: Array.sort $ Array.fromFoldable wsNames
     , directCount: Set.size directDepNames
     , transitiveCount: max 0 transitiveCount
+    , unusedCount
     , totalCount: Array.length packages
     , totalModules: sum $ map _.moduleCount packages
     , totalDeclarations: 0  -- Not available from PackageSetPackage
@@ -154,13 +159,15 @@ render state =
 
     -- Stats cards
     , HH.div
-        [ HP.style "max-width: 1200px; margin: 16px auto 0; padding: 0 32px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;" ]
+        [ HP.style "max-width: 1200px; margin: 16px auto 0; padding: 0 32px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;" ]
         [ statsCard (show state.stats.workspaceCount) "Workspace" "Your code"
             "hsl(40, 85%, 60%)"
         , statsCard (show state.stats.directCount) "Direct Dependencies" "Declared in spago.yaml"
             "hsl(210, 65%, 50%)"
         , statsCard (show state.stats.transitiveCount) "Transitive" "Pulled in by deps"
             "hsl(210, 15%, 65%)"
+        , statsCard (show state.stats.unusedCount) "Not Used" "Available in registry"
+            "hsl(210, 8%, 82%)"
         ]
 
     -- spago.yaml dependency blocks (colored to match beeswarm)
@@ -281,6 +288,14 @@ handleAction = case _ of
     void $ H.subscribe emitter
     H.modify_ _ { actionListener = Just listener }
 
+    -- Fetch unused packages from API
+    unusedResult <- liftAff Loader.fetchUnusedPackages
+    let unusedPkgs = case unusedResult of
+          Right pkgs -> map Loader.v2PackageToPackageSetPackage pkgs
+          Left _ -> []
+    let stats = computeStats state.packages (Array.length unusedPkgs)
+    H.modify_ _ { unusedPackages = unusedPkgs, stats = stats }
+
     when (Array.length state.packages > 0) do
       startVisualization state.packages
 
@@ -288,7 +303,7 @@ handleAction = case _ of
     state <- H.get
     let packagesChanged = Array.length input.packages /= Array.length state.packages
     when packagesChanged do
-      let stats = computeStats input.packages
+      let stats = computeStats input.packages (Array.length state.unusedPackages)
       H.modify_ _ { packages = input.packages, stats = stats }
       startVisualization input.packages
 
@@ -328,6 +343,7 @@ startVisualization packages = do
         , height: 480.0
         , maxTopoLayer: maxLayer
         , onClick: mClickHandler
+        , unusedPackages: state.unusedPackages
         }
 
   handle <- liftEffect $ Beeswarm.render config packages
