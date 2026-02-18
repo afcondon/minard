@@ -5,14 +5,14 @@
 module CE2.Viz.SignatureTree
   ( renderSignature
   , renderSiglet
-  , renderLabeledSiglet
+  , renderSignet
   , renderDataDecl
   , renderClassDecl
   , renderTypeSynonym
   , renderForeignImport
   , renderSignatureInto
   , renderSigletInto
-  , renderLabeledSigletInto
+  , renderSignetInto
   , renderDataDeclInto
   , renderClassDeclInto
   , renderTypeSynonymInto
@@ -43,9 +43,9 @@ renderSignature { name, ast, typeParams, className } =
 renderSiglet :: { ast :: RenderType } -> String
 renderSiglet = Sigil.renderSiglet
 
--- | Render a labeled siglet (dots with rotated identifier labels) as an HTML string.
-renderLabeledSiglet :: { ast :: RenderType } -> String
-renderLabeledSiglet = Sigil.renderLabeledSiglet
+-- | Render a signet (dots with rotated identifier labels) as an HTML string.
+renderSignet :: { ast :: RenderType } -> String
+renderSignet = Sigil.renderSignet
 
 -- | Render a data/newtype declaration as an HTML string.
 renderDataDecl
@@ -100,9 +100,9 @@ renderSignatureInto selector { name, ast, typeParams, className } =
 renderSigletInto :: String -> { ast :: RenderType } -> Effect Unit
 renderSigletInto = Sigil.renderSigletInto
 
--- | Render a labeled siglet (dots with rotated identifier labels) into a container element.
-renderLabeledSigletInto :: String -> { ast :: RenderType } -> Effect Unit
-renderLabeledSigletInto = Sigil.renderLabeledSigletInto
+-- | Render a signet (dots with rotated identifier labels) into a container element.
+renderSignetInto :: String -> { ast :: RenderType } -> Effect Unit
+renderSignetInto = Sigil.renderSignetInto
 
 -- | Render a data/newtype declaration into a container element.
 renderDataDeclInto

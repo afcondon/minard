@@ -1,0 +1,273 @@
+/* =============================================================================
+   Sigil CSS — canonical stylesheet for sigil HTML rendering
+   ============================================================================= */
+
+/* Full-size wrapper (<code>) */
+.sig-full { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+            display: block; font-style: normal; }
+/* Fitted variant: shrink-wrap so constraints stay close (for standalone/tooltips) */
+.sig-fitted { width: fit-content; }
+
+/* -- Preamble: quantifier (left) . . . constraints (right) -- */
+.sig-preamble { display: flex; align-items: flex-end; margin-bottom: 1px; }
+
+/* Quantifier (forall vars .) */
+.sig-quant { flex-shrink: 0; display: flex; align-items: baseline; gap: 4px; font-size: 12px; }
+.sig-quant-sym { color: #8b7355; font-weight: 700; font-size: inherit; }
+.sig-quant-dot { color: #8b7355; font-weight: 600; font-size: inherit; }
+
+/* Dot leader between quantifier and constraints */
+.sig-leader { flex: 1; border-bottom: 1px dotted #d0ccc4; margin: 0 10px;
+              align-self: flex-end; margin-bottom: 4px; min-width: 12px; }
+
+/* Constraints (right-stacked) */
+.sig-ctx { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end;
+           gap: 1px; margin-left: auto; }
+.sig-ctx-item { display: inline-flex; align-items: baseline; gap: 4px;
+                font-size: 12px; font-style: normal; white-space: nowrap; }
+.sig-ctx-class { color: #8b7355; font-weight: 600; }
+
+/* -- Declaration: name :: -- */
+.sig-decl { display: flex; align-items: baseline; gap: 0.4em; }
+.sig-name { color: #1a1a1a; font-weight: 700; font-style: normal; }
+.sig-dcolon { color: #999; font-size: inherit; }
+.sig-sep { color: #888; font-size: inherit; }
+
+/* -- Body: type content with left rule -- */
+.sig-body { display: flex; flex-direction: column; gap: 2px;
+            border-left: 2px solid #d0ccc4; padding-left: 12px; margin-left: 4px;
+            margin-top: 2px; }
+
+/* Nested constrained (inside body, for rank-N etc.) */
+.sig-constrained { display: flex; flex-direction: column; gap: 2px; }
+
+/* Arrow chain (<ol> with CSS-generated arrow separators) */
+.sig-arrow-chain { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px;
+                   list-style: none; margin: 0; padding: 0; }
+.sig-arrow-chain > li { display: inline-flex; align-items: center; }
+.sig-arrow-chain > li + li::before { content: "\2192"; color: #71717a; padding: 0 5px;
+                                     font-style: normal; font-weight: 600;
+                                     font-size: 1.15em; }
+
+/* Type variable (<var>) -- colored text via --vc custom property */
+.sig-var { color: var(--vc, #0369a1); font-weight: 600; font-style: italic;
+           font-size: 0.92em; }
+.sig-var.sig-wildcard { --vc: #71717a; }
+
+/* Type constructor (<code>) */
+.sig-con { color: #16653e; font-weight: 600; }
+.sig-con-effect { color: #9333ea; }
+
+/* Application (<code>) */
+.sig-app { display: inline-flex; align-items: center; gap: 5px; }
+.sig-hkt { background: #f8f8f6; border: 1px solid #d0d0d0; border-radius: 3px; padding: 2px 5px; }
+
+/* Nested constraints (inline, for body-level/rank-N constraints) */
+.sig-constraints { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+.sig-constraint { display: inline-flex; align-items: center; gap: 3px;
+                  background: #fef3c7; border: 1px solid #d97706; border-radius: 3px;
+                  padding: 1px 8px; font-size: 11px; color: #92400e; font-weight: 600;
+                  font-style: normal; }
+
+/* Nested forall (inline, for rank-N types) */
+.sig-forall { display: flex; flex-direction: column; gap: 2px; }
+.sig-forall-row { display: flex; align-items: center; gap: 3px; }
+.sig-forall-symbol { color: #7b61ff; font-weight: 700; font-size: inherit; }
+.sig-forall-dot { color: #7b61ff; font-weight: 600; font-size: inherit; }
+
+/* Parens (<small>) */
+.sig-paren { color: #aaa; font-size: inherit; }
+
+/* Record / Row -- 3-column grid: name | :: | type */
+.sig-record { display: grid; grid-template-columns: auto auto 1fr; gap: 0 6px;
+              border: 1px solid #ccc; border-radius: 4px; background: white;
+              padding: 2px 8px; font-size: 12px; width: fit-content; }
+.sig-record-open { border-style: dashed; border-width: 1.5px; }
+.sig-record > dt { color: #333; font-weight: 600; font-style: normal; }
+.sig-record > dd { margin: 0; }
+.sig-field-sep { color: #aaa; font-weight: normal; white-space: nowrap; }
+.sig-field-type { color: #555; }
+.sig-row-tail { margin: 0; }
+/* Row separator lines (every row after the first = children 4+) */
+.sig-record > :nth-child(n+4) { border-top: 1px solid #f0f0f0; padding-top: 2px; }
+
+/* Row combination (single-column table of + operands) */
+.sig-row-combo { display: flex; flex-direction: column;
+                 border: 1px solid #ccc; border-radius: 4px; background: white;
+                 padding: 2px 8px; font-size: 12px; list-style: none; margin: 0;
+                 width: fit-content; }
+.sig-row-combo > li { padding: 2px 0; display: flex; align-items: center; gap: 4px; }
+.sig-row-combo > li + li { border-top: 1px solid #f0f0f0; }
+
+/* String literals */
+.sig-string { color: #6b4226; font-weight: 600; }
+
+/* Operator */
+.sig-op { color: #71717a; font-weight: 600; padding: 0 3px; font-size: inherit; }
+
+/* Sigil body-only (compact inline rendering in value cells) */
+.sig-body-only { font-size: 12px; line-height: 1.4; width: fit-content; max-width: 100%; }
+
+/* -- Siglet (miniature indicators) -- */
+.sig-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle;
+           font-size: 0; overflow: hidden; padding: 0; }
+.sig-dot-con { border: 1.5px solid #16653e; background: none; }
+.sig-dot-head { width: 11px; height: 11px; }
+.sig-dot-effect { background: #9333ea; border: none; }
+.sig-dot.sig-wildcard { background: #71717a; }
+
+.sig-siglet { display: inline-flex; flex-direction: column; gap: 1px; margin-top: 2px;
+              font-style: normal; }
+/* Siglet: constrained type variables get pill style */
+.sig-siglet .sig-var-pill { display: inline-block; background: var(--vc, #0369a1); color: white;
+                            padding: 1px 5px; border-radius: 3px; }
+
+/* Siglet record/row: { ○ ○ ○ } or { ○ ○ ○ |r } */
+.sig-record-mini { display: inline-flex; align-items: center; gap: 2px; }
+.sig-brace { color: #999; font-weight: 600; font-size: inherit; }
+.sig-pipe { color: #999; font-weight: 600; font-size: inherit; }
+
+/* -- Signet (dots + rotated identifier labels) -- */
+.sig-signet { display: inline-flex; flex-direction: column; gap: 1px;
+              margin-top: 2px; font-style: normal; padding-bottom: 60px; }
+.sig-signet .sig-app,
+.sig-signet .sig-param { display: inline-flex; align-items: center; gap: 4px; }
+.sig-signet .sig-arrow-chain { align-items: center; }
+.sig-signet .sig-record-mini { align-items: center; }
+.sig-signet .sig-var-pill { display: inline-block; background: var(--vc, #0369a1); color: white;
+                            padding: 1px 5px; border-radius: 3px; }
+.sig-lt { display: inline-flex; flex-direction: column; align-items: center;
+          position: relative; }
+.sig-lt-label { position: absolute; top: 100%; left: 50%;
+                transform: rotate(45deg); transform-origin: top left;
+                font-size: 8px; font-family: 'Fira Code', 'SF Mono', monospace;
+                white-space: nowrap; line-height: 1; }
+
+/* =============================================================================
+   ADT (data/newtype declaration) HTML rendering
+   ============================================================================= */
+
+.sig-adt { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+           width: fit-content; min-width: 180px; }
+
+/* Header bar: amber background */
+.sig-adt-header { display: flex; align-items: baseline; gap: 5px;
+                  background: #fef3c7; border: 1px solid #d97706; border-radius: 4px;
+                  padding: 4px 10px; }
+.sig-adt-name { color: #92400e; font-weight: 700; font-style: normal; }
+
+/* Keyword (shared between ADT and class) */
+.sig-kw { color: #7b61ff; font-weight: 600; font-size: 12px; }
+
+/* Constructor list: rail drawn per-item so it terminates at the last dot */
+.sig-adt-ctors { list-style: none; margin: 0; padding: 8px 0 4px 0;
+                 margin-left: 16px; }
+
+.sig-adt-ctor { position: relative; display: flex; align-items: baseline; gap: 6px;
+                padding: 2px 0 2px 24px; min-height: 24px;
+                border-left: 2px solid #d97706; }
+
+/* Last item: rail stops at the dot (50%) */
+.sig-adt-ctor:last-child {
+  border-image: linear-gradient(to bottom, #d97706 50%, transparent 50%) 1;
+}
+/* Single constructor: no rail */
+.sig-adt-ctor:only-child { border-left-color: transparent; border-image: none; }
+
+/* Branch stub: horizontal line from rail center */
+.sig-adt-ctor::before { content: ""; position: absolute; left: -1px; top: 50%;
+                        width: 17px; height: 0; border-top: 2px solid #d97706; }
+
+/* Junction dot centered on rail */
+.sig-adt-ctor::after { content: ""; position: absolute; left: -1px; top: 50%;
+                       width: 6px; height: 6px; border-radius: 50%; background: white;
+                       border: 1.5px solid #d97706; transform: translate(-50%, -50%); }
+
+.sig-adt-ctor-name { color: #b45309; font-weight: 700; font-style: normal; }
+.sig-adt-ctor-args { display: inline-flex; align-items: center; gap: 5px; }
+.sig-adt-ctor-dash { color: #ddd; font-size: 10px; }
+
+/* Opaque type indicator */
+.sig-adt-opaque-label { display: flex; justify-content: center; padding: 8px 0 4px;
+                        color: #bbb; font-size: 11px; font-style: italic; }
+
+/* =============================================================================
+   Type class definition HTML rendering
+   ============================================================================= */
+
+.sig-class { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+             width: fit-content; min-width: 200px; }
+
+/* Header bar: indigo background */
+.sig-class-header { display: flex; align-items: baseline; gap: 5px;
+                    background: #f0f4ff; border: 1px solid #6366f1; border-radius: 4px;
+                    padding: 4px 10px; }
+.sig-class-name { color: #4338ca; font-weight: 700; font-style: normal; }
+
+/* Superclass row: right-justified above header (like constraints above signatures) */
+.sig-class-supers { display: flex; align-items: baseline; justify-content: flex-end;
+                    gap: 4px; padding: 0 4px 2px 0; font-size: 11px; }
+.sig-class-arrow { color: #d97706; font-size: 12px; }
+.sig-class-comma { color: #aaa; }
+.sig-class-super { color: #92400e; font-weight: 600; font-style: normal; }
+
+/* Methods container */
+.sig-class-methods { padding: 4px 0 4px 12px; }
+.sig-class-no-methods { color: #aaa; font-size: 11px; }
+.sig-class-empty { font-style: italic; }
+
+/* Single method entry */
+.sig-method { padding: 4px 0; }
+.sig-method + .sig-method { border-top: 1px solid #e8e8f0; }
+.sig-method-constraints { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 2px; }
+.sig-method-decl { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0; }
+.sig-method-name { color: #1a1a1a; font-weight: 700; font-style: normal; }
+.sig-method-sep { color: #aaa; font-size: inherit; white-space: pre; }
+.sig-method-forall { display: flex; align-items: center; gap: 3px;
+                     font-size: 12px; margin-top: 2px; }
+
+/* Inherited methods section */
+.sig-class-inherited { border-top: 1px dashed #d4d4d8; margin-top: 4px; padding-top: 4px; }
+.sig-class-via-group { padding: 2px 0 2px 12px; }
+.sig-class-via { font-size: 10px; font-weight: 600; font-style: italic;
+                 color: #92400e; padding: 2px 0; }
+
+/* Inherited methods rendered slightly muted */
+.sig-class-inherited .sig-method { opacity: 0.7; }
+
+/* =============================================================================
+   Type synonym (type alias) HTML rendering
+   ============================================================================= */
+
+.sig-type-alias { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+                  width: fit-content; min-width: 140px; }
+
+/* Header bar: gold/yellow background */
+.sig-type-alias-header { display: flex; align-items: baseline; gap: 5px;
+                         background: #fdf9ec; border: 1px solid #edc948; border-radius: 4px;
+                         padding: 4px 10px; }
+.sig-type-alias-name { color: #92700e; font-weight: 700; font-style: normal; }
+
+/* Body: = expansion */
+.sig-type-alias-body { display: flex; flex-direction: column; gap: 2px;
+                       padding: 4px 0 2px 12px; }
+.sig-type-alias-eq { color: #71717a; font-weight: 600; font-size: inherit;
+                     margin-right: 6px; }
+
+/* =============================================================================
+   Foreign import HTML rendering
+   ============================================================================= */
+
+.sig-foreign { font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+               width: fit-content; min-width: 140px; }
+
+/* Header bar: rose/red background */
+.sig-foreign-header { display: flex; align-items: baseline; gap: 5px;
+                      background: #fdf0f0; border: 1px solid #e15759; border-radius: 4px;
+                      padding: 4px 10px; }
+.sig-foreign-name { color: #9b2c2c; font-weight: 700; font-style: normal; }
+
+/* Body: type expression */
+.sig-foreign-body { display: flex; flex-direction: column; gap: 2px;
+                    border-left: 2px solid #d0ccc4; padding-left: 12px; margin-left: 4px;
+                    margin-top: 2px; }
