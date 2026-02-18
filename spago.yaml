@@ -1,3 +1,5 @@
 workspace:
   # No packageSet - using solver mode to pull from live registry
-  extraPackages: {}
+  extraPackages:
+    sigil:
+      path: ../../purescript-hylograph-libs/purescript-sigil

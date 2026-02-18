@@ -2598,6 +2598,22 @@ svg [data-tooltip]::before {
 .sig-brace { color: #999; font-weight: 600; font-size: inherit; }
 .sig-pipe { color: #999; font-weight: 600; font-size: inherit; }
 
+/* ── Labeled siglet (dots + rotated identifier labels) ── */
+.sig-labeled-siglet { display: inline-flex; flex-direction: column; gap: 1px;
+              margin-top: 2px; font-style: normal; padding-bottom: 60px; }
+.sig-labeled-siglet .sig-app,
+.sig-labeled-siglet .sig-param { display: inline-flex; align-items: center; gap: 4px; }
+.sig-labeled-siglet .sig-arrow-chain { align-items: center; }
+.sig-labeled-siglet .sig-record-mini { align-items: center; }
+.sig-labeled-siglet .sig-var-pill { display: inline-block; background: var(--vc, #0369a1); color: white;
+                            padding: 1px 5px; border-radius: 3px; }
+.sig-lt { display: inline-flex; flex-direction: column; align-items: center;
+          position: relative; }
+.sig-lt-label { position: absolute; top: 100%; left: 50%;
+                transform: rotate(45deg); transform-origin: top left;
+                font-size: 8px; font-family: 'Fira Code', 'SF Mono', monospace;
+                white-space: nowrap; line-height: 1; }
+
 /* =============================================================================
    ADT (data/newtype declaration) HTML rendering
    ============================================================================= */

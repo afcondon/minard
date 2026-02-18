@@ -32,7 +32,7 @@ package:
     - ordered-collections: ">=3.2.0 <4.0.0"
     - prelude: ">=6.0.2 <7.0.0"
     - random: ">=6.0.0 <7.0.0"
-    - sigil: ">=0.1.0 <0.2.0"
+    - sigil: "*"
     - strings: ">=6.0.1 <7.0.0"
     - tuples: ">=7.0.0 <8.0.0"
     - unsafe-coerce: ">=6.0.0 <7.0.0"

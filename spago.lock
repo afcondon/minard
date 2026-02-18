@@ -171,7 +171,7 @@
               "random": ">=6.0.0 <7.0.0"
             },
             {
-              "sigil": ">=0.1.0 <0.2.0"
+              "sigil": "*"
             },
             {
               "strings": ">=6.0.1 <7.0.0"
@@ -314,7 +314,11 @@
         }
       }
     },
-    "extra_packages": {}
+    "extra_packages": {
+      "sigil": {
+        "path": "../../purescript-hylograph-libs/purescript-sigil"
+      }
+    }
   },
   "packages": {
     "aff": {
@@ -1713,9 +1717,8 @@
       ]
     },
     "sigil": {
-      "type": "registry",
-      "version": "0.1.0",
-      "integrity": "sha256-Rx1ErB3EAZ0OHMB4KLttT8w43iv7Uksret7LYAOLDiU=",
+      "type": "local",
+      "path": "../../purescript-hylograph-libs/purescript-sigil",
       "dependencies": [
         "arrays",
         "effect",

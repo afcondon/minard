@@ -5,12 +5,14 @@
 module CE2.Viz.SignatureTree
   ( renderSignature
   , renderSiglet
+  , renderLabeledSiglet
   , renderDataDecl
   , renderClassDecl
   , renderTypeSynonym
   , renderForeignImport
   , renderSignatureInto
   , renderSigletInto
+  , renderLabeledSigletInto
   , renderDataDeclInto
   , renderClassDeclInto
   , renderTypeSynonymInto
@@ -40,6 +42,10 @@ renderSignature { name, ast, typeParams, className } =
 -- | Render a siglet (compact inline signature) as an HTML string.
 renderSiglet :: { ast :: RenderType } -> String
 renderSiglet = Sigil.renderSiglet
+
+-- | Render a labeled siglet (dots with rotated identifier labels) as an HTML string.
+renderLabeledSiglet :: { ast :: RenderType } -> String
+renderLabeledSiglet = Sigil.renderLabeledSiglet
 
 -- | Render a data/newtype declaration as an HTML string.
 renderDataDecl
@@ -93,6 +99,10 @@ renderSignatureInto selector { name, ast, typeParams, className } =
 -- | Render a siglet (compact inline signature) into a container element.
 renderSigletInto :: String -> { ast :: RenderType } -> Effect Unit
 renderSigletInto = Sigil.renderSigletInto
+
+-- | Render a labeled siglet (dots with rotated identifier labels) into a container element.
+renderLabeledSigletInto :: String -> { ast :: RenderType } -> Effect Unit
+renderLabeledSigletInto = Sigil.renderLabeledSigletInto
 
 -- | Render a data/newtype declaration into a container element.
 renderDataDeclInto
