@@ -3,12 +3,10 @@
 -- | Owns application lifecycle:
 -- | - Model data loading from unified v2 API
 -- | - Package set and timeline data loading (on demand)
+-- | - Empty state detection: routes to ProjectManagement when no projects loaded
 -- |
 -- | Renders SceneCoordinator as single child slot, passing loaded data down.
 -- | Scene-based navigation replaces the legacy ViewCoordinator.
--- |
--- | Note: This is simplified from the legacy version - no project/snapshot selection.
--- | The v2 API serves data from a unified database.
 module CE2.Component.AppShell where
 
 import Prelude
@@ -96,7 +94,7 @@ initialState _ =
   , modelData: Nothing
   , v2Data: Nothing
   , packageSetData: Nothing
-  , currentScene: GalaxyTreemap  -- Start at GalaxyTreemap (blueprint view)
+  , currentScene: GalaxyTreemap  -- Default; may change to ProjectManagement on boot
   }
 
 -- =============================================================================
@@ -128,7 +126,7 @@ mkSceneCoordinatorInput state =
   { modelData: state.modelData
   , v2Data: state.v2Data
   , packageSetData: state.packageSetData
-  , initialScene: GalaxyTreemap  -- Start at GalaxyTreemap (blueprint view)
+  , initialScene: state.currentScene
   }
 
 -- | Render the header with status info
@@ -160,14 +158,28 @@ showPhase (Error msg) = "Error: " <> msg
 handleAction :: forall output m. MonadAff m => Action -> H.HalogenM State Action Slots output m Unit
 handleAction = case _ of
   Initialize -> do
-    log "[AppShell] Initializing with unified v2 API..."
+    log "[AppShell] Initializing — checking for loaded projects..."
 
-    -- Load model from v2 API (with raw data for specialized views)
+    -- First, check if any projects are loaded
     void $ H.fork do
-      result <- H.liftAff $ Loader.loadModelFromV2WithRaw
-      case result of
-        Left err -> handleAction (DataFailed err)
-        Right loaded -> handleAction (DataLoaded loaded)
+      projectsResult <- H.liftAff Loader.fetchV2Projects
+      case projectsResult of
+        Left _err -> do
+          -- Projects endpoint failed; try loading data anyway (backward compat)
+          log "[AppShell] Projects endpoint not available, proceeding with data load"
+          loadAllData
+        Right projects ->
+          if Array.null projects then do
+            -- No projects loaded → go directly to ProjectManagement
+            log "[AppShell] No projects found — routing to ProjectManagement"
+            H.modify_ _
+              { phase = Ready
+              , currentScene = ProjectManagement
+              }
+          else do
+            -- Projects exist → load data normally
+            log $ "[AppShell] Found " <> show (Array.length projects) <> " project(s), loading data..."
+            loadAllData
 
   DataLoaded loaded -> do
     log $ "[AppShell] Data loaded: " <> show loaded.model.moduleCount <> " modules, "
@@ -181,6 +193,7 @@ handleAction = case _ of
           , modules: loaded.v2Modules
           , imports: loaded.v2Imports
           }
+      , currentScene = GalaxyTreemap
       }
 
   DataFailed err -> do
@@ -208,3 +221,16 @@ handleAction = case _ of
     SceneCoordinator.SceneChanged newScene -> do
       log $ "[AppShell] Scene changed to: " <> show newScene
       H.modify_ _ { currentScene = newScene }
+
+    SceneCoordinator.ProjectLoaded -> do
+      log "[AppShell] Project loaded — re-fetching all data..."
+      H.modify_ _ { phase = Loading }
+      void $ H.fork loadAllData
+
+-- | Load all model data from the V2 API
+loadAllData :: forall output m. MonadAff m => H.HalogenM State Action Slots output m Unit
+loadAllData = do
+  result <- H.liftAff Loader.loadModelFromV2WithRaw
+  case result of
+    Left err -> handleAction (DataFailed err)
+    Right loaded -> handleAction (DataLoaded loaded)

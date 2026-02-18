@@ -74,6 +74,17 @@ module CE2.Data.Loader
   , fetchModuleAnnotations
   , patchAnnotationStatus
   , createAnnotation
+    -- Project Management (V2)
+  , ProjectInfo
+  , ProjectStats
+  , PathValidation
+  , ValidationCheck
+  , ValidationIssue
+  , LoadResult
+  , fetchV2Projects
+  , validateProjectPath
+  , loadProject
+  , deleteProject
   ) where
 
 import Prelude
@@ -1118,7 +1129,7 @@ v2ToPackageSetData v2Packages =
   in
     { packageSet:
         { id: 0
-        , name: "PSD3 Monorepo (V2)"
+        , name: "Package Set (V2)"
         , compilerVersion: "0.15.15"
         , source: "v2-api"
         , publishedAt: Nothing
@@ -2139,3 +2150,102 @@ escapeJsonStr s =
               $ replaceAll (Pattern "\n") (Replacement "\\n")
               $ s
   in "\"" <> escaped <> "\""
+
+-- =============================================================================
+-- Project Management (V2)
+-- =============================================================================
+
+-- | Project info from the V2 projects endpoint
+type ProjectInfo =
+  { id :: Int
+  , name :: String
+  , repoPath :: String
+  , primaryBackend :: String
+  , createdAt :: Maybe String
+  , stats :: ProjectStats
+  }
+
+type ProjectStats =
+  { packageCount :: Int
+  , moduleCount :: Int
+  , declarationCount :: Int
+  }
+
+-- | Path validation result
+type PathValidation =
+  { valid :: Boolean
+  , path :: String
+  , projectName :: String
+  , checks :: ValidationCheck
+  , issues :: Array ValidationIssue
+  }
+
+type ValidationCheck =
+  { directoryExists :: Boolean
+  , spagoLockExists :: Boolean
+  , outputDirExists :: Boolean
+  , docsJsonCount :: Int
+  , loaderBinaryExists :: Boolean
+  }
+
+type ValidationIssue =
+  { severity :: String  -- "error" | "warning"
+  , check :: String
+  , message :: String
+  }
+
+-- | Result of loading a project
+type LoadResult =
+  { success :: Boolean
+  , stats :: Maybe { packages :: Maybe Int, modules :: Maybe Int, declarations :: Maybe Int }
+  , error :: Maybe String
+  , elapsedMs :: Maybe Number
+  }
+
+-- | Projects list response wrapper
+type V2ProjectsResponse = { projects :: Array ProjectInfo, count :: Int }
+
+-- | Fetch list of loaded projects with stats
+fetchV2Projects :: Aff (Either String (Array ProjectInfo))
+fetchV2Projects = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/projects")
+  pure $ do
+    json <- result
+    response :: V2ProjectsResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.projects
+
+-- | Validate a project path (prerequisites check)
+validateProjectPath :: String -> Aff (Either String PathValidation)
+validateProjectPath projectPath = do
+  let url = apiBaseUrl <> "/api/v2/projects/validate"
+      body = RequestBody.string ("{\"path\":" <> escapeJsonStr projectPath <> "}")
+  result <- AW.post ResponseFormat.json url (Just body)
+  pure $ case result of
+    Left err -> Left $ "POST error: " <> AW.printError err
+    Right response -> decodeJson response.body # mapLeft printJsonDecodeError
+
+-- | Load a project via the Rust loader
+loadProject :: { path :: String, name :: Maybe String, label :: Maybe String } -> Aff (Either String LoadResult)
+loadProject args = do
+  let nameStr = case args.name of
+        Just n -> ", \"name\": " <> escapeJsonStr n
+        Nothing -> ""
+      labelStr = case args.label of
+        Just l -> ", \"label\": " <> escapeJsonStr l
+        Nothing -> ""
+      jsonBody = "{\"path\": " <> escapeJsonStr args.path <> nameStr <> labelStr <> "}"
+      url = apiBaseUrl <> "/api/v2/projects/load"
+      body = RequestBody.string jsonBody
+  result <- AW.post ResponseFormat.json url (Just body)
+  pure $ case result of
+    Left err -> Left $ "POST error: " <> AW.printError err
+    Right response -> decodeJson response.body # mapLeft printJsonDecodeError
+
+-- | Delete a project and all its data
+deleteProject :: Int -> Aff (Either String Unit)
+deleteProject projectId = do
+  let url = apiBaseUrl <> "/api/v2/projects/" <> show projectId
+  result <- AW.delete ResponseFormat.json url
+  pure $ case result of
+    Left err -> Left $ "DELETE error: " <> AW.printError err
+    Right _ -> Right unit

@@ -899,10 +899,10 @@ foreign import buildDeclarationUsageJson :: Array Foreign -> Array Foreign -> St
 -- | This is a live query - runs git status and maps paths to module names
 getGitStatus :: Aff Response
 getGitStatus = do
-  json <- liftEffect getGitStatusJson
+  json <- liftEffect (getGitStatusJson (toNullable Nothing))
   ok' jsonHeaders json
 
-foreign import getGitStatusJson :: Effect String
+foreign import getGitStatusJson :: Nullable String -> Effect String
 
 -- =============================================================================
 -- GET /api/v2/module-source?module=<name>

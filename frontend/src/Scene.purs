@@ -39,6 +39,7 @@ data Scene
   | ModuleSignatureMap String String -- Full-screen signature treemap (pkg, module)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
   | AnnotationReport                -- Interactive annotation report view
+  | ProjectManagement               -- Project onboarding / management screen
 
 derive instance eqScene :: Eq Scene
 
@@ -53,6 +54,7 @@ instance showScene :: Show Scene where
   show (ModuleSignatureMap pkg mod) = "ModuleSignatureMap(" <> pkg <> "," <> mod <> ")"
   show TypeClassGrid = "TypeClassGrid"
   show AnnotationReport = "AnnotationReport"
+  show ProjectManagement = "ProjectManagement"
 
 -- | Get the parent scene for back navigation
 parentScene :: Scene -> Scene
@@ -67,6 +69,7 @@ parentScene = case _ of
   ModuleSignatureMap pkg _ -> PkgTreemap pkg                -- Back to package treemap
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
   AnnotationReport -> GalaxyTreemap        -- Report view returns to galaxy
+  ProjectManagement -> ProjectManagement   -- Root-level, no parent
 
 -- | A segment in the breadcrumb trail
 type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
@@ -76,6 +79,7 @@ type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
 -- | Earlier segments are clickable navigation targets.
 sceneBreadcrumbs :: Scene -> Array BreadcrumbSegment
 sceneBreadcrumbs = case _ of
+  ProjectManagement   -> [{ kind: "", label: "Projects", scene: ProjectManagement }]
   GalaxyTreemap       -> [reg]
   GalaxyBeeswarm      -> [reg]
   TypeClassGrid       -> [reg]
@@ -106,6 +110,7 @@ sceneLabel = case _ of
   ModuleSignatureMap _ mod -> shortModuleName mod
   TypeClassGrid -> "Type Classes"
   AnnotationReport -> "Annotations"
+  ProjectManagement -> "Projects"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
 isGalaxyScene :: Scene -> Boolean
@@ -145,6 +150,7 @@ sceneFromString str
   | str == "SolarSwarm" = Just SolarSwarm
   | str == "TypeClassGrid" = Just TypeClassGrid
   | str == "AnnotationReport" = Just AnnotationReport
+  | str == "ProjectManagement" = Just ProjectManagement
   | String.take 11 str == "PkgTreemap(" =
       let inner = String.drop 11 str
           pkg = String.take (String.length inner - 1) inner  -- Remove trailing ")"

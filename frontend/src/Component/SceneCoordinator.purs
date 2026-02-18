@@ -65,6 +65,7 @@ import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
+import CE2.Component.ProjectManagementViz as ProjectManagementViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
@@ -129,6 +130,7 @@ type Input =
 data Output
   = RequestPackageSetData
   | SceneChanged Scene
+  | ProjectLoaded          -- A project was loaded; AppShell should re-fetch all data
 
 -- | Slot type for parent component
 type Slot = H.Slot Query Output
@@ -152,6 +154,7 @@ type Slots =
   , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
   , slideOutPanel :: SlideOutPanel.Slot Unit
   , annotationReportViz :: AnnotationReportViz.Slot Unit
+  , projectManagementViz :: ProjectManagementViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -192,6 +195,9 @@ _slideOutPanel = Proxy
 
 _annotationReportViz :: Proxy "annotationReportViz"
 _annotationReportViz = Proxy
+
+_projectManagementViz :: Proxy "projectManagementViz"
+_projectManagementViz = Proxy
 
 -- | Captured position for transitions (from treemap cells or beeswarm)
 type CapturedPosition = { name :: String, x :: Number, y :: Number, r :: Number }
@@ -291,6 +297,9 @@ type State =
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
+    -- Project management
+  , loadedProjects :: Array Loader.ProjectInfo
+
     -- Browser history integration
   , historyCleanup :: Maybe (Effect Unit)  -- Cleanup function for popstate listener
 
@@ -316,6 +325,7 @@ data Action
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
   | HandleModuleSignatureMapOutput ModuleSignatureMapViz.Output
   | HandleAnnotationReportOutput AnnotationReportViz.Output
+  | HandleProjectManagementOutput ProjectManagementViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -385,6 +395,7 @@ initialState input =
   , purityData: Nothing
   , purityPeek: false
   , hideInfraLinks: false
+  , loadedProjects: []
   , historyCleanup: Nothing
   , searchQuery: ""
   , searchResults: []
@@ -504,6 +515,11 @@ renderHeaderBar state =
         [ HP.style "display: flex; align-items: center; gap: 8px;" ]
         [ -- Search input with dropdown
           renderSearchInput state
+        , HH.button
+            [ HE.onClick \_ -> NavigateTo ProjectManagement
+            , HP.style $ toggleButtonStyle (state.scene == ProjectManagement) textColor
+            ]
+            [ HH.text "Projects" ]
         , HH.button
             [ HE.onClick \_ -> NavigateTo TypeClassGrid
             , HP.style $ toggleButtonStyle (state.scene == TypeClassGrid) textColor
@@ -1053,6 +1069,11 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading annotations..." ]
 
+  ProjectManagement ->
+    HH.slot _projectManagementViz unit ProjectManagementViz.component
+      { projects: state.loadedProjects }
+      HandleProjectManagementOutput
+
 -- =============================================================================
 -- Action Handlers
 -- =============================================================================
@@ -1337,6 +1358,21 @@ handleAction = case _ of
     AnnotationReportViz.NavigateToModule pkgName modName -> do
       log $ "[SceneCoordinator] Report navigation to: " <> pkgName <> "/" <> modName
       handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
+
+  HandleProjectManagementOutput output -> case output of
+    ProjectManagementViz.ProjectAdded _loadResult -> do
+      log "[SceneCoordinator] Project loaded, notifying AppShell"
+      H.raise ProjectLoaded
+    ProjectManagementViz.NavigateToProject _projectId -> do
+      log "[SceneCoordinator] Navigate to loaded project"
+      H.raise ProjectLoaded
+    ProjectManagementViz.ProjectDeleted _projectId -> do
+      log "[SceneCoordinator] Project deleted"
+      -- Re-fetch projects list
+      result <- liftAff Loader.fetchV2Projects
+      case result of
+        Right projects -> H.modify_ _ { loadedProjects = projects }
+        Left _ -> pure unit
 
   HandleDeclarationDetailOutput output -> case output of
     DeclarationDetailViz.BackToModuleOverview -> do
@@ -1826,6 +1862,16 @@ prepareSceneData state = case state.scene of
         _, _ -> pure unit
     pure unit
 
+  ProjectManagement -> do
+    log "[SceneCoordinator] ProjectManagement: fetching projects list"
+    result <- liftAff Loader.fetchV2Projects
+    case result of
+      Right projects -> do
+        log $ "[SceneCoordinator] Loaded " <> show (Array.length projects) <> " projects"
+        H.modify_ _ { loadedProjects = projects }
+      Left err ->
+        log $ "[SceneCoordinator] Failed to load projects: " <> err
+
 -- =============================================================================
 -- Query Handlers
 -- =============================================================================
@@ -1912,6 +1958,7 @@ themeForScene = case _ of
   ModuleSignatureMap _ _ -> MistTheme
   TypeClassGrid -> MidnightTheme
   AnnotationReport -> DaylightTheme
+  ProjectManagement -> DaylightTheme
 
 -- | Canonical state code for precise communication
 -- | See docs/kb/reference/ce2-state-machine-analysis.md for full naming system
@@ -1948,6 +1995,7 @@ canonicalStateCode state = case state.scene of
   TypeClassGrid -> "T"       -- Type class grid view
 
   AnnotationReport -> "R"    -- Annotation report view
+  ProjectManagement -> "P"   -- Project management view
 
   where
   scopeDigit :: BeeswarmScope -> String

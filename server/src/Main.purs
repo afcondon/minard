@@ -16,6 +16,7 @@ import HTTPurple.Headers (headers)
 import Routing.Duplex (RouteDuplex', root, path, int, segment)
 import Routing.Duplex.Generic (noArgs, sum)
 import API.Annotations as Annotations
+import API.Projects as Projects
 import API.Unified as Unified
 
 -- =============================================================================
@@ -58,6 +59,11 @@ data Route
   | V2Annotations        -- GET (list/filter) and POST (create)
   | V2Annotation Int     -- GET (single) and PATCH (update)
   | V2Report             -- GET markdown codebase report
+  -- Projects (V2 management)
+  | V2ListProjects       -- GET /api/v2/projects
+  | V2ValidatePath       -- POST /api/v2/projects/validate
+  | V2LoadProject        -- POST /api/v2/projects/load
+  | V2DeleteProject Int  -- DELETE /api/v2/projects/:id
   -- Health
   | Health
 
@@ -89,6 +95,10 @@ route = root $ sum
   , "V2Annotations": path "api/v2/annotations" noArgs
   , "V2Annotation": path "api/v2/annotations" (int segment)
   , "V2Report": path "api/v2/report" noArgs
+  , "V2ListProjects": path "api/v2/projects" noArgs
+  , "V2ValidatePath": path "api/v2/projects/validate" noArgs
+  , "V2LoadProject": path "api/v2/projects/load" noArgs
+  , "V2DeleteProject": path "api/v2/projects" (int segment)
   , "Health": path "health" noArgs
   }
 
@@ -157,9 +167,13 @@ main = launchAff_ do
     log "  GET/POST /api/v2/annotations             - List/create annotations"
     log "  GET/PATCH /api/v2/annotations/:id        - Get/update annotation"
     log "  GET /api/v2/report                       - Markdown codebase report"
+    log "  GET /api/v2/projects                     - List loaded projects"
+    log "  POST /api/v2/projects/validate           - Validate project path"
+    log "  POST /api/v2/projects/load               - Load project via loader"
+    log "  DELETE /api/v2/projects/:id              - Delete project + data"
     log "  GET /health                              - Health check"
   where
-  corsHeaders = headers { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
+  corsHeaders = headers { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
   mkRouter db { route: r, query, method, body } =
     let mProject = Object.lookup "project" query >>= Int.fromString
     in case r of
@@ -207,4 +221,21 @@ main = launchAff_ do
       Options -> ok' corsHeaders ""
       _ -> ok "{ \"error\": \"Method not allowed\" }"
     V2Report -> Annotations.report db
+    V2ListProjects -> Projects.listProjects db
+    V2ValidatePath -> case method of
+      Post -> do
+        bodyStr <- toString body
+        Projects.validatePath bodyStr
+      Options -> ok' corsHeaders ""
+      _ -> ok "{ \"error\": \"Method not allowed\" }"
+    V2LoadProject -> case method of
+      Post -> do
+        bodyStr <- toString body
+        Projects.loadProject db bodyStr dbPath
+      Options -> ok' corsHeaders ""
+      _ -> ok "{ \"error\": \"Method not allowed\" }"
+    V2DeleteProject projectId -> case method of
+      Delete -> Projects.deleteProject db projectId
+      Options -> ok' corsHeaders ""
+      _ -> ok "{ \"error\": \"Method not allowed\" }"
     Health -> ok "OK"

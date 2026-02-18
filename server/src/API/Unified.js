@@ -610,12 +610,14 @@ import { resolve, join } from 'path';
  * Returns: { modified: [...], staged: [...], untracked: [...] }
  * Each entry is a module name (e.g., "CE2.Component.SceneCoordinator")
  */
-export const getGitStatusJson = () => {
+// repoPath: nullable string. When provided, runs git status in that directory
+// and derives module names from any .purs files. When null, falls back to
+// the legacy behavior (minard frontend/src prefix, CE2.* module names).
+export const getGitStatusJson = (repoPath) => () => {
   try {
-    // Run git status from the minard root (one level up from server)
-    const projectRoot = process.cwd().replace(/\/server$/, '');
+    const cwd = repoPath || process.cwd().replace(/\/server$/, '');
     const output = execSync('git status --porcelain', {
-      cwd: projectRoot,
+      cwd,
       encoding: 'utf8'
     });
 
@@ -629,31 +631,36 @@ export const getGitStatusJson = () => {
       const statusCode = line.substring(0, 2);
       const filePath = line.substring(3).trim();
 
-      // Only process PureScript files in frontend/src
-      if (!filePath.endsWith('.purs') || !filePath.startsWith('frontend/src/')) {
+      // Only process PureScript source files
+      if (!filePath.endsWith('.purs')) {
         continue;
       }
 
-      // Convert path to module name
-      // frontend/src/CE2/Component/SceneCoordinator.purs -> CE2.Component.SceneCoordinator
-      const moduleName = filePath
-        .replace('frontend/src/', '')
+      // Convert path to module name by stripping src/ prefix variants and replacing / with .
+      // Handles: src/Foo/Bar.purs, frontend/src/CE2/X.purs, test/Foo.purs, etc.
+      let modulePath = filePath;
+      // Strip common source directory prefixes
+      const srcPrefixes = ['frontend/src/', 'src/', 'test/'];
+      for (const prefix of srcPrefixes) {
+        if (modulePath.startsWith(prefix)) {
+          modulePath = modulePath.slice(prefix.length);
+          break;
+        }
+      }
+      const moduleName = modulePath
         .replace(/\.purs$/, '')
         .replace(/\//g, '.');
 
       // Parse git status codes
-      // First char = staged status, Second char = working tree status
       const stagedStatus = statusCode[0];
       const workingStatus = statusCode[1];
 
       if (statusCode === '??') {
         untracked.push(moduleName);
       } else {
-        // Check if staged (first column has M, A, D, R, C)
         if ('MADRC'.includes(stagedStatus)) {
           staged.push(moduleName);
         }
-        // Check if modified in working tree (second column has M)
         if (workingStatus === 'M') {
           modified.push(moduleName);
         }
