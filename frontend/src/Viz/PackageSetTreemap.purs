@@ -46,7 +46,7 @@ import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreema
 import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
 import CE2.Data.Loader (PackageSetPackage, GitStatusData)
-import CE2.Types (CellContents(..), ColorMode(..), GitFileStatus(..), gitStatusColor, ViewTheme, isDarkTheme, themeColors)
+import CE2.Types (CellContents(..), ColorMode(..), GitFileStatus(..), ReachabilityStatus(..), PackageReachability, getModuleReachability, gitStatusColor, ViewTheme, isDarkTheme, themeColors)
 
 -- =============================================================================
 -- Types
@@ -73,6 +73,7 @@ type Config =
   , modulesByPackage :: Map String (Array ModuleCircleData)  -- Module data grouped by package name
   , gitStatus :: Maybe GitStatusData                         -- Git status for module coloring
   , colorMode :: ColorMode                                   -- Current color mode
+  , reachabilityData :: Maybe PackageReachability            -- Reachability for dead code coloring
   }
 
 -- | Package with computed treemap position
@@ -756,10 +757,15 @@ renderModuleCirclesInCell config colors (PackageRenderData d) =
               cy = d.cy + circle.y * scaleFactor
               r = circle.r * scaleFactor
 
-              -- Git status coloring
+              -- Module status coloring
               gitSt = getModuleGitStatus config.gitStatus m.name
+              reachStatus = config.reachabilityData <#> \rd -> getModuleReachability rd m.name
               fillColor = case config.colorMode of
                 GitStatus -> gitStatusColor gitSt
+                Reachability -> case reachStatus of
+                  Just EntryPoint  -> "#d6eaf8"
+                  Just Unreachable -> "rgba(180, 180, 180, 0.25)"
+                  _                -> colors.stroke
                 _ -> colors.stroke
               strokeColor = case config.colorMode of
                 GitStatus -> case gitSt of
@@ -767,11 +773,18 @@ renderModuleCirclesInCell config colors (PackageRenderData d) =
                   GitStaged -> "#1e8449"
                   GitUntracked -> "#7d3c98"
                   GitClean -> "rgba(150, 150, 150, 0.3)"
+                Reachability -> case reachStatus of
+                  Just EntryPoint  -> "#2980b9"
+                  Just Unreachable -> "rgba(150, 150, 150, 0.4)"
+                  _                -> colors.text
                 _ -> colors.text
               strokeW = case config.colorMode of
                 GitStatus -> case gitSt of
                   GitClean -> "0.5"
                   _ -> "2.5"
+                Reachability -> case reachStatus of
+                  Just EntryPoint -> "3"
+                  _ -> "0.5"
                 _ -> "0.5"
             in
               elem Circle

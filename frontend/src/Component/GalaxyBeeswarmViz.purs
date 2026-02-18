@@ -316,6 +316,7 @@ renderTreemap theme packages _heroMode onRectClick = do
         , modulesByPackage: Map.empty  -- Not needed for text-only treemap background
         , gitStatus: Nothing
         , colorMode: DefaultUniform
+        , reachabilityData: Nothing
         }
   Treemap.render config packages
 

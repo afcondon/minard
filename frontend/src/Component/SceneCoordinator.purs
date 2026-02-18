@@ -789,6 +789,8 @@ renderScene state =
               Just v2 -> v2.modules
               Nothing -> []
           , gitStatus: state.gitStatus
+          , reachabilityData: state.reachabilityData
+          , reachabilityPeek: state.reachabilityPeek
           }
           HandleGalaxyTreemapOutput
       Nothing ->
@@ -1177,10 +1179,11 @@ handleAction = case _ of
     -- ViewMode resets to PrimaryView on scene change
     liftEffect $ pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
 
-    -- If reachability mode is active and we're entering a package view, recompute
+    -- If reachability mode is active, recompute for the target scene
     when (state.colorMode == Reachability) $ case targetScene of
       PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
       PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
+      GalaxyTreemap -> computeAndStoreGlobalReachability
       _ -> pure unit
 
     -- If cluster mode is active and we're entering a package view, recompute
@@ -1220,6 +1223,13 @@ handleAction = case _ of
         , clusterData = Nothing       -- Clear stale cluster data (package-specific)
         , purityData = Nothing        -- Clear stale purity data (package-specific)
         }
+
+      -- If reachability mode is active, recompute for the target scene
+      when (state.colorMode == Reachability) $ case targetScene of
+        PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
+        PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
+        GalaxyTreemap -> computeAndStoreGlobalReachability
+        _ -> pure unit
 
       H.raise (SceneChanged targetScene)
       newState <- H.get
@@ -1417,6 +1427,7 @@ handleAction = case _ of
         case state.scene of
           PkgTreemap pkg -> computeAndStoreReachability pkg
           PkgModuleBeeswarm pkg -> computeAndStoreReachability pkg
+          GalaxyTreemap -> computeAndStoreGlobalReachability
           _ -> pure unit
     where
       computeAndStoreReachability pkg = do
@@ -1461,10 +1472,11 @@ handleAction = case _ of
     -- Only activate peek when not typing in search
     when (not state.searchOpen) do
       H.modify_ _ { reachabilityPeek = true }
-      -- Compute reachability if not cached and in a package view
+      -- Compute reachability if not cached
       when (state.reachabilityData == Nothing) $ case state.scene of
         PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
         PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
+        GalaxyTreemap -> computeAndStoreGlobalReachability
         _ -> pure unit
 
   ReachabilityPeekOff -> do
@@ -2134,6 +2146,40 @@ computePackageReachability targetPkg bundleModule allImports allModules =
   in
     { reachable, entryPoints, packageName: targetPkg, isApp }
 
+-- | Compute global reachability: which modules across ALL packages are
+-- | transitively reachable from the app entry point (first package with bundleModule).
+-- | Returns PackageReachability with packageName: "*" for galaxy-level coloring.
+computeGlobalReachability
+  :: Array Loader.V2ModuleImports
+  -> Array Loader.V2ModuleListItem
+  -> Array Loader.V2Package
+  -> PackageReachability
+computeGlobalReachability allImports allModules allPackages =
+  let
+    -- Find entry point: first package with a bundleModule
+    mEntry = Array.findMap (\p -> p.bundleModule) allPackages
+
+    -- All module names
+    allModNames :: Set String
+    allModNames = Set.fromFoldable $ allModules <#> _.name
+
+    -- Global forward-import graph (no package restriction)
+    globalGraph =
+      { nodes: Array.fromFoldable allModNames
+      , edges: Map.fromFoldable $
+          allImports <#> \imp -> Tuple imp.moduleName (Set.fromFoldable imp.imports)
+      }
+
+    -- Entry points and BFS
+    entryPoints = case mEntry of
+      Just mainMod | Set.member mainMod allModNames -> Set.singleton mainMod
+      _ -> Set.empty
+
+    reachable = Set.unions $
+      (Array.fromFoldable entryPoints) <#> \ep -> GraphAlgo.reachableFrom ep globalGraph
+  in
+    { reachable, entryPoints, packageName: "*", isApp: true }
+
 -- =============================================================================
 -- Package Cluster Computation
 -- =============================================================================
@@ -2219,6 +2265,19 @@ computeAndStoreReachabilityForPeek pkg = do
               Nothing -> "App reachability from " <> show (Set.toUnfoldable reach.entryPoints :: Array String) <> " (heuristic)"
             else "Library reachability"
       log $ "[SceneCoordinator] " <> modeLabel <> " for " <> pkg <> ": "
+          <> show (Set.size reach.reachable) <> " reachable, "
+          <> show (Set.size reach.entryPoints) <> " entry points"
+      H.modify_ _ { reachabilityData = Just reach }
+    Nothing -> pure unit
+
+-- | Helper: compute and store global reachability (galaxy-level, all packages)
+computeAndStoreGlobalReachability :: forall m. MonadAff m => H.HalogenM State Action Slots Output m Unit
+computeAndStoreGlobalReachability = do
+  state <- H.get
+  case state.v2Data of
+    Just v2 -> do
+      let reach = computeGlobalReachability v2.imports v2.modules v2.packages
+      log $ "[SceneCoordinator] Global reachability: "
           <> show (Set.size reach.reachable) <> " reachable, "
           <> show (Set.size reach.entryPoints) <> " entry points"
       H.modify_ _ { reachabilityData = Just reach }

@@ -22,7 +22,7 @@ import Data.Array as Array
 import Data.Foldable (foldl)
 import Data.Int (toNumber)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.Tuple (Tuple(..))
@@ -37,7 +37,7 @@ import Halogen.Subscription as HS
 
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
-import CE2.Types (ViewTheme, ColorMode, CellContents(..), projectPackages)
+import CE2.Types (ViewTheme, ColorMode(..), CellContents(..), PackageReachability, projectPackages)
 import CE2.Viz.PackageSetTreemap as Treemap
 
 -- =============================================================================
@@ -52,6 +52,8 @@ type Input =
   , infraLayerThreshold :: Int  -- Hide deps to packages with topoLayer < threshold (0 = show all, 2 = hide layers 0-1)
   , modules :: Array Loader.V2ModuleListItem  -- All modules across all packages
   , gitStatus :: Maybe Loader.GitStatusData   -- Git status for module coloring
+  , reachabilityData :: Maybe PackageReachability  -- For reachability coloring in galaxy view
+  , reachabilityPeek :: Boolean                   -- True while R key held (peek overlay)
   }
 
 -- | Output to parent
@@ -169,12 +171,14 @@ handleAction = case _ of
         modulesChanged = Array.length input.modules /= Array.length lastInput.modules
         gitStatusChanged = (input.gitStatus /= Nothing) /= (lastInput.gitStatus /= Nothing)
                         || (input.gitStatus /= lastInput.gitStatus)
+        reachabilityChanged = input.reachabilityData /= lastInput.reachabilityData
+        peekChanged = input.reachabilityPeek /= lastInput.reachabilityPeek
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
     -- Any change requires full re-render (HATS trees embed all config)
-    when (packagesChanged || themeChanged || colorModeChanged || thresholdChanged || modulesChanged || gitStatusChanged) do
+    when (packagesChanged || themeChanged || colorModeChanged || thresholdChanged || modulesChanged || gitStatusChanged || reachabilityChanged || peekChanged) do
       log $ "[GalaxyTreemapViz] Input changed ("
           <> (if packagesChanged then "packages " else "")
           <> (if themeChanged then "theme " else "")
@@ -182,6 +186,7 @@ handleAction = case _ of
           <> (if thresholdChanged then "threshold " else "")
           <> (if modulesChanged then "modules " else "")
           <> (if gitStatusChanged then "gitStatus " else "")
+          <> (if reachabilityChanged then "reachability " else "")
           <> "), re-rendering"
       renderTreemap input
 
@@ -227,6 +232,12 @@ buildModulesByPackage modules =
       acc
   ) Map.empty modules
 
+-- | Compute effective color mode: peek overrides to Reachability when R held and data available
+effectiveColorMode :: Input -> ColorMode
+effectiveColorMode input
+  | input.reachabilityPeek && isJust input.reachabilityData = Reachability
+  | otherwise = input.colorMode
+
 -- | Build treemap config from input (without click handlers, for pure computations)
 buildTreemapConfig :: Input -> Treemap.Config
 buildTreemapConfig input =
@@ -242,7 +253,8 @@ buildTreemapConfig input =
   , infraLayerThreshold: input.infraLayerThreshold
   , modulesByPackage: buildModulesByPackage input.modules
   , gitStatus: input.gitStatus
-  , colorMode: input.colorMode
+  , colorMode: effectiveColorMode input
+  , reachabilityData: input.reachabilityData
   }
 
 -- | Build treemap config from input with click handlers
@@ -260,7 +272,8 @@ buildTreemapConfigWithHandlers input onRectClick onCircleClick =
   , infraLayerThreshold: input.infraLayerThreshold
   , modulesByPackage: buildModulesByPackage input.modules
   , gitStatus: input.gitStatus
-  , colorMode: input.colorMode
+  , colorMode: effectiveColorMode input
+  , reachabilityData: input.reachabilityData
   }
 
 -- | Build click handler that routes D3 events to Halogen actions via the listener
