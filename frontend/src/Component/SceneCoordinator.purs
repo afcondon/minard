@@ -785,6 +785,10 @@ renderScene state =
           , theme: theme
           , colorMode: state.colorMode
           , infraLayerThreshold: if state.hideInfraLinks then 2 else 0
+          , modules: case state.v2Data of
+              Just v2 -> v2.modules
+              Nothing -> []
+          , gitStatus: state.gitStatus
           }
           HandleGalaxyTreemapOutput
       Nothing ->

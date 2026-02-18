@@ -19,6 +19,7 @@ module CE2.Component.GalaxyBeeswarmViz
 import Prelude
 
 import Data.Array as Array
+import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe, isJust)
 import Data.Set as Set
 import Effect (Effect)
@@ -312,6 +313,9 @@ renderTreemap theme packages _heroMode onRectClick = do
         , onRectClick: onRectClick
         , onCircleClick: Nothing  -- No circles in this layer (they're in beeswarm layer)
         , infraLayerThreshold: 0  -- Beeswarm background treemap doesn't use highlighting
+        , modulesByPackage: Map.empty  -- Not needed for text-only treemap background
+        , gitStatus: Nothing
+        , colorMode: DefaultUniform
         }
   Treemap.render config packages
 

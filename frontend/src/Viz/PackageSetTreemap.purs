@@ -7,6 +7,7 @@
 -- | - No modules shown at this level
 module CE2.Viz.PackageSetTreemap
   ( Config
+  , ModuleCircleData
   , PackageRenderData(..)
   , render
   , renderWithHighlighting  -- Render with hover highlighting enabled
@@ -41,12 +42,21 @@ import Hylograph.Internal.Behavior.Types (HighlightClass(..))  -- Primary, Relat
 import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
 import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreemapConfig, squarify, phi)
 
-import CE2.Data.Loader (PackageSetPackage)
-import CE2.Types (CellContents(..), ColorMode, ViewTheme, isDarkTheme, themeColors)
+-- Circle packing
+import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
+
+import CE2.Data.Loader (PackageSetPackage, GitStatusData)
+import CE2.Types (CellContents(..), ColorMode(..), GitFileStatus(..), gitStatusColor, ViewTheme, isDarkTheme, themeColors)
 
 -- =============================================================================
 -- Types
 -- =============================================================================
+
+-- | Lightweight module data for circle packing within package cells
+type ModuleCircleData =
+  { name :: String
+  , loc :: Number
+  }
 
 -- | Configuration for treemap rendering
 type Config =
@@ -60,6 +70,9 @@ type Config =
   , onRectClick :: Maybe (String -> Effect Unit)    -- Click handler for rect → package treemap
   , onCircleClick :: Maybe (String -> Effect Unit)  -- Click handler for circle → neighborhood/SolarSwarm
   , infraLayerThreshold :: Int       -- Hide deps to packages with topoLayer < threshold (0 = show all, 2 = hide layers 0-1)
+  , modulesByPackage :: Map String (Array ModuleCircleData)  -- Module data grouped by package name
+  , gitStatus :: Maybe GitStatusData                         -- Git status for module coloring
+  , colorMode :: ColorMode                                   -- Current color mode
   }
 
 -- | Package with computed treemap position
@@ -651,7 +664,12 @@ renderCellContent config colors (PackageRenderData d) =
         else elem Group [] [ makeCircle, makeSourceIndicator, makeLabel ]
       else elem Group [] []
 
-    -- ModuleCircles and BubblePack fall back to Circle for package set view
+    CellModuleCircles ->
+      if d.width > 8.0 && d.height > 8.0
+      then renderModuleCirclesInCell config colors (PackageRenderData d)
+      else elem Group [] []
+
+    -- BubblePack falls back to Circle for package set view
     _ ->
       if d.width > 8.0 && d.height > 8.0
       then
@@ -659,6 +677,127 @@ renderCellContent config colors (PackageRenderData d) =
         then elem Group [] [ makeAppRect, makeLabel ]
         else elem Group [] [ makeCircle, makeSourceIndicator, makeLabel ]
       else elem Group [] []
+
+-- | Get git status for a module by name
+getModuleGitStatus :: Maybe GitStatusData -> String -> GitFileStatus
+getModuleGitStatus mGitStatus moduleName = case mGitStatus of
+  Nothing -> GitClean
+  Just gs
+    | Array.elem moduleName gs.modified -> GitModified
+    | Array.elem moduleName gs.staged -> GitStaged
+    | Array.elem moduleName gs.untracked -> GitUntracked
+    | otherwise -> GitClean
+
+-- | Render circle-packed module circles within a package cell
+-- | When colorMode is GitStatus, circles get git-status coloring
+renderModuleCirclesInCell :: Config -> { background :: String, stroke :: String, text :: String, textMuted :: String } -> PackageRenderData -> Tree
+renderModuleCirclesInCell config colors (PackageRenderData d) =
+  let
+    modules = fromMaybe [] $ Map.lookup d.name config.modulesByPackage
+
+    -- Label below the circles cluster
+    makeLabel =
+      if d.width > 50.0 && d.height > 30.0
+      then elem Text
+        [ thunkedNum "x" d.cx
+        , thunkedNum "y" (d.cy + (min d.width d.height) / 2.0 - 4.0)
+        , staticStr "text-anchor" "middle"
+        , thunkedStr "font-size" (if d.width > 80.0 then "12" else "9")
+        , staticStr "fill" colors.textMuted
+        , staticStr "font-family" "'Courier New', Courier, monospace"
+        , thunkedStr "textContent" (truncateName (floor (d.width / 6.0)) d.name)
+        ]
+        []
+      else elem Group [] []
+
+    -- Fallback to single circle when no module data
+    fallbackCircle =
+      let circleElem = elem Circle
+            [ thunkedNum "cx" d.cx
+            , thunkedNum "cy" d.cy
+            , thunkedNum "r" d.circleR
+            , staticStr "fill" colors.stroke
+            , staticStr "stroke" colors.text
+            , staticStr "stroke-width" "0.5"
+            , staticStr "class" "package-circle"
+            ]
+            []
+      in case config.onCircleClick of
+        Just handler -> withBehaviors [ onClick (handler d.name) ] circleElem
+        Nothing -> circleElem
+  in
+    if Array.null modules
+    then
+      -- No module data — fall back to single circle
+      elem Group [] [ fallbackCircle, makeLabel ]
+    else
+      let
+        -- Compute circle radii from LOC (sqrt scaling, same approach as single circle)
+        moduleCircles = modules <#> \m ->
+          { x: 0.0
+          , y: 0.0
+          , r: max 3.0 (sqrt (m.loc / 1000.0) * 10.0)
+          }
+
+        -- Pack circles together
+        packed = packSiblingsMap moduleCircles
+
+        -- Scale to fit within the cell (leave margin for label)
+        maxR = (min d.width d.height) / 2.0 - 4.0
+        scaleFactor = if packed.radius > 0.0
+                      then min 1.0 (maxR / packed.radius)
+                      else 1.0
+
+        -- Render each module circle
+        moduleElems = Array.zipWith
+          (\m circle ->
+            let
+              cx = d.cx + circle.x * scaleFactor
+              cy = d.cy + circle.y * scaleFactor
+              r = circle.r * scaleFactor
+
+              -- Git status coloring
+              gitSt = getModuleGitStatus config.gitStatus m.name
+              fillColor = case config.colorMode of
+                GitStatus -> gitStatusColor gitSt
+                _ -> colors.stroke
+              strokeColor = case config.colorMode of
+                GitStatus -> case gitSt of
+                  GitModified -> "#d35400"
+                  GitStaged -> "#1e8449"
+                  GitUntracked -> "#7d3c98"
+                  GitClean -> "rgba(150, 150, 150, 0.3)"
+                _ -> colors.text
+              strokeW = case config.colorMode of
+                GitStatus -> case gitSt of
+                  GitClean -> "0.5"
+                  _ -> "2.5"
+                _ -> "0.5"
+            in
+              elem Circle
+                [ thunkedNum "cx" cx
+                , thunkedNum "cy" cy
+                , thunkedNum "r" r
+                , thunkedStr "fill" fillColor
+                , thunkedStr "stroke" strokeColor
+                , thunkedStr "stroke-width" strokeW
+                , staticStr "class" "module-circle"
+                ]
+                []
+          )
+          modules
+          packed.circles
+
+        -- Wrap in a group with optional click handler
+        circlesGroup = elem Group
+          [ staticStr "class" "module-circles-pack" ]
+          moduleElems
+
+        circlesWithClick = case config.onCircleClick of
+          Just handler -> withBehaviors [ onClick (handler d.name) ] circlesGroup
+          Nothing -> circlesGroup
+      in
+        elem Group [] [ circlesWithClick, makeLabel ]
 
 -- | Truncate name to fit
 truncateName :: Int -> String -> String

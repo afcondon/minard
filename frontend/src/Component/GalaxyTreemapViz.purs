@@ -20,8 +20,9 @@ import Prelude
 
 import Data.Array as Array
 import Data.Foldable (foldl)
+import Data.Int (toNumber)
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.Tuple (Tuple(..))
@@ -49,6 +50,8 @@ type Input =
   , theme :: ViewTheme
   , colorMode :: ColorMode
   , infraLayerThreshold :: Int  -- Hide deps to packages with topoLayer < threshold (0 = show all, 2 = hide layers 0-1)
+  , modules :: Array Loader.V2ModuleListItem  -- All modules across all packages
+  , gitStatus :: Maybe Loader.GitStatusData   -- Git status for module coloring
   }
 
 -- | Output to parent
@@ -163,17 +166,22 @@ handleAction = case _ of
         themeChanged = input.theme /= lastInput.theme
         colorModeChanged = input.colorMode /= lastInput.colorMode
         thresholdChanged = input.infraLayerThreshold /= lastInput.infraLayerThreshold
+        modulesChanged = Array.length input.modules /= Array.length lastInput.modules
+        gitStatusChanged = (input.gitStatus /= Nothing) /= (lastInput.gitStatus /= Nothing)
+                        || (input.gitStatus /= lastInput.gitStatus)
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
     -- Any change requires full re-render (HATS trees embed all config)
-    when (packagesChanged || themeChanged || colorModeChanged || thresholdChanged) do
+    when (packagesChanged || themeChanged || colorModeChanged || thresholdChanged || modulesChanged || gitStatusChanged) do
       log $ "[GalaxyTreemapViz] Input changed ("
           <> (if packagesChanged then "packages " else "")
           <> (if themeChanged then "theme " else "")
           <> (if colorModeChanged then "colorMode " else "")
           <> (if thresholdChanged then "threshold " else "")
+          <> (if modulesChanged then "modules " else "")
+          <> (if gitStatusChanged then "gitStatus " else "")
           <> "), re-rendering"
       renderTreemap input
 
@@ -208,6 +216,17 @@ renderTreemap input = do
       <> " packages, threshold=" <> show input.infraLayerThreshold
   liftEffect $ Treemap.renderWithHighlighting config input.packages
 
+-- | Group modules by package name for circle packing
+buildModulesByPackage :: Array Loader.V2ModuleListItem -> Map.Map String (Array Treemap.ModuleCircleData)
+buildModulesByPackage modules =
+  foldl (\acc m ->
+    let entry = { name: m.name, loc: toNumber (fromMaybe 0 m.loc) }
+    in Map.alter
+      (Just <<< Array.cons entry <<< fromMaybe [])
+      m.package.name
+      acc
+  ) Map.empty modules
+
 -- | Build treemap config from input (without click handlers, for pure computations)
 buildTreemapConfig :: Input -> Treemap.Config
 buildTreemapConfig input =
@@ -217,10 +236,13 @@ buildTreemapConfig input =
   , projectPackages: Set.fromFoldable projectPackages
   , transitivePackages: computeTransitivePackages input.packages
   , theme: input.theme
-  , cellContents: CellCircle
+  , cellContents: CellModuleCircles
   , onRectClick: Nothing
   , onCircleClick: Nothing
   , infraLayerThreshold: input.infraLayerThreshold
+  , modulesByPackage: buildModulesByPackage input.modules
+  , gitStatus: input.gitStatus
+  , colorMode: input.colorMode
   }
 
 -- | Build treemap config from input with click handlers
@@ -232,10 +254,13 @@ buildTreemapConfigWithHandlers input onRectClick onCircleClick =
   , projectPackages: Set.fromFoldable projectPackages
   , transitivePackages: computeTransitivePackages input.packages
   , theme: input.theme
-  , cellContents: CellCircle
+  , cellContents: CellModuleCircles
   , onRectClick: onRectClick
   , onCircleClick: onCircleClick
   , infraLayerThreshold: input.infraLayerThreshold
+  , modulesByPackage: buildModulesByPackage input.modules
+  , gitStatus: input.gitStatus
+  , colorMode: input.colorMode
   }
 
 -- | Build click handler that routes D3 events to Halogen actions via the listener
