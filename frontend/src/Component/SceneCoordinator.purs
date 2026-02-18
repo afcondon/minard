@@ -64,6 +64,7 @@ import CE2.Component.GalaxyTreemapViz as GalaxyTreemapViz
 import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
+import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
@@ -150,6 +151,7 @@ type Slots =
   , dependencyChordViz :: DependencyChordViz.Slot String
   , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
   , slideOutPanel :: SlideOutPanel.Slot Unit
+  , annotationReportViz :: AnnotationReportViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -187,6 +189,9 @@ _dependencyAdjacencyViz = Proxy
 
 _slideOutPanel :: Proxy "slideOutPanel"
 _slideOutPanel = Proxy
+
+_annotationReportViz :: Proxy "annotationReportViz"
+_annotationReportViz = Proxy
 
 -- | Captured position for transitions (from treemap cells or beeswarm)
 type CapturedPosition = { name :: String, x :: Number, y :: Number, r :: Number }
@@ -252,6 +257,9 @@ type State =
     -- Module annotations (lazy loaded per module, keyed by module name)
   , moduleAnnotations :: Map.Map String (Array Loader.V2Annotation)
 
+    -- All annotations (lazy loaded for AnnotationReport scene)
+  , allAnnotations :: Maybe (Array Loader.V2Annotation)
+
     -- Panel state (tracked by coordinator for visibility)
   , panelOpen :: Boolean
   , panelContent :: SlideOutPanel.PanelContent
@@ -307,6 +315,7 @@ data Action
   | HandleModuleOverviewOutput ModuleOverviewViz.Output
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
   | HandleModuleSignatureMapOutput ModuleSignatureMapViz.Output
+  | HandleAnnotationReportOutput AnnotationReportViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -362,6 +371,7 @@ initialState input =
   , packageCalls: Map.empty       -- Lazy loaded once (all calls) for dependency highlighting
   , allCallsLoaded: false
   , moduleAnnotations: Map.empty
+  , allAnnotations: Nothing
   , panelOpen: false
   , panelContent: SlideOutPanel.NoContent
   , hoveredPackage: Nothing
@@ -499,6 +509,11 @@ renderHeaderBar state =
             , HP.style $ toggleButtonStyle (state.scene == TypeClassGrid) textColor
             ]
             [ HH.text "Types" ]
+        , HH.button
+            [ HE.onClick \_ -> NavigateTo AnnotationReport
+            , HP.style $ toggleButtonStyle (state.scene == AnnotationReport) textColor
+            ]
+            [ HH.text "Report" ]
         , HH.button
             [ HE.onClick \_ -> ToggleGitMode
             , HP.style $ toggleButtonStyle (state.colorMode == GitStatus) textColor
@@ -1019,6 +1034,19 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading type class data..." ]
 
+  AnnotationReport ->
+    case state.allAnnotations, state.v2Data of
+      Just anns, Just v2 ->
+        HH.slot _annotationReportViz unit AnnotationReportViz.component
+          { annotations: anns, packages: v2.packages, modules: v2.modules
+          , moduleDeclarations: state.packageDeclarations
+          }
+          HandleAnnotationReportOutput
+      _, _ ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading annotations..." ]
+
 -- =============================================================================
 -- Action Handlers
 -- =============================================================================
@@ -1272,6 +1300,29 @@ handleAction = case _ of
       let updated = map (map (\a -> if a.id == annId then a { status = newStatus } else a))
                         state.moduleAnnotations
       H.modify_ _ { moduleAnnotations = updated }
+    ModuleSignatureMapViz.AnnotationReplyCreated reply -> do
+      log $ "[SceneCoordinator] Creating reply annotation on " <> reply.targetId <> " supersedes=" <> show reply.supersedes
+      result <- liftAff $ Loader.createAnnotation
+        { targetType: reply.targetType
+        , targetId: reply.targetId
+        , kind: reply.kind
+        , value: reply.value
+        , source: "human"
+        , supersedes: Just reply.supersedes
+        }
+      case result of
+        Right newAnn -> do
+          state <- H.get
+          let modAnns = fromMaybe [] (Map.lookup reply.targetId state.moduleAnnotations)
+              updatedAnns = Array.snoc modAnns newAnn
+          H.modify_ _ { moduleAnnotations = Map.insert reply.targetId updatedAnns state.moduleAnnotations }
+        Left err ->
+          log $ "[SceneCoordinator] Failed to create reply: " <> err
+
+  HandleAnnotationReportOutput output -> case output of
+    AnnotationReportViz.NavigateToModule pkgName modName -> do
+      log $ "[SceneCoordinator] Report navigation to: " <> pkgName <> "/" <> modName
+      handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
 
   HandleDeclarationDetailOutput output -> case output of
     DeclarationDetailViz.BackToModuleOverview -> do
@@ -1730,6 +1781,35 @@ prepareSceneData state = case state.scene of
           Left err ->
             log $ "[SceneCoordinator] Failed to load type class stats: " <> err
 
+  AnnotationReport -> do
+    case state.allAnnotations of
+      Just _ -> log "[SceneCoordinator] AnnotationReport: data cached"
+      Nothing -> do
+        log "[SceneCoordinator] Loading all annotations..."
+        result <- liftAff Loader.fetchAllAnnotations
+        case result of
+          Right anns -> do
+            log $ "[SceneCoordinator] Loaded " <> show (Array.length anns) <> " annotations"
+            H.modify_ _ { allAnnotations = Just anns }
+          Left err ->
+            log $ "[SceneCoordinator] Failed to load annotations: " <> err
+    -- Fork declarations fetch so it doesn't block rendering (Halogen re-renders on completion)
+    _ <- H.fork do
+      st <- H.get
+      case st.v2Data, st.allAnnotations of
+        Just v2, Just anns -> do
+          -- Only fetch declarations for modules that appear in annotations
+          let annotatedModuleNames = Set.fromFoldable $ anns <#> _.targetId
+              annotatedModules = Array.filter (\m -> Set.member m.name annotatedModuleNames) v2.modules
+              missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) annotatedModules
+          when (Array.length missingDeclModules > 0) do
+            log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " annotated modules (bubblepacks)"
+            newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
+            st2 <- H.get
+            H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
+        _, _ -> pure unit
+    pure unit
+
 -- =============================================================================
 -- Query Handlers
 -- =============================================================================
@@ -1815,6 +1895,7 @@ themeForScene = case _ of
   DeclarationDetail _ _ _ -> DaylightTheme
   ModuleSignatureMap _ _ -> MistTheme
   TypeClassGrid -> MidnightTheme
+  AnnotationReport -> DaylightTheme
 
 -- | Canonical state code for precise communication
 -- | See docs/kb/reference/ce2-state-machine-analysis.md for full naming system
@@ -1849,6 +1930,8 @@ canonicalStateCode state = case state.scene of
   ModuleSignatureMap pkg mod -> "S(" <> pkg <> "," <> mod <> ")"
 
   TypeClassGrid -> "T"       -- Type class grid view
+
+  AnnotationReport -> "R"    -- Annotation report view
 
   where
   scopeDigit :: BeeswarmScope -> String

@@ -64,7 +64,8 @@ export const validateCreateFields = (body) => {
     value: String(body.value),
     source: String(body.source),
     confidence: body.confidence != null ? Number(body.confidence) : 1.0,
-    session_id: body.session_id ? String(body.session_id) : null
+    session_id: body.session_id ? String(body.session_id) : null,
+    supersedes: body.supersedes != null ? Number(body.supersedes) : null
   };
 };
 
@@ -104,10 +105,12 @@ export const buildReportMarkdown = (annotationRows) => (moduleStatsRows) => {
     if (!tree[pkg][mod]) tree[pkg][mod] = {};
     if (!tree[pkg][mod][kind]) tree[pkg][mod][kind] = [];
     tree[pkg][mod][kind].push({
+      id: Number(row.id),
       value: row.value,
       status: row.status || 'proposed',
       source: row.source || '',
-      confidence: row.confidence != null ? Number(row.confidence) : 1.0
+      confidence: row.confidence != null ? Number(row.confidence) : 1.0,
+      supersedes: row.supersedes != null ? Number(row.supersedes) : null
     });
   }
 
@@ -138,10 +141,49 @@ export const buildReportMarkdown = (annotationRows) => (moduleStatsRows) => {
       const kinds = Object.keys(tree[pkg][mod]).sort();
       for (const kind of kinds) {
         lines.push(`**${kind}**`);
-        for (const ann of tree[pkg][mod][kind]) {
-          const icon = statusIcon(ann.status);
-          const tag = ann.status !== 'proposed' ? ` [${ann.status}]` : '';
-          lines.push(`- ${icon} ${ann.value}${tag}`);
+        const anns = tree[pkg][mod][kind];
+        // Build threads: group by supersedes chains
+        const byId = {};
+        for (const ann of anns) byId[ann.id] = ann;
+        const roots = anns.filter(a => a.supersedes == null);
+        const replies = anns.filter(a => a.supersedes != null);
+        // Index replies by what they supersede
+        const replyMap = {};
+        for (const r of replies) {
+          if (!replyMap[r.supersedes]) replyMap[r.supersedes] = [];
+          replyMap[r.supersedes].push(r);
+        }
+        // Collect full thread from a root
+        const collectThread = (rootId) => {
+          const chain = [];
+          const queue = replyMap[rootId] || [];
+          for (const r of queue) {
+            chain.push(r);
+            chain.push(...collectThread(r.id));
+          }
+          return chain;
+        };
+        // Track which annotations are rendered as part of a thread
+        const rendered = new Set();
+        for (const root of roots) {
+          rendered.add(root.id);
+          const icon = statusIcon(root.status);
+          const tag = root.status !== 'proposed' ? ` [${root.status}]` : '';
+          lines.push(`- ${icon} ${root.value}${tag}`);
+          const thread = collectThread(root.id);
+          for (const r of thread) {
+            rendered.add(r.id);
+            const src = r.source ? ` *(${r.source})*` : '';
+            lines.push(`  > ${r.value}${src}`);
+          }
+        }
+        // Render any orphan replies (supersedes target outside this kind group)
+        for (const ann of anns) {
+          if (!rendered.has(ann.id)) {
+            const icon = statusIcon(ann.status);
+            const tag = ann.status !== 'proposed' ? ` [${ann.status}]` : '';
+            lines.push(`- ${icon} ${ann.value}${tag}`);
+          }
         }
         lines.push('');
       }

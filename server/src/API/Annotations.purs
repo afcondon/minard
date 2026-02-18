@@ -49,6 +49,7 @@ foreign import validateCreateFields :: Foreign -> Nullable
   , source :: String
   , confidence :: Number
   , session_id :: Nullable String
+  , supersedes :: Nullable Int
   }
 foreign import buildUpdateParts :: Foreign -> Nullable
   { setClause :: String
@@ -112,8 +113,8 @@ create db bodyStr =
         Nothing -> badRequest' jsonHeaders """{"error":"Missing required fields: target_type, target_id, kind, value, source"}"""
         Just v -> do
           run db """
-            INSERT INTO annotations (target_type, target_id, target_id_2, kind, value, source, confidence, session_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO annotations (target_type, target_id, target_id_2, kind, value, source, confidence, session_id, supersedes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           """ [ unsafeToForeign v.target_type
               , unsafeToForeign v.target_id
               , unsafeToForeign v.target_id_2
@@ -122,6 +123,7 @@ create db bodyStr =
               , unsafeToForeign v.source
               , unsafeToForeign v.confidence
               , unsafeToForeign v.session_id
+              , unsafeToForeign v.supersedes
               ]
           rows <- queryAll db "SELECT * FROM annotations ORDER BY id DESC LIMIT 1"
           case firstRow rows of

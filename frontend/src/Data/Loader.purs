@@ -69,8 +69,11 @@ module CE2.Data.Loader
   , fetchModuleSource
     -- Annotations
   , V2Annotation
+  , V2AnnotationsResponse
+  , fetchAllAnnotations
   , fetchModuleAnnotations
   , patchAnnotationStatus
+  , createAnnotation
   ) where
 
 import Prelude
@@ -94,8 +97,8 @@ import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Number (pi, cos, sin, sqrt)
 import Data.Nullable (null)
 import Data.String.CodeUnits as SCU
-import Data.String.Common (joinWith)
-import Data.String.Pattern (Pattern(..))
+import Data.String.Common (joinWith, replaceAll)
+import Data.String.Pattern (Pattern(..), Replacement(..))
 import Data.Tuple (Tuple(..))
 import Effect.Aff (Aff)
 import Foreign.Object (Object)
@@ -1426,6 +1429,7 @@ type V2Annotation =
   , source :: String
   , confidence :: Number
   , status :: String
+  , supersedes :: Maybe Int
   }
 
 type V2AnnotationsResponse = { annotations :: Array V2Annotation, count :: Int }
@@ -2078,6 +2082,15 @@ fetchModuleSource moduleName = do
 -- Annotations
 -- =============================================================================
 
+-- | Fetch all annotations (no filters, gets everything)
+fetchAllAnnotations :: Aff (Either String (Array V2Annotation))
+fetchAllAnnotations = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/annotations")
+  pure $ do
+    json <- result
+    response :: V2AnnotationsResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.annotations
+
 -- | Fetch annotations for a module
 fetchModuleAnnotations :: String -> Aff (Either String (Array V2Annotation))
 fetchModuleAnnotations moduleName = do
@@ -2096,3 +2109,33 @@ patchAnnotationStatus annId newStatus = do
   pure $ case result of
     Left err -> Left $ "PATCH error: " <> AW.printError err
     Right _ -> Right unit
+
+-- | Create a new annotation via POST
+createAnnotation
+  :: { targetType :: String, targetId :: String, kind :: String, value :: String, source :: String, supersedes :: Maybe Int }
+  -> Aff (Either String V2Annotation)
+createAnnotation args = do
+  let supersededStr = case args.supersedes of
+        Just sid -> ", \"supersedes\": " <> show sid
+        Nothing -> ""
+      jsonBody = "{\"target_type\": " <> escapeJsonStr args.targetType
+              <> ", \"target_id\": " <> escapeJsonStr args.targetId
+              <> ", \"kind\": " <> escapeJsonStr args.kind
+              <> ", \"value\": " <> escapeJsonStr args.value
+              <> ", \"source\": " <> escapeJsonStr args.source
+              <> supersededStr <> "}"
+      url = apiBaseUrl <> "/api/v2/annotations"
+      body = RequestBody.string jsonBody
+  result <- AW.post ResponseFormat.json url (Just body)
+  pure $ case result of
+    Left err -> Left $ "POST error: " <> AW.printError err
+    Right response -> decodeJson response.body # mapLeft printJsonDecodeError
+
+-- | Minimal JSON string escaping: wraps in quotes, escapes backslash, double-quote, and newlines
+escapeJsonStr :: String -> String
+escapeJsonStr s =
+  let escaped = replaceAll (Pattern "\\") (Replacement "\\\\")
+              $ replaceAll (Pattern "\"") (Replacement "\\\"")
+              $ replaceAll (Pattern "\n") (Replacement "\\n")
+              $ s
+  in "\"" <> escaped <> "\""

@@ -2839,3 +2839,65 @@ a.ps-clickable:hover {
   border-bottom-style: solid;
   background: rgba(14, 76, 138, 0.06);
 }
+
+/* =============================================================================
+   Annotation Report View
+   ============================================================================= */
+
+.annotation-report {
+  width: 100%;
+  height: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+  background: #fff;
+  overflow: hidden;
+}
+
+.annotation-report-filter-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #fff;
+  border-bottom: 2px solid #e8e4d8;
+  padding: 10px 24px;
+  flex-shrink: 0;
+}
+
+.annotation-report-body {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+.annotation-report-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.annotation-report-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.annotation-report-body::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 4px;
+}
+
+.annotation-report-module-link {
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--color-teal);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: rgba(90, 138, 138, 0.4);
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
+}
+
+.annotation-report-module-link:hover {
+  color: #3a6a6a;
+  text-decoration-color: var(--color-teal);
+}

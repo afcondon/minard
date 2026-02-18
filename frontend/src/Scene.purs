@@ -38,6 +38,7 @@ data Scene
   | DeclarationDetail String String String  -- Single declaration detail (pkg, module, decl)
   | ModuleSignatureMap String String -- Full-screen signature treemap (pkg, module)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
+  | AnnotationReport                -- Interactive annotation report view
 
 derive instance eqScene :: Eq Scene
 
@@ -51,6 +52,7 @@ instance showScene :: Show Scene where
   show (DeclarationDetail pkg mod decl) = "DeclarationDetail(" <> pkg <> "," <> mod <> "," <> decl <> ")"
   show (ModuleSignatureMap pkg mod) = "ModuleSignatureMap(" <> pkg <> "," <> mod <> ")"
   show TypeClassGrid = "TypeClassGrid"
+  show AnnotationReport = "AnnotationReport"
 
 -- | Get the parent scene for back navigation
 parentScene :: Scene -> Scene
@@ -64,6 +66,7 @@ parentScene = case _ of
   DeclarationDetail pkg mod _ -> ModuleSignatureMap pkg mod  -- Back to signature map (primary module view)
   ModuleSignatureMap pkg _ -> PkgTreemap pkg                -- Back to package treemap
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
+  AnnotationReport -> GalaxyTreemap        -- Report view returns to galaxy
 
 -- | A segment in the breadcrumb trail
 type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
@@ -76,6 +79,7 @@ sceneBreadcrumbs = case _ of
   GalaxyTreemap       -> [reg]
   GalaxyBeeswarm      -> [reg]
   TypeClassGrid       -> [reg]
+  AnnotationReport    -> [reg, { kind: "", label: "Report", scene: AnnotationReport }]
   SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
   PkgTreemap pkg      -> [reg, pkgSeg pkg]
   PkgModuleBeeswarm p -> [reg, pkgSeg p]
@@ -101,6 +105,7 @@ sceneLabel = case _ of
   DeclarationDetail _ _ decl -> decl
   ModuleSignatureMap _ mod -> shortModuleName mod
   TypeClassGrid -> "Type Classes"
+  AnnotationReport -> "Annotations"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
 isGalaxyScene :: Scene -> Boolean
@@ -139,6 +144,7 @@ sceneFromString str
   | str == "GalaxyBeeswarm" = Just GalaxyBeeswarm
   | str == "SolarSwarm" = Just SolarSwarm
   | str == "TypeClassGrid" = Just TypeClassGrid
+  | str == "AnnotationReport" = Just AnnotationReport
   | String.take 11 str == "PkgTreemap(" =
       let inner = String.drop 11 str
           pkg = String.take (String.length inner - 1) inner  -- Remove trailing ")"
