@@ -66,6 +66,7 @@ import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.ProjectManagementViz as ProjectManagementViz
+import CE2.Component.ProjectAnatomyViz as ProjectAnatomyViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
@@ -155,6 +156,7 @@ type Slots =
   , slideOutPanel :: SlideOutPanel.Slot Unit
   , annotationReportViz :: AnnotationReportViz.Slot Unit
   , projectManagementViz :: ProjectManagementViz.Slot Unit
+  , projectAnatomyViz :: ProjectAnatomyViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -198,6 +200,9 @@ _annotationReportViz = Proxy
 
 _projectManagementViz :: Proxy "projectManagementViz"
 _projectManagementViz = Proxy
+
+_projectAnatomyViz :: Proxy "projectAnatomyViz"
+_projectAnatomyViz = Proxy
 
 -- | Captured position for transitions (from treemap cells or beeswarm)
 type CapturedPosition = { name :: String, x :: Number, y :: Number, r :: Number }
@@ -326,6 +331,7 @@ data Action
   | HandleModuleSignatureMapOutput ModuleSignatureMapViz.Output
   | HandleAnnotationReportOutput AnnotationReportViz.Output
   | HandleProjectManagementOutput ProjectManagementViz.Output
+  | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -520,6 +526,11 @@ renderHeaderBar state =
             , HP.style $ toggleButtonStyle (state.scene == ProjectManagement) textColor
             ]
             [ HH.text "Projects" ]
+        , HH.button
+            [ HE.onClick \_ -> NavigateTo ProjectAnatomy
+            , HP.style $ toggleButtonStyle (state.scene == ProjectAnatomy) textColor
+            ]
+            [ HH.text "Anatomy" ]
         , HH.button
             [ HE.onClick \_ -> NavigateTo TypeClassGrid
             , HP.style $ toggleButtonStyle (state.scene == TypeClassGrid) textColor
@@ -1074,6 +1085,17 @@ renderScene state =
       { projects: state.loadedProjects }
       HandleProjectManagementOutput
 
+  ProjectAnatomy ->
+    case state.packageSetData of
+      Just psData ->
+        HH.slot _projectAnatomyViz unit ProjectAnatomyViz.component
+          { packages: psData.packages }
+          HandleProjectAnatomyOutput
+      Nothing ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading package data..." ]
+
 -- =============================================================================
 -- Action Handlers
 -- =============================================================================
@@ -1373,6 +1395,11 @@ handleAction = case _ of
       case result of
         Right projects -> H.modify_ _ { loadedProjects = projects }
         Left _ -> pure unit
+
+  HandleProjectAnatomyOutput output -> case output of
+    ProjectAnatomyViz.PackageClicked pkgName -> do
+      log $ "[SceneCoordinator] Anatomy package clicked: " <> pkgName
+      handleAction (NavigateTo (PkgTreemap pkgName))
 
   HandleDeclarationDetailOutput output -> case output of
     DeclarationDetailViz.BackToModuleOverview -> do
@@ -1872,6 +1899,15 @@ prepareSceneData state = case state.scene of
       Left err ->
         log $ "[SceneCoordinator] Failed to load projects: " <> err
 
+  ProjectAnatomy -> do
+    -- Package set data is already loaded in DataLoaded phase — no extra fetch needed
+    case state.packageSetData of
+      Just psData ->
+        log $ "[SceneCoordinator] ProjectAnatomy: " <> show (Array.length psData.packages) <> " packages available"
+      Nothing -> do
+        log "[SceneCoordinator] ProjectAnatomy: requesting package set data"
+        H.raise RequestPackageSetData
+
 -- =============================================================================
 -- Query Handlers
 -- =============================================================================
@@ -1959,6 +1995,7 @@ themeForScene = case _ of
   TypeClassGrid -> MidnightTheme
   AnnotationReport -> DaylightTheme
   ProjectManagement -> DaylightTheme
+  ProjectAnatomy -> DaylightTheme
 
 -- | Canonical state code for precise communication
 -- | See docs/kb/reference/ce2-state-machine-analysis.md for full naming system
@@ -1996,6 +2033,7 @@ canonicalStateCode state = case state.scene of
 
   AnnotationReport -> "R"    -- Annotation report view
   ProjectManagement -> "P"   -- Project management view
+  ProjectAnatomy -> "Y"      -- Project anatomy view
 
   where
   scopeDigit :: BeeswarmScope -> String

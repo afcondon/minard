@@ -102,6 +102,9 @@ module CE2.Containers
     -- Type Signature Visualization
   , typeSigContainerId
   , typeSigContainer
+    -- Anatomy Beeswarm
+  , anatomyBeeswarmContainerId
+  , anatomyBeeswarmContainer
   ) where
 
 import Prelude
@@ -403,3 +406,13 @@ typeSigContainerId = "type-sig-container"
 
 typeSigContainer :: Selector
 typeSigContainer = toSelector typeSigContainerId
+
+-- =============================================================================
+-- Anatomy Beeswarm (Project Anatomy scene)
+-- =============================================================================
+
+anatomyBeeswarmContainerId :: ElementId
+anatomyBeeswarmContainerId = "anatomy-beeswarm-container"
+
+anatomyBeeswarmContainer :: Selector
+anatomyBeeswarmContainer = toSelector anatomyBeeswarmContainerId
