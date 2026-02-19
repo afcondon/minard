@@ -1,9 +1,10 @@
 # Minard — Code Cartography for PureScript
 #
 # Targets:
-#   bootstrap  — check prereqs, build everything, self-scan, print instructions
-#   start      — start server + frontend
-#   stop       — kill services on ports 3000/3001
+#   bootstrap   — check prereqs, build everything, self-scan, print instructions
+#   start       — start server + frontend
+#   stop        — kill services on ports 3000/3001
+#   clean-test  — clone → bootstrap → start in /tmp (verifies repo is self-contained)
 
 MINARD := $(shell pwd)
 DB     := database/ce-unified.duckdb
@@ -32,14 +33,15 @@ else
   LOADER := __NEEDS_BUILD__
 endif
 
-.PHONY: bootstrap start stop help
+.PHONY: bootstrap start stop help clean-test
 
 help:
 	@echo "Minard — Code Cartography for PureScript"
 	@echo ""
-	@echo "  make bootstrap   Check prereqs, build everything, self-scan"
-	@echo "  make start       Start server + frontend (ports 3000/3001)"
-	@echo "  make stop        Stop services"
+	@echo "  make bootstrap    Check prereqs, build everything, self-scan"
+	@echo "  make start        Start server + frontend (ports 3000/3001)"
+	@echo "  make stop         Stop services"
+	@echo "  make clean-test   Fresh clone → bootstrap → start in /tmp"
 	@echo ""
 
 # =============================================================================
@@ -120,4 +122,35 @@ start:
 stop:
 	@echo "Stopping Minard..."
 	@lsof -ti :3000 :3001 2>/dev/null | xargs kill 2>/dev/null || true
+	@sleep 1
 	@echo "Stopped."
+
+# =============================================================================
+# clean-test — full clone-to-running verification in /tmp
+# =============================================================================
+
+TEST_DIR   := /tmp/minard-test
+REMOTE_URL := $(shell git remote get-url origin 2>/dev/null || echo "https://github.com/afcondon/minard.git")
+
+clean-test: stop
+	@echo ""
+	@echo "=== Clean test from clone ==="
+	@echo ""
+	@echo "Removing $(TEST_DIR)..."
+	@rm -rf $(TEST_DIR)
+	@echo "Cloning $(REMOTE_URL)..."
+	@git clone $(REMOTE_URL) $(TEST_DIR)
+	@echo ""
+	@echo "--- Bootstrap ---"
+	@cd $(TEST_DIR) && $(MAKE) bootstrap
+	@echo ""
+	@echo "--- Starting ---"
+	@cd $(TEST_DIR) && $(MAKE) start
+	@echo ""
+	@echo "=== Clean test complete ==="
+	@echo "  Running from: $(TEST_DIR)"
+	@echo "  API:          http://localhost:3000"
+	@echo "  Frontend:     http://localhost:3001"
+	@echo ""
+	@echo "To stop:  make stop"
+	@echo "To clean: rm -rf $(TEST_DIR)"

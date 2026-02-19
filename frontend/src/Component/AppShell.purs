@@ -230,4 +230,10 @@ loadAllData = do
   result <- H.liftAff Loader.loadModelFromV2WithRaw
   case result of
     Left err -> handleAction (DataFailed err)
-    Right loaded -> handleAction (DataLoaded loaded)
+    Right loaded -> do
+      handleAction (DataLoaded loaded)
+      -- Also fetch package set data so the landing page buttons enable
+      psResult <- H.liftAff Loader.fetchPackageSetFromV2
+      case psResult of
+        Left err -> log $ "[AppShell] Failed to fetch package set: " <> err
+        Right psData -> handleAction (PackageSetLoaded psData)

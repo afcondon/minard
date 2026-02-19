@@ -329,8 +329,13 @@ renderSankeySection =
         -- Package set → Loader
         , sankeyLink 140.0 157.0 350.0 96.0 12.0 "#D5C8B8" "0.45"
 
-        -- Loader → DuckDB
-        , sankeyLink 490.0 60.0 490.0 188.0 40.0 "#B8C8D8" "0.4"
+        -- Loader → DuckDB (vertical flow — rect since sankeyPath collapses when x0==x1)
+        , svgElem "rect"
+            [ sa "x" "385", sa "y" "125"
+            , sa "width" "70", sa "height" "55"
+            , sa "fill" "#B8C8D8", sa "opacity" "0.4"
+            , sa "rx" "4"
+            ] []
 
         -- DuckDB → API
         , sankeyLink 490.0 228.0 490.0 298.0 36.0 "#B8D8C8" "0.4"
@@ -365,9 +370,9 @@ renderSankeySection =
 
         -- === SOURCE NODES (left column, x=10) ===
 
-        , sankeyNode 10.0 42.0 130.0 30.0 "#F5EFE4" "#C0B8A0"
+        , sankeyNode 10.0 42.0 130.0 42.0 "#F5EFE4" "#C0B8A0"
         , sankeyNodeLabel 75.0 62.0 "Project Config" "11"
-        , sankeyNodeSub 75.0 72.0 "spago.yaml \x00B7 spago.lock"
+        , sankeyNodeSub 75.0 75.0 "spago.yaml \x00B7 spago.lock"
 
         , sankeyNode 10.0 88.0 130.0 48.0 "#E4ECF5" "#A0B4C8"
         , sankeyNodeLabel 75.0 110.0 "Compiled Output" "11"
@@ -432,8 +437,8 @@ renderSankeySection =
             "Run spago build in your project to produce docs.json files. The Rust loader reads these along with your spago.lock to resolve the full dependency graph \x2014 every package version, every module, every exported declaration."
         , sankeyCallout "2. A Database, Not a Cache"
             "Everything goes into DuckDB \x2014 a real analytical database. Packages, modules, declarations, imports, function calls, type class instances. The API server queries it with SQL, so exploration is fast even for large codebases."
-        , sankeyCallout "3. Understanding Accumulates"
-            "As you explore, annotate what you learn. Claude can read the full codebase report and propose annotations you review. Each session builds on the last \x2014 your understanding of the code is preserved in the database alongside the code itself."
+        , sankeyCallout "3. From Visualization to Editor"
+            "Every view connects back to your source. Click a module or declaration to open it in VS Code. Minard runs locally alongside your editor, not in a cloud dashboard you context-switch to."
         ]
     ]
 
@@ -495,38 +500,65 @@ renderWhatYoullSee :: forall w i. HH.HTML w i
 renderWhatYoullSee =
   HH.div
     [ HP.style "margin-bottom: 48px;" ]
-    [ HH.h2
+    [ -- Annotations: the central value proposition
+      HH.h2
         [ HP.style sectionHeadingStyle ]
-        [ HH.text "What You'll See" ]
+        [ HH.text "Beyond the Context Window" ]
     , HH.p
         [ HP.style sectionBodyStyle ]
-        [ HH.text "Once your project is loaded, Minard gives you five ways to understand your code \x2014 from the 10,000-foot view down to individual declarations." ]
+        [ HH.text "Minard isn't just a viewer \x2014 it's a place where understanding accumulates. Both humans and AI annotate the codebase through a defined review workflow. Claude reads the full codebase report and proposes observations; you confirm, dispute, or reply. Every session builds on the last. The annotations live in the database alongside the code itself, so your understanding of a codebase persists and deepens over time." ]
     , HH.div
         [ HP.style "display: flex; flex-direction: column; gap: 12px; margin-top: 16px;" ]
-        [ featureCard "Galaxy Treemap"
-            "Your project's dependency universe."
-            "Every package in your spago.yaml plus their transitive dependencies from the package set. This is your galaxy \x2014 typically 50-150 packages, each subdivided into its modules. Hold R to trace reachability from your application's entrypoint and see what's actually used versus what's just along for the ride."
-            (Just "galaxy-treemap.jpg")
-        , featureCard "Package Treemaps"
-            "Zoom into any package."
-            "Each module appears as a cell sized by its declaration count, filled with circle-packed declarations \x2014 values, data types, type classes, instances. Color encodes declaration kind. Click any module to go deeper."
-            (Just "package-treemap.jpg")
-        , featureCard "Module Signature Maps"
-            "Every export, every type signature."
-            "A module's full public API laid out as a signature map: declaration names on the left, type signatures rendered with proper PureScript formatting. See at a glance what a module offers and how complex its types are."
-            (Just "module-declarations.jpg")
-        , featureCard "Type Class Explorer"
-            "Navigate the type class hierarchy."
-            "Which classes have the most instances? Which modules are most polymorphic? See the relationships between type classes, their methods, and their instances across your entire dependency graph."
-            (Just "typeclasses.jpg")
-        , featureCard "Codebase Report"
-            "AI-assisted understanding."
-            "Annotate modules and declarations with purpose, status, and architectural notes. Claude reads the full report and proposes annotations you review \x2014 building a shared understanding that persists across sessions."
+        [ featureCard "Codebase Report"
+            "Your shared understanding, structured and searchable."
+            "Every module can carry annotations \x2014 summaries, architectural notes, quality observations, TODOs. Filter by status, kind, or source. See threaded conversations where human insight and AI analysis build on each other."
             (Just "report.jpg")
-        , featureCard "Add More Projects"
-            "Compare and cross-reference."
-            "Load additional PureScript applications to see how different projects use the same packages, compare dependency overlap, and understand how different entrypoints light up different parts of the registry."
+        ]
+
+    -- Semantic zoom: the core navigation sequence
+    , HH.h2
+        [ HP.style (sectionHeadingStyle <> " margin-top: 40px;") ]
+        [ HH.text "Semantic Zoom" ]
+    , HH.p
+        [ HP.style sectionBodyStyle ]
+        [ HH.text "At its core, Minard is a sequence of semantic zooms. Start at the highest level \x2014 your project's entire dependency universe \x2014 and drill down through packages to individual modules and declarations. At any point, jump to your editor. Each level reveals structure that's invisible in a file tree." ]
+    , HH.div
+        [ HP.style "display: flex; flex-direction: column; gap: 12px; margin-top: 16px;" ]
+        [ featureCard "Galaxy View"
+            "The dependency universe."
+            "Every package in your project and its transitive dependencies, laid out as a treemap. Hundreds of packages, each subdivided into modules. Hold R to trace reachability from your application's entrypoint \x2014 see what's actually used versus what's just along for the ride. Git status overlays show what's changed since your last commit."
+            (Just "galaxy-treemap.jpg")
+        , featureCard "Solar System View"
+            "One package, all its modules."
+            "Zoom into any package to see its modules sized by declaration count, filled with circle-packed declarations \x2014 values, data types, type classes, instances. Color encodes declaration kind. Module shape gives you an instant read on complexity and composition. Reachability and git status carry through."
+            (Just "package-treemap.jpg")
+        , featureCard "Planetary View"
+            "Every export, every type signature."
+            "A module's full public API laid out as a signature map: declaration names on the left, type signatures rendered with proper PureScript formatting on the right. See at a glance what a module offers and how complex its types are. Click any declaration to open it in your editor."
+            (Just "module-declarations.jpg")
+        ]
+
+    -- Supporting views and roadmap
+    , HH.h2
+        [ HP.style (sectionHeadingStyle <> " margin-top: 40px;") ]
+        [ HH.text "More Lenses" ]
+    , HH.p
+        [ HP.style sectionBodyStyle ]
+        [ HH.text "The semantic zoom is the backbone, but the same data supports other ways of seeing your code." ]
+    , HH.div
+        [ HP.style "display: flex; flex-direction: column; gap: 12px; margin-top: 16px;" ]
+        [ featureCard "Project Anatomy"
+            "How your dependency graph breaks down."
+            "A force-directed beeswarm showing every package classified as workspace, direct dependency, or transitive. See at a glance how much of your universe is code you wrote versus code you depend on. Colored spago.yaml blocks show exactly what each workspace package pulls in."
             (Just "bubblepack-beeswarm.jpg")
+        , featureCard "Type Class Explorer"
+            "The part of PureScript that's invisible in files."
+            "Type class instances are scattered across your entire dependency graph \x2014 no single file shows you the full picture. See which classes have the most instances, which modules are most polymorphic, and how the class hierarchy connects."
+            (Just "typeclasses.jpg")
+        , featureCard "Monorepos and Beyond"
+            "Works with however your project is structured."
+            "By default you load one app with one entrypoint and see the codebase from that point of view. But Minard supports multiple apps \x2014 load additional entrypoints to see how different parts of a monorepo light up different slices of the dependency graph. You can annotate any package, even registry dependencies, if that's useful to you."
+            Nothing
         ]
     ]
 
@@ -561,18 +593,110 @@ featureCard title subtitle body mImage =
 
 renderGetStarted :: forall m. MonadAff m => State -> H.ComponentHTML Action () m
 renderGetStarted state =
-  HH.div
+  let projectCount = Array.length state.projects
+      showForm = state.addPhase /= Idle || projectCount == 0
+  in HH.div
     [ HP.style "margin-bottom: 48px;" ]
     [ HH.h2
         [ HP.style sectionHeadingStyle ]
         [ HH.text "Get Started" ]
-    , HH.p
-        [ HP.style sectionBodyStyle ]
-        [ HH.text "Point Minard at a built PureScript project. The loader (stage 1 in the architecture above) will read your compiled output, resolve all dependencies, and populate the database. This typically takes 3-15 seconds depending on the size of your dependency graph." ]
-    , HH.div
-        [ HP.style cardStyle ]
-        [ renderAddForm state ]
+    , if projectCount <= 1 then renderDemoState state showForm
+      else renderPickerState state showForm
     ]
+
+-- | Fresh install: one project (the self-scan) or none
+renderDemoState :: forall m. MonadAff m => State -> Boolean -> H.ComponentHTML Action () m
+renderDemoState state showForm =
+  let mProject = Array.head state.projects
+  in HH.div_
+    [ case mProject of
+        Just project ->
+          HH.div_
+            [ HH.p
+                [ HP.style sectionBodyStyle ]
+                [ HH.text $ "Minard scanned its own codebase during setup \x2014 "
+                    <> show project.stats.packageCount <> " packages, "
+                    <> show project.stats.moduleCount <> " modules, "
+                    <> show project.stats.declarationCount <> " declarations. "
+                    <> "You can explore it right now to see how the tool works, or load your own PureScript project."
+                ]
+            , HH.div
+                [ HP.style "display: flex; gap: 12px; margin-top: 16px; align-items: center;" ]
+                [ HH.button
+                    [ HE.onClick \_ -> GoToScene Scene.ProjectAnatomy
+                    , HP.style "padding: 12px 28px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; background: #2D7D46; color: white; letter-spacing: 0.3px;"
+                    , HP.disabled (not state.dataReady)
+                    ]
+                    [ HH.text "Explore This Codebase \x2192" ]
+                , if not showForm
+                    then HH.button
+                      [ HE.onClick \_ -> StartAddProject
+                      , HP.style "padding: 10px 20px; border: 1px solid #C0BDB4; border-radius: 6px; cursor: pointer; font-size: 13px; background: #fff; color: #555;"
+                      ]
+                      [ HH.text "Add Your Own Codebase" ]
+                    else HH.text ""
+                ]
+            ]
+        Nothing ->
+          HH.p
+            [ HP.style sectionBodyStyle ]
+            [ HH.text "Point Minard at a built PureScript project. The loader will read your compiled output, resolve all dependencies, and populate the database. This typically takes 3-15 seconds." ]
+    , if showForm
+        then HH.div
+          [ HP.style (cardStyle <> " margin-top: 20px;") ]
+          [ renderAddForm state ]
+        else HH.text ""
+    ]
+
+-- | Established install: multiple projects available
+renderPickerState :: forall m. MonadAff m => State -> Boolean -> H.ComponentHTML Action () m
+renderPickerState state showForm =
+  HH.div_
+    [ HH.p
+        [ HP.style sectionBodyStyle ]
+        [ HH.text "Choose a project to explore, or add another." ]
+    , HH.div
+        [ HP.style "display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px;" ]
+        (map renderProjectCard state.projects)
+    , if not showForm
+        then HH.div
+          [ HP.style "margin-top: 16px;" ]
+          [ HH.button
+              [ HE.onClick \_ -> StartAddProject
+              , HP.style (buttonStyle <> " font-size: 13px;")
+              ]
+              [ HH.text "+ Add Another Project" ]
+          ]
+        else HH.div
+          [ HP.style (cardStyle <> " margin-top: 20px;") ]
+          [ renderAddForm state ]
+    ]
+
+renderProjectCard :: forall m. MonadAff m => Loader.ProjectInfo -> H.ComponentHTML Action () m
+renderProjectCard project =
+  HH.div
+    [ HP.style "background: #fff; border: 1px solid #E0DDD4; border-radius: 6px; padding: 16px; display: flex; flex-direction: column; gap: 8px;" ]
+    [ HH.div
+        [ HP.style "font-size: 14px; font-weight: 600; color: #333;" ]
+        [ HH.text project.name ]
+    , HH.div
+        [ HP.style "font-size: 11px; color: #888; font-family: 'SF Mono', 'Menlo', monospace;" ]
+        [ HH.text project.repoPath ]
+    , HH.div
+        [ HP.style "font-size: 11px; color: #666;" ]
+        [ HH.text $ show project.stats.packageCount <> " packages \x00B7 "
+            <> show project.stats.moduleCount <> " modules \x00B7 "
+            <> show project.stats.declarationCount <> " declarations"
+        ]
+    , HH.button
+        [ HE.onClick \_ -> GoToScene Scene.ProjectAnatomy
+        , HP.style "align-self: flex-start; padding: 6px 16px; border: 1px solid #C0BDB4; border-radius: 4px; cursor: pointer; font-size: 12px; background: #F5F4F0; color: #333; margin-top: 4px;"
+        , HP.disabled (not state.dataReady)
+        ]
+        [ HH.text "Explore \x2192" ]
+    ]
+  where
+  state = { dataReady: true } -- Project cards are always shown when data exists
 
 -- =============================================================================
 -- Shared Styles
@@ -787,7 +911,11 @@ handleAction = case _ of
   Initialize -> pure unit
 
   Receive input -> do
-    H.modify_ _ { projects = input.projects, dataReady = input.dataReady }
+    state <- H.get
+    -- If projects arrived and user hasn't started filling the form, switch to Idle
+    let resetPhase = not (Array.null input.projects) && state.addPhase == EnteringPath && state.pathInput == ""
+    H.modify_ _ { projects = input.projects, dataReady = input.dataReady
+                 , addPhase = if resetPhase then Idle else state.addPhase }
 
   StartAddProject ->
     H.modify_ _ { addPhase = EnteringPath, pathInput = "", nameOverride = "" }
