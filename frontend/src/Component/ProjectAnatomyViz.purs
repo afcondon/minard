@@ -15,9 +15,8 @@ import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.Foldable (foldl, sum)
+import Data.Foldable (elem, foldl, sum)
 import Data.Maybe (Maybe(..))
-import Data.Set (Set)
 import Data.Set as Set
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
@@ -137,7 +136,8 @@ computeStats packages unusedCount =
 
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
-  HH.div
+  let statsColumns = if state.stats.unusedCount > 0 then 4 else 3
+  in HH.div
     [ HP.class_ (HH.ClassName "project-anatomy-viz")
     , HP.style "width: 100%; height: 100%; overflow-y: auto; background: #fafaf8; color: #333; font-family: 'Courier New', Courier, monospace;"
     ]
@@ -162,27 +162,11 @@ render state =
         ]
         []
 
-    -- Stats cards
+    -- Explanatory text directly under the viz
     , HH.div
-        [ HP.style "max-width: 1200px; margin: 16px auto 0; padding: 0 32px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;" ]
-        [ statsCard (show state.stats.workspaceCount) "Workspace" "Your code"
-            "hsl(40, 85%, 60%)"
-        , statsCard (show state.stats.directCount) "Direct Dependencies" "Declared in spago.yaml"
-            "hsl(210, 65%, 50%)"
-        , statsCard (show state.stats.transitiveCount) "Transitive" "Pulled in by deps"
-            "hsl(210, 15%, 65%)"
-        , statsCard (show state.stats.unusedCount) "Not Used" "Available in registry"
-            "hsl(210, 8%, 82%)"
-        ]
-
-    -- spago.yaml dependency blocks (colored to match beeswarm)
-    , renderSpagoYaml state.packages
-
-    -- Educational narrative
-    , HH.div
-        [ HP.style "max-width: 1200px; margin: 24px auto 32px; padding: 0 32px; font-size: 12px; line-height: 1.8; color: #555;" ]
+        [ HP.style "max-width: 1200px; margin: 8px auto 0; padding: 0 32px; font-size: 12px; line-height: 1.8; color: #555;" ]
         [ HH.p
-            [ HP.style "margin: 0 0 12px;" ]
+            [ HP.style "margin: 0 0 4px;" ]
             [ HH.text $ "The beeswarm shows every package sized by lines of code "
                 <> "and positioned by dependency depth. Gold circles are your code, "
                 <> "blue are your declared dependencies, and the gray packages are "
@@ -193,6 +177,27 @@ render state =
             [ HP.style "margin: 0; color: #888; font-style: italic;" ]
             [ HH.text "Click any package to explore its modules." ]
         ]
+
+    -- Stats cards
+    , HH.div
+        [ HP.style $ "max-width: 1200px; margin: 16px auto 0; padding: 0 32px; display: grid; "
+            <> "grid-template-columns: repeat(" <> show statsColumns <> ", 1fr); gap: 16px;"
+        ]
+        ( [ statsCard (show state.stats.workspaceCount) "Workspace" "Your code"
+              "hsl(40, 85%, 60%)"
+          , statsCard (show state.stats.directCount) "Direct Dependencies" "Declared in spago.yaml"
+              "hsl(210, 65%, 50%)"
+          , statsCard (show state.stats.transitiveCount) "Transitive" "Pulled in by deps"
+              "hsl(210, 15%, 65%)"
+          ]
+          <> if state.stats.unusedCount > 0
+             then [ statsCard (show state.stats.unusedCount) "Not Used" "Available in registry"
+                      "hsl(210, 8%, 82%)" ]
+             else []
+        )
+
+    -- Dependency matrix (union of all workspace deps with per-project dots)
+    , renderDependencyMatrix state.packages
 
     -- CTA buttons
     , HH.div
@@ -232,69 +237,122 @@ statsCard count title subtitle accentColor =
     ]
 
 -- =============================================================================
--- spago.yaml Rendering
+-- Dependency Matrix
 -- =============================================================================
 
--- | Render colored spago.yaml dependency blocks for each workspace package
-renderSpagoYaml :: forall w i. Array Loader.PackageSetPackage -> HH.HTML w i
-renderSpagoYaml packages =
+-- | Workspace package with assigned color
+type WorkspaceEntry = { pkg :: Loader.PackageSetPackage, color :: String }
+
+-- | A dependency with usage info across workspace packages
+type DepEntry =
+  { name :: String
+  , users :: Array Int         -- indices into workspace array
+  , resolvedSource :: String   -- actual source: "registry" | "workspace" | "extra"
+  }
+
+-- | Palette for workspace packages
+wsPalette :: Array String
+wsPalette = [ "#E8A838", "#4E79A7", "#59A14F", "#E15759", "#76B7B2" ]
+
+-- | Render the unified dependency matrix
+renderDependencyMatrix :: forall w i. Array Loader.PackageSetPackage -> HH.HTML w i
+renderDependencyMatrix packages =
   let
     wsPackages = Array.sortWith _.name $ Array.filter (\p -> p.source == "workspace") packages
-    wsNames = Set.fromFoldable $ map _.name wsPackages
-    directDepNames = Beeswarm.computeDirectDepNames packages
-  in
-    HH.div
-      [ HP.style "max-width: 1200px; margin: 20px auto 0; padding: 0 32px;" ]
-      [ HH.div
-          [ HP.style "font-size: 11px; font-weight: bold; color: #999; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px;" ]
-          [ HH.text "spago.yaml" ]
-      , HH.div
-          [ HP.style $ "display: grid; grid-template-columns: repeat(" <> show (min 3 (Array.length wsPackages)) <> ", 1fr); gap: 12px;" ]
-          (map (renderWorkspaceBlock wsNames directDepNames) wsPackages)
-      ]
+    wsEntries :: Array WorkspaceEntry
+    wsEntries = Array.zipWith (\pkg color -> { pkg, color }) wsPackages
+      (Array.take (Array.length wsPackages) wsPalette)
 
--- | Render a single workspace package's dependency block
-renderWorkspaceBlock :: forall w i. Set String -> Set String -> Loader.PackageSetPackage -> HH.HTML w i
-renderWorkspaceBlock wsNames directDepNames pkg =
-  let
-    sortedDeps = Array.sort pkg.depends
-    isApp = pkg.bundleModule /= Nothing
-    pkgLabel = pkg.name <> if isApp then " (app)" else ""
+    -- Look up resolved source for a dep name from the full packages array
+    resolveSource depName =
+      case Array.find (\p -> p.name == depName) packages of
+        Just p -> p.source
+        Nothing -> "registry"
+
+    -- Union of all deps across workspace packages
+    allDepNames = Set.fromFoldable $ Array.concatMap _.depends wsPackages
+
+    -- Build entries with usage info
+    depEntries :: Array DepEntry
+    depEntries = Array.fromFoldable allDepNames
+      # map (\depName ->
+          { name: depName
+          , users: Array.catMaybes $ Array.mapWithIndex (\i pkg ->
+              if elem depName pkg.depends then Just i else Nothing
+            ) wsPackages
+          , resolvedSource: resolveSource depName
+          })
+      # Array.sortBy (\a b ->
+          case compare (Array.length b.users) (Array.length a.users) of
+            EQ -> compare a.name b.name
+            ord -> ord
+        )
+
+    cols = if Array.length depEntries > 30 then 3 else 2
   in
     HH.div
-      [ HP.style "background: #fff; border: 1px solid #e0ddd4; border-radius: 4px; padding: 12px 14px; font-size: 11px; line-height: 1.6;" ]
-      [ -- Package name header
+      [ HP.style "max-width: 1200px; margin: 20px auto 24px; padding: 0 32px;" ]
+      [ -- Section label
         HH.div
-          [ HP.style "font-weight: bold; color: hsl(40, 85%, 40%); margin: 0 0 6px;" ]
-          [ HH.text $ "# " <> pkgLabel ]
-      -- "dependencies:" label
+          [ HP.style "font-size: 11px; font-weight: bold; color: #999; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px;" ]
+          [ HH.text "dependency matrix" ]
+      -- Legend
       , HH.div
-          [ HP.style "color: #888; margin: 0 0 2px;" ]
-          [ HH.text "dependencies:" ]
-      -- Dependency list
+          [ HP.style "display: flex; gap: 16px; flex-wrap: wrap; margin: 0 0 12px; font-size: 11px; color: #555;" ]
+          (map renderLegendEntry wsEntries)
+      -- Matrix panel
       , HH.div
-          [ HP.style "padding-left: 12px;" ]
-          (map (renderDepLine wsNames directDepNames) sortedDeps)
+          [ HP.style $ "background: #fff; border: 1px solid #e0ddd4; border-radius: 4px; padding: 12px 16px; "
+              <> "display: grid; grid-template-columns: repeat(" <> show cols <> ", 1fr); gap: 0 24px;"
+          ]
+          (map (renderDepRow wsEntries) depEntries)
       ]
 
--- | Render a single dependency line with category-appropriate color
-renderDepLine :: forall w i. Set String -> Set String -> String -> HH.HTML w i
-renderDepLine wsNames directDepNames depName =
+-- | Legend entry for a workspace package
+renderLegendEntry :: forall w i. WorkspaceEntry -> HH.HTML w i
+renderLegendEntry entry =
   let
-    color
-      | Set.member depName wsNames = "hsl(40, 85%, 40%)"       -- workspace: gold
-      | Set.member depName directDepNames = "hsl(210, 65%, 40%)" -- direct dep: blue
-      | otherwise = "hsl(210, 10%, 55%)"                         -- transitive: gray
+    isApp = entry.pkg.bundleModule /= Nothing
+    label = entry.pkg.name <> if isApp then " (app)" else ""
   in
-    HH.div
-      [ HP.style "margin: 0;" ]
+    HH.span
+      [ HP.style "display: inline-flex; align-items: center; gap: 4px;" ]
       [ HH.span
-          [ HP.style "color: #bbb;" ]
-          [ HH.text "- " ]
-      , HH.span
-          [ HP.style $ "color: " <> color <> ";" ]
-          [ HH.text depName ]
+          [ HP.style $ "display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: " <> entry.color <> ";" ]
+          []
+      , HH.text label
       ]
+
+-- | A single row in the dependency matrix
+renderDepRow :: forall w i. Array WorkspaceEntry -> DepEntry -> HH.HTML w i
+renderDepRow wsEntries entry =
+  HH.div
+    [ HP.style "display: flex; align-items: center; gap: 8px; padding: 1px 0; font-size: 11px; line-height: 1.5;" ]
+    [ -- Dots column
+      HH.span
+        [ HP.style $ "display: flex; gap: 3px; min-width: " <> show (Array.length wsEntries * 11) <> "px;" ]
+        (Array.mapWithIndex (\i we ->
+          HH.span
+            [ HP.style $ "display: inline-block; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; "
+                <> if elem i entry.users
+                   then "background: " <> we.color <> ";"
+                   else "border: 1px solid #ddd; background: transparent;"
+            ] []
+        ) wsEntries)
+    -- Dep name (colored by resolved source)
+    , HH.span
+        [ HP.style $ case entry.resolvedSource of
+            "workspace" -> "color: hsl(40, 85%, 40%); font-weight: bold;"
+            "extra"     -> "color: hsl(15, 80%, 50%);"
+            _           -> "color: #555;"
+        ]
+        [ HH.text entry.name ]
+    -- Source qualifier for non-registry packages
+    , case entry.resolvedSource of
+        "workspace" -> HH.span [ HP.style "font-size: 9px; color: #bbb; font-style: italic;" ] [ HH.text "workspace" ]
+        "extra"     -> HH.span [ HP.style "font-size: 9px; color: hsl(15, 80%, 50%); font-style: italic;" ] [ HH.text "override" ]
+        _           -> HH.text ""
+    ]
 
 -- =============================================================================
 -- Action Handlers

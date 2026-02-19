@@ -2625,3 +2625,21 @@ a.ps-clickable:hover {
   color: #3a6a6a;
   text-decoration-color: var(--color-teal);
 }
+
+/* =============================================================================
+   Anatomy Beeswarm — hover labels
+   ============================================================================= */
+
+.anatomy-package-group .anatomy-label {
+  opacity: 0;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+}
+
+.anatomy-package-group .anatomy-label-always {
+  opacity: 1;
+}
+
+.anatomy-package-group:hover .anatomy-label {
+  opacity: 1;
+}

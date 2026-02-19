@@ -324,15 +324,17 @@ renderLegend config =
     lx = -config.width / 2.0 + 20.0
     ly = -config.height / 2.0 + 20.0
   in
-    elem Group
+    let hasUnused = Array.length config.unusedPackages > 0
+    in elem Group
       [ staticStr "class" "anatomy-legend"
       , staticStr "transform" ("translate(" <> show lx <> "," <> show ly <> ")")
       ]
-      [ legendItem 0.0 "hsl(40, 85%, 60%)" "Your code"
-      , legendItem 24.0 "hsl(210, 65%, 50%)" "Direct deps"
-      , legendItem 48.0 "hsl(210, 15%, 65%)" "Transitive deps"
-      , legendItem 72.0 "hsl(210, 8%, 82%)" "Not used"
-      ]
+      ( [ legendItem 0.0 "hsl(40, 85%, 60%)" "Your code"
+        , legendItem 24.0 "hsl(210, 65%, 50%)" "Direct deps"
+        , legendItem 48.0 "hsl(210, 15%, 65%)" "Transitive deps"
+        ]
+        <> if hasUnused then [ legendItem 72.0 "hsl(210, 8%, 82%)" "Not used" ] else []
+      )
 
 legendItem :: Number -> String -> String -> Tree
 legendItem yOff color label =
@@ -484,7 +486,7 @@ nodeHATS config node =
                 []
           ]
       <>
-      [ -- Package name label
+      [ -- Package name label (workspace always visible, others on hover via CSS)
         withBehaviors clickBehaviors $
           elem Text
             [ staticStr "x" "0"
@@ -493,8 +495,8 @@ nodeHATS config node =
             , staticStr "font-size" "11"
             , staticStr "font-family" "'Courier New', monospace"
             , staticStr "fill" "#555"
-            , staticStr "class" "anatomy-label"
             , staticStr "cursor" "pointer"
+            , thunkedStr "class" (if node.category == Workspace then "anatomy-label anatomy-label-always" else "anatomy-label")
             , thunkedStr "textContent" node.pkg.name
             ]
             []
