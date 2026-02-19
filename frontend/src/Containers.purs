@@ -105,6 +105,11 @@ module CE2.Containers
     -- Anatomy Beeswarm
   , anatomyBeeswarmContainerId
   , anatomyBeeswarmContainer
+    -- Module Beeswarm (Anatomy)
+  , anatomyModuleBeeswarmContainerId
+  , anatomyModuleBeeswarmContainer
+  , anatomyModuleNodesId
+  , anatomyModuleNodes
   ) where
 
 import Prelude
@@ -416,3 +421,19 @@ anatomyBeeswarmContainerId = "anatomy-beeswarm-container"
 
 anatomyBeeswarmContainer :: Selector
 anatomyBeeswarmContainer = toSelector anatomyBeeswarmContainerId
+
+-- =============================================================================
+-- Module Beeswarm (Anatomy scene - module-level detail)
+-- =============================================================================
+
+anatomyModuleBeeswarmContainerId :: ElementId
+anatomyModuleBeeswarmContainerId = "anatomy-module-beeswarm-container"
+
+anatomyModuleBeeswarmContainer :: Selector
+anatomyModuleBeeswarmContainer = toSelector anatomyModuleBeeswarmContainerId
+
+anatomyModuleNodesId :: ElementId
+anatomyModuleNodesId = "anatomy-module-nodes"
+
+anatomyModuleNodes :: Selector
+anatomyModuleNodes = toSelector anatomyModuleNodesId

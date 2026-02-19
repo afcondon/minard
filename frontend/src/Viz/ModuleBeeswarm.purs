@@ -21,11 +21,17 @@ module CE2.Viz.ModuleBeeswarm
   , updateColors
   , cleanup
   , prepareNodes
+  , AnatomyModuleConfig
+  , AnatomyModuleBeeswarmHandle
+  , AnatomyModuleNodeRow
+  , renderAnatomyModules
   ) where
 
 import Prelude
 
 import Data.Array as Array
+import Data.Foldable (foldl)
+import Data.Int as Data.Int
 import Data.Int (toNumber)
 import Data.Map (Map)
 import Data.Map as Map
@@ -34,13 +40,15 @@ import Data.Nullable as Nullable
 import Data.Number (sqrt)
 import Data.Set (Set)
 import Data.Set as Set
+import Data.String (Pattern(..), split) as Str
+import Data.String.CodeUnits as SCU
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Class.Console (log)
 import Effect.Ref as Ref
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Simulation.HATS (tickUpdate)
@@ -64,9 +72,10 @@ import Hylograph.Simulation
   , dynamic
   )
 import Hylograph.ForceEngine.Simulation (SimulationNode)
+import Hylograph.ForceEngine.Setup (withAlphaDecay)
 
 import CE2.Containers as C
-import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Package)
+import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Package, PackageSetPackage)
 import CE2.Types (ViewTheme, ColorMode)
 
 -- =============================================================================
@@ -708,5 +717,368 @@ startSimulationSinglePkg _config nodes = do
     Completed -> log "[ModuleBeeswarm/Single] Simulation completed"
     Started -> log "[ModuleBeeswarm/Single] Simulation started"
     Stopped -> log "[ModuleBeeswarm/Single] Simulation stopped"
+
+  pure handle
+
+-- =============================================================================
+-- Anatomy Module Beeswarm (all modules, colored by package, topo positioning)
+-- =============================================================================
+
+-- | Configuration for anatomy module beeswarm
+type AnatomyModuleConfig =
+  { containerSelector :: String
+  , width :: Number
+  , height :: Number
+  , maxTopoLayer :: Int
+  , onClick :: Maybe (String -> Effect Unit)
+  , packages :: Array PackageSetPackage
+  , colorMode :: String  -- "category" | "age"
+  }
+
+-- | Node type for anatomy module beeswarm
+type AnatomyModuleNode = SimulationNode
+  ( mod :: V2ModuleListItem
+  , targetX :: Number
+  , r :: Number
+  , color :: String
+  , strokeColor :: String
+  , pkgName :: String
+  )
+
+type AnatomyModuleNodeRow =
+  ( mod :: V2ModuleListItem
+  , targetX :: Number
+  , r :: Number
+  , color :: String
+  , strokeColor :: String
+  , pkgName :: String
+  )
+
+-- | Handle for the anatomy module beeswarm
+type AnatomyModuleBeeswarmHandle =
+  { simHandle :: SimulationHandle AnatomyModuleNodeRow
+  , stop :: Effect Unit
+  }
+
+-- | Render all modules as an anatomy beeswarm, colored by parent package
+renderAnatomyModules :: AnatomyModuleConfig -> Array V2ModuleListItem -> Effect AnatomyModuleBeeswarmHandle
+renderAnatomyModules config modules = do
+  clearContainer config.containerSelector
+
+  let nodes = prepareAnatomyModuleNodes config modules
+
+  log $ "[ModuleBeeswarm/Anatomy] Starting with " <> show (Array.length nodes) <> " modules"
+
+  renderAnatomySVGContainer config
+  simHandle <- startAnatomySimulation config nodes
+
+  pure { simHandle, stop: simHandle.stop }
+
+-- | Category classification for modules (mirrors package beeswarm)
+data ModuleCategory = MWorkspace | MDirectDep | MTransitive
+
+-- | Classify a module by its parent package's role
+classifyModule :: Set String -> Set String -> String -> ModuleCategory
+classifyModule wsNames directDepNames pkgName
+  | Set.member pkgName wsNames = MWorkspace
+  | Set.member pkgName directDepNames = MDirectDep
+  | otherwise = MTransitive
+
+-- | Compute the set of direct dependency names (workspace packages' depends minus workspace names)
+computeDirectDeps :: Array PackageSetPackage -> { wsNames :: Set String, directDepNames :: Set String }
+computeDirectDeps packages =
+  let
+    wsNames = Set.fromFoldable $ Array.mapMaybe
+      (\p -> if p.source == "workspace" then Just p.name else Nothing) packages
+    allWsDeps = foldl (\acc p ->
+      if p.source == "workspace"
+        then Set.union acc (Set.fromFoldable p.depends)
+        else acc
+      ) Set.empty packages
+    directDepNames = Set.difference allWsDeps wsNames
+  in
+    { wsNames, directDepNames }
+
+-- | Extract year from an ISO date string (first 4 characters)
+extractYear :: String -> Maybe Int
+extractYear s =
+  let yearStr = SCU.take 4 s
+  in if SCU.length yearStr == 4
+     then Data.Int.fromString yearStr
+     else Nothing
+
+-- | Get package age in years (0 = current year 2026, higher = older)
+packageAge :: Array PackageSetPackage -> String -> Number
+packageAge packages pkgName =
+  case Array.find (\p -> p.name == pkgName) packages of
+    Just pkg -> case pkg.publishedAt of
+      Just dateStr -> case extractYear dateStr of
+        Just year -> toNumber (2026 - year)
+        Nothing -> 3.0  -- unknown: medium age
+      Nothing -> 0.0    -- workspace: brand new
+    Nothing -> 3.0      -- not found: medium age
+
+-- | Age-adjusted lightness: newer = lighter, older = darker
+ageLightness :: Number -> Number
+ageLightness age = max 32.0 (65.0 - age * 4.5)
+
+-- | Color for a module: hue from category, lightness from age
+anatomyModuleColor :: ModuleCategory -> Number -> String
+anatomyModuleColor cat age =
+  let l = ageLightness age
+  in case cat of
+    MWorkspace  -> "hsl(40, 80%, " <> show (max 45.0 l) <> "%)"    -- gold, never too dark
+    MDirectDep  -> "hsl(210, 65%, " <> show l <> "%)"               -- blue
+    MTransitive -> "hsl(210, 15%, " <> show l <> "%)"               -- gray-blue
+
+-- | Stroke color for a module
+anatomyModuleStroke :: ModuleCategory -> String
+anatomyModuleStroke = case _ of
+  MWorkspace  -> "hsl(40, 80%, 35%)"
+  MDirectDep  -> "hsl(210, 65%, 30%)"
+  MTransitive -> "hsl(210, 10%, 45%)"
+
+-- | Look up a package's topo layer by name
+pkgTopoLayer :: Array PackageSetPackage -> String -> Int
+pkgTopoLayer packages name =
+  case Array.find (\p -> p.name == name) packages of
+    Just p -> p.topoLayer
+    Nothing -> 0
+
+-- | Count modules by their parent package's topo layer
+countAnatomyModulesByLayer :: Array PackageSetPackage -> Int -> Array V2ModuleListItem -> Array Int
+countAnatomyModulesByLayer packages maxLayer modules =
+  Array.range 0 maxLayer <#> \layer ->
+    Array.length $ Array.filter (\m -> pkgTopoLayer packages m.package.name == layer) modules
+
+prepareAnatomyModuleNodes :: AnatomyModuleConfig -> Array V2ModuleListItem -> Array AnatomyModuleNode
+prepareAnatomyModuleNodes config modules =
+  Array.mapWithIndex (prepareAnatomyModuleNode config depInfo layerInfo) modules
+  where
+  layerCounts = countAnatomyModulesByLayer config.packages config.maxTopoLayer modules
+  layerInfo = computeTopoLayerPositions layerCounts config.width
+  depInfo = computeDirectDeps config.packages
+
+prepareAnatomyModuleNode :: AnatomyModuleConfig -> { wsNames :: Set String, directDepNames :: Set String } -> Array Number -> Int -> V2ModuleListItem -> AnatomyModuleNode
+prepareAnatomyModuleNode config depInfo cumulativeX idx m =
+  let
+    padding = 60.0
+    layer = pkgTopoLayer config.packages m.package.name
+    layerX = fromMaybe 0.0 $ Array.index cumulativeX layer
+    -- Flip: high topo (apps) LEFT, low topo (leaves) RIGHT
+    targetX = config.width / 2.0 - padding - layerX
+
+    -- Size by LOC
+    loc = fromMaybe 20 m.loc
+    kloc = toNumber loc / 1000.0
+    r = 3.0 + sqrt (max 0.05 kloc) * 4.0
+
+    -- Category + age color
+    cat = classifyModule depInfo.wsNames depInfo.directDepNames m.package.name
+    age = packageAge config.packages m.package.name
+    color = anatomyModuleColor cat age
+    strokeColor = anatomyModuleStroke cat
+
+    pseudoRandom = toNumber ((idx * 17 + 31) `mod` 100) / 100.0 - 0.5
+    x = targetX
+    y = pseudoRandom * config.height * 0.6
+  in
+    { id: m.id
+    , x
+    , y
+    , vx: 0.0
+    , vy: 0.0
+    , fx: Nullable.null
+    , fy: Nullable.null
+    , mod: m
+    , targetX
+    , r
+    , color
+    , strokeColor
+    , pkgName: m.package.name
+    }
+
+-- | SVG container for anatomy module beeswarm
+renderAnatomySVGContainer :: AnatomyModuleConfig -> Effect Unit
+renderAnatomySVGContainer config = do
+  let
+    vbX = -config.width / 2.0
+    vbY = -config.height / 2.0
+    viewBox = show vbX <> " " <> show vbY <> " " <> show config.width <> " " <> show config.height
+
+    containerTree :: Tree
+    containerTree =
+      elem SVG
+        [ staticStr "id" "anatomy-module-beeswarm-svg"
+        , staticStr "viewBox" viewBox
+        , staticStr "width" "100%"
+        , staticStr "height" "100%"
+        , staticStr "class" "anatomy-module-beeswarm"
+        , staticStr "preserveAspectRatio" "xMidYMid meet"
+        ]
+        [ -- Left axis label (apps on left)
+          elem Text
+            [ staticNum "x" (-config.width / 2.0 + 60.0)
+            , staticNum "y" (config.height / 2.0 - 15.0)
+            , staticStr "font-size" "11"
+            , staticStr "fill" "#999"
+            , staticStr "textContent" "\x2190 App modules"
+            ]
+            []
+        -- Right axis label (leaves on right)
+        , elem Text
+            [ staticNum "x" (config.width / 2.0 - 60.0)
+            , staticNum "y" (config.height / 2.0 - 15.0)
+            , staticStr "text-anchor" "end"
+            , staticStr "font-size" "11"
+            , staticStr "fill" "#999"
+            , staticStr "textContent" "Leaf modules \x2192"
+            ]
+            []
+        -- Legend: category + age
+        , elem Group
+            [ staticStr "transform" ("translate(" <> show (-config.width / 2.0 + 20.0) <> "," <> show (-config.height / 2.0 + 20.0) <> ")")
+            ]
+            [ anatomyLegendDot 0.0 "hsl(40, 80%, 55%)" "Your code"
+            , anatomyLegendDot 18.0 "hsl(210, 65%, 55%)" "Direct deps"
+            , anatomyLegendDot 36.0 "hsl(210, 15%, 55%)" "Transitive"
+            , anatomyLegendDot 54.0 "hsl(210, 65%, 38%)" "Darker = older"
+            ]
+        -- Nodes container
+        , elem Group
+            [ staticStr "id" C.anatomyModuleNodesId
+            , staticStr "class" "anatomy-modules"
+            ]
+            []
+        ]
+  _ <- rerender config.containerSelector containerTree
+  pure unit
+
+-- | Small legend dot for anatomy module beeswarm
+anatomyLegendDot :: Number -> String -> String -> Tree
+anatomyLegendDot yOff color label =
+  elem Group
+    [ staticStr "transform" ("translate(0," <> show yOff <> ")")
+    ]
+    [ elem Circle
+        [ staticStr "cx" "5"
+        , staticStr "cy" "5"
+        , staticStr "r" "4"
+        , staticStr "fill" color
+        , staticStr "stroke" "#555"
+        , staticStr "stroke-width" "0.5"
+        ]
+        []
+    , elem Text
+        [ staticStr "x" "14"
+        , staticStr "y" "9"
+        , staticStr "font-size" "10"
+        , staticStr "fill" "#666"
+        , staticStr "font-family" "'Courier New', monospace"
+        , staticStr "textContent" label
+        ]
+        []
+    ]
+
+-- | Render anatomy module nodes
+renderAnatomyModuleNodesHATS :: AnatomyModuleConfig -> Array AnatomyModuleNode -> Effect Unit
+renderAnatomyModuleNodesHATS config nodes = do
+  let nodesTree = createAnatomyModuleNodesTree config nodes
+  _ <- rerender C.anatomyModuleNodes nodesTree
+  pure unit
+
+createAnatomyModuleNodesTree :: AnatomyModuleConfig -> Array AnatomyModuleNode -> Tree
+createAnatomyModuleNodesTree config nodes =
+  forEach "anatomy-modules" Group nodes nodeKey (anatomyModuleNodeHATS config)
+  where
+  nodeKey :: AnatomyModuleNode -> String
+  nodeKey n = show n.id
+
+-- | Single module node for anatomy view
+anatomyModuleNodeHATS :: AnatomyModuleConfig -> AnatomyModuleNode -> Tree
+anatomyModuleNodeHATS config node =
+  let
+    clickBehaviors = case config.onClick of
+      Just handler -> [ onClick (handler node.mod.name) ]
+      Nothing -> []
+
+    shortName = lastSegment node.mod.name
+  in
+    elem Group
+      [ thunkedStr "transform" ("translate(" <> show node.x <> "," <> show node.y <> ")")
+      , staticStr "class" "module-node-group"
+      , thunkedStr "data-id" (show node.id)
+      , thunkedStr "data-name" node.mod.name
+      , thunkedStr "data-package" node.pkgName
+      ]
+      [ withBehaviors clickBehaviors $
+          elem Circle
+            [ staticStr "cx" "0"
+            , staticStr "cy" "0"
+            , thunkedNum "r" node.r
+            , thunkedStr "fill" node.color
+            , thunkedStr "stroke" node.strokeColor
+            , staticNum "stroke-width" 0.5
+            , staticStr "cursor" "pointer"
+            , staticStr "class" "module-circle"
+            ]
+            []
+      , -- Module label (hover only via CSS)
+        withBehaviors clickBehaviors $
+          elem Text
+            [ staticStr "x" "0"
+            , thunkedStr "y" (show (node.r + 10.0))
+            , staticStr "text-anchor" "middle"
+            , staticStr "font-size" "9"
+            , staticStr "font-family" "'Courier New', monospace"
+            , staticStr "fill" "#555"
+            , staticStr "cursor" "pointer"
+            , staticStr "class" "module-label"
+            , thunkedStr "textContent" shortName
+            ]
+            []
+      ]
+
+-- | Get the last segment of a dotted module name
+lastSegment :: String -> String
+lastSegment name =
+  case Array.last (Str.split (Str.Pattern ".") name) of
+    Just s -> s
+    Nothing -> name
+
+-- | Start force simulation for anatomy modules
+startAnatomySimulation :: AnatomyModuleConfig -> Array AnatomyModuleNode -> Effect (SimulationHandle AnatomyModuleNodeRow)
+startAnatomySimulation config nodes = do
+  log $ "[ModuleBeeswarm/Anatomy] Creating simulation with " <> show (Array.length nodes) <> " nodes"
+
+  { handle, events } <- runSimulation
+    { engine: D3
+    , setup: setup "anatomy-module-beeswarm"
+        [ positionX "x" # withX (dynamic _.targetX) # withStrength (static 0.4)
+        , positionY "y" # withY (static 0.0) # withStrength (static 0.02)
+        , collide "collide" # withRadius (dynamic \n -> n.r + 1.5) # withStrength (static 0.8)
+        ]
+        # withAlphaDecay 0.003
+    , nodes: nodes
+    , links: []
+    , container: C.anatomyModuleNodes
+    , alphaMin: 0.0001
+    }
+
+  initialNodes <- handle.getNodes
+  renderAnatomyModuleNodesHATS config initialNodes
+
+  tickCountRef <- Ref.new 0
+  _ <- subscribe events \event -> case event of
+    Tick _ -> do
+      currentNodes <- handle.getNodes
+      tickUpdate C.anatomyModuleNodes currentNodes
+      count <- Ref.read tickCountRef
+      Ref.write (count + 1) tickCountRef
+      when (count `mod` 100 == 0) do
+        log $ "[ModuleBeeswarm/Anatomy] Tick " <> show count
+    Completed -> log "[ModuleBeeswarm/Anatomy] Simulation completed"
+    Started -> log "[ModuleBeeswarm/Anatomy] Simulation started"
+    Stopped -> log "[ModuleBeeswarm/Anatomy] Simulation stopped"
 
   pure handle

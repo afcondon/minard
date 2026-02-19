@@ -29,6 +29,7 @@ import Halogen.Subscription as HS
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
 import CE2.Viz.AnatomyBeeswarm as Beeswarm
+import CE2.Viz.ModuleBeeswarm as ModBeeswarm
 import Halogen.HTML.Events as HE
 
 -- =============================================================================
@@ -61,12 +62,20 @@ type AnatomyStats =
   , entryModule :: Maybe String
   }
 
+-- | Which beeswarm is currently visible
+data AnatomyView = PackageView | ModuleView
+
+derive instance eqAnatomyView :: Eq AnatomyView
+
 type State =
   { packages :: Array Loader.PackageSetPackage
   , unusedPackages :: Array Loader.PackageSetPackage
   , stats :: AnatomyStats
   , handle :: Maybe Beeswarm.BeeswarmHandle
   , actionListener :: Maybe (HS.Listener Action)
+  , activeView :: AnatomyView
+  , cachedModules :: Maybe (Array Loader.V2ModuleListItem)
+  , moduleHandle :: Maybe ModBeeswarm.AnatomyModuleBeeswarmHandle
   }
 
 data Action
@@ -76,6 +85,8 @@ data Action
   | HandlePackageClick String
   | GoToGalaxy
   | GoToProjects
+  | SwitchToPackages
+  | SwitchToModules
 
 -- =============================================================================
 -- Component
@@ -101,6 +112,9 @@ initialState input =
   , stats: computeStats input.packages 0
   , handle: Nothing
   , actionListener: Nothing
+  , activeView: PackageView
+  , cachedModules: Nothing
+  , moduleHandle: Nothing
   }
 
 -- =============================================================================
@@ -136,47 +150,77 @@ computeStats packages unusedCount =
 
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
-  let statsColumns = if state.stats.unusedCount > 0 then 4 else 3
+  let
+    statsColumns = if state.stats.unusedCount > 0 then 4 else 3
+    isPackageView = state.activeView == PackageView
+    isModuleView = state.activeView == ModuleView
+    pillStyle active = "padding: 6px 16px; border: 1px solid "
+      <> (if active then "#555; background: #555; color: #fff;" else "#C0BDB4; background: #fff; color: #555;")
+      <> " cursor: pointer; font-size: 12px; font-weight: 500; font-family: 'Courier New', monospace;"
   in HH.div
     [ HP.class_ (HH.ClassName "project-anatomy-viz")
     , HP.style "width: 100%; height: 100%; overflow-y: auto; background: #fafaf8; color: #333; font-family: 'Courier New', Courier, monospace;"
     ]
-    [ -- Heading
+    [ -- Heading + toggle bar
       HH.div
         [ HP.style "padding: 24px 32px 0; max-width: 1200px; margin: 0 auto;" ]
-        [ HH.h1
-            [ HP.style "font-size: 20px; font-weight: bold; margin: 0 0 4px; letter-spacing: 0.5px;" ]
-            [ HH.text "Anatomy of Your Project" ]
-        , HH.p
-            [ HP.style "font-size: 12px; color: #777; margin: 0 0 16px;" ]
-            [ HH.text $ show state.stats.totalCount <> " packages"
-                <> " \x00B7 " <> show state.stats.totalModules <> " modules"
+        [ HH.div
+            [ HP.style "display: flex; align-items: baseline; gap: 16px; margin: 0 0 4px;" ]
+            [ HH.h1
+                [ HP.style "font-size: 20px; font-weight: bold; margin: 0; letter-spacing: 0.5px;" ]
+                [ HH.text "Anatomy of Your Project" ]
+            , -- View toggle pills
+              HH.div
+                [ HP.style "display: flex; gap: 0;" ]
+                [ HH.button
+                    [ HE.onClick \_ -> SwitchToPackages
+                    , HP.style $ pillStyle isPackageView <> " border-radius: 4px 0 0 4px;"
+                    ]
+                    [ HH.text $ show state.stats.totalCount <> " Packages" ]
+                , HH.button
+                    [ HE.onClick \_ -> SwitchToModules
+                    , HP.style $ pillStyle isModuleView <> " border-radius: 0 4px 4px 0; border-left: none;"
+                    ]
+                    [ HH.text $ show state.stats.totalModules <> " Modules" ]
+                ]
             ]
         ]
 
-    -- Beeswarm container
+    -- Beeswarm container (shared — package or module view rendered here)
     , HH.div
         [ HP.id C.anatomyBeeswarmContainerId
         , HP.class_ (HH.ClassName "anatomy-beeswarm")
-        , HP.style "width: 100%; max-width: 1200px; height: 480px; margin: 0 auto; background: #fafaf8;"
+        , HP.style $ "width: 100%; max-width: 1200px; margin: 0 auto; background: #fafaf8;"
+            <> " height: " <> if isModuleView then "560px;" else "480px;"
         ]
         []
 
     -- Explanatory text directly under the viz
     , HH.div
         [ HP.style "max-width: 1200px; margin: 8px auto 0; padding: 0 32px; font-size: 12px; line-height: 1.8; color: #555;" ]
-        [ HH.p
-            [ HP.style "margin: 0 0 4px;" ]
-            [ HH.text $ "The beeswarm shows every package sized by lines of code "
-                <> "and positioned by dependency depth. Gold circles are your code, "
-                <> "blue are your declared dependencies, and the gray packages are "
-                <> "the transitive infrastructure that supports them \x2014 the deeper "
-                <> "in the graph, the lighter the shade."
+        ( if isPackageView
+          then
+            [ HH.p
+                [ HP.style "margin: 0 0 4px;" ]
+                [ HH.text $ "The beeswarm shows every package sized by lines of code "
+                    <> "and positioned by dependency depth. Gold circles are your code, "
+                    <> "blue are your declared dependencies, and the gray packages are "
+                    <> "the transitive infrastructure that supports them \x2014 the deeper "
+                    <> "in the graph, the lighter the shade."
+                ]
+            , HH.p
+                [ HP.style "margin: 0; color: #888; font-style: italic;" ]
+                [ HH.text "Click any package to explore its modules." ]
             ]
-        , HH.p
-            [ HP.style "margin: 0; color: #888; font-style: italic;" ]
-            [ HH.text "Click any package to explore its modules." ]
-        ]
+          else
+            [ HH.p
+                [ HP.style "margin: 0;" ]
+                [ HH.text $ "Every module in your dependency universe, sized by lines of code. "
+                    <> "Gold is your code, blue is direct dependencies, gray is transitive. "
+                    <> "Darker shading means an older package."
+                ]
+            ]
+        )
 
     -- Stats cards
     , HH.div
@@ -400,10 +444,47 @@ handleAction = case _ of
     log "[ProjectAnatomyViz] Navigate to Projects"
     H.raise NavigateToProjects
 
+  SwitchToPackages -> do
+    state <- H.get
+    when (state.activeView /= PackageView) do
+      -- Stop module beeswarm
+      case state.moduleHandle of
+        Just mh -> liftEffect mh.stop
+        Nothing -> pure unit
+      H.modify_ _ { activeView = PackageView, moduleHandle = Nothing }
+      -- Re-render package beeswarm in the shared container
+      startVisualization state.packages
+
+  SwitchToModules -> do
+    state <- H.get
+    when (state.activeView /= ModuleView) do
+      -- Stop package beeswarm
+      case state.handle of
+        Just h -> liftEffect h.stop
+        Nothing -> pure unit
+      H.modify_ _ { activeView = ModuleView, handle = Nothing }
+      -- Fetch modules if not cached, then render
+      case state.cachedModules of
+        Just modules -> startModuleVisualization modules
+        Nothing -> do
+          modulesResult <- liftAff Loader.fetchV2Modules
+          case modulesResult of
+            Left err -> do
+              log $ "[ProjectAnatomyViz] Failed to fetch modules: " <> err
+              H.modify_ _ { activeView = PackageView }
+              startVisualization state.packages
+            Right modules -> do
+              log $ "[ProjectAnatomyViz] Loaded " <> show (Array.length modules) <> " modules"
+              H.modify_ _ { cachedModules = Just modules }
+              startModuleVisualization modules
+
   Finalize -> do
     state <- H.get
     case state.handle of
       Just handle -> liftEffect handle.stop
+      Nothing -> pure unit
+    case state.moduleHandle of
+      Just mh -> liftEffect mh.stop
       Nothing -> pure unit
     liftEffect $ Beeswarm.cleanup C.anatomyBeeswarmContainer
 
@@ -438,3 +519,30 @@ startVisualization packages = do
   handle <- liftEffect $ Beeswarm.render config packages
   H.modify_ _ { handle = Just handle }
   log "[ProjectAnatomyViz] Beeswarm handle stored"
+
+-- | Start the module-level beeswarm
+startModuleVisualization :: forall m. MonadAff m => Array Loader.V2ModuleListItem -> H.HalogenM State Action () Output m Unit
+startModuleVisualization modules = do
+  state <- H.get
+
+  -- Stop existing module beeswarm
+  case state.moduleHandle of
+    Just mh -> liftEffect mh.stop
+    Nothing -> pure unit
+
+  let maxLayer = foldl (\acc p -> max acc p.topoLayer) 0 state.packages
+
+  let modConfig :: ModBeeswarm.AnatomyModuleConfig
+      modConfig =
+        { containerSelector: C.anatomyBeeswarmContainer
+        , width: 1200.0
+        , height: 560.0
+        , maxTopoLayer: maxLayer
+        , onClick: Nothing
+        , packages: state.packages
+        , colorMode: "category-age"
+        }
+
+  mHandle <- liftEffect $ ModBeeswarm.renderAnatomyModules modConfig modules
+  H.modify_ _ { moduleHandle = Just mHandle }
+  log $ "[ProjectAnatomyViz] Module beeswarm rendered with " <> show (Array.length modules) <> " modules"

@@ -2643,3 +2643,14 @@ a.ps-clickable:hover {
 .anatomy-package-group:hover .anatomy-label {
   opacity: 1;
 }
+
+/* Module beeswarm — hover labels */
+.module-node-group .module-label {
+  opacity: 0;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+}
+
+.module-node-group:hover .module-label {
+  opacity: 1;
+}
