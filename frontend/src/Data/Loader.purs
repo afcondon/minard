@@ -76,6 +76,9 @@ module CE2.Data.Loader
   , fetchModuleAnnotations
   , patchAnnotationStatus
   , createAnnotation
+    -- Source Location (editor integration)
+  , SourceLocation
+  , fetchSourceLocation
     -- Project Management (V2)
   , ProjectInfo
   , ProjectStats
@@ -2098,6 +2101,21 @@ type ModuleSource =
 fetchModuleSource :: String -> Aff (Either String ModuleSource)
 fetchModuleSource moduleName = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/module-source?module=" <> moduleName)
+  pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- =============================================================================
+-- Source Location (editor integration)
+-- =============================================================================
+
+-- | Resolved file path for editor integration
+type SourceLocation =
+  { filePath :: String
+  }
+
+-- | Resolve a module name to its absolute file path on disk
+fetchSourceLocation :: String -> Aff (Either String SourceLocation)
+fetchSourceLocation moduleName = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/source-location?module=" <> moduleName)
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
 
 -- =============================================================================

@@ -58,6 +58,7 @@ import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
 import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall, GitStatusData)
 import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor, PackageReachability, PackageClusters, PackagePurity, ReachabilityStatus(..), getModuleReachability)
+import CE2.Viz.DeclarationArcDiagram (isEffectful) as ArcDiagram
 
 -- =============================================================================
 -- Types
@@ -948,6 +949,18 @@ enrichedModuleCell config m =
               ]
         else
           elem Group [] []  -- Empty placeholder
+
+      -- Declaration purity rings (rendered above overlay so they're visible)
+      , if config.purityPeek then
+          elem Group
+            [ thunkedStr "transform"
+                ("translate(" <> show (m.width / 2.0) <> "," <> show (m.height / 2.0) <> ")")
+            , staticStr "class" "declaration-purity-rings"
+            , staticStr "pointer-events" "none"
+            ]
+            (Array.mapMaybe (purityRingElem) m.declarations)
+        else
+          elem Group [] []
       ]
 
 -- | Render an individual declaration circle with dependency highlighting
@@ -1028,6 +1041,23 @@ declarationCircleElem config moduleName decl =
             [ staticStr "class" "declaration-children" ]
             (map (childCircleElem decl.kind) decl.children)
         ]
+
+-- | Stroke-only ring for a value declaration's purity (rendered above purity overlay)
+purityRingElem :: DeclarationCircle -> Maybe Tree
+purityRingElem decl
+  | decl.kind /= "value" = Nothing
+  | otherwise =
+      let color = if ArcDiagram.isEffectful decl.typeSignature then "#d97706" else "#2563eb"
+      in Just $ elem Circle
+        [ thunkedNum "cx" decl.x
+        , thunkedNum "cy" decl.y
+        , thunkedNum "r" decl.r
+        , staticStr "fill" "none"
+        , thunkedStr "stroke" color
+        , staticStr "stroke-width" "2.5"
+        , staticStr "pointer-events" "none"
+        ]
+        []
 
 -- | Build tooltip text for a declaration
 buildDeclarationTooltip :: DeclarationCircle -> String

@@ -56,6 +56,8 @@ data Route
   | V2GetDeclarationUsage
   -- Module source (read .purs file from disk)
   | V2GetModuleSource
+  -- Source location (file path for editor integration)
+  | V2GetSourceLocation
   -- Annotations
   | V2Annotations        -- GET (list/filter) and POST (create)
   | V2Annotation Int     -- GET (single) and PATCH (update)
@@ -94,6 +96,7 @@ route = root $ sum
   , "V2GitStatus": path "api/v2/git/status" noArgs
   , "V2GetDeclarationUsage": path "api/v2/declaration-usage" noArgs
   , "V2GetModuleSource": path "api/v2/module-source" noArgs
+  , "V2GetSourceLocation": path "api/v2/source-location" noArgs
   , "V2Annotations": path "api/v2/annotations" noArgs
   , "V2Annotation": path "api/v2/annotations" (int segment)
   , "V2Report": path "api/v2/report" noArgs
@@ -166,6 +169,7 @@ main = launchAff_ do
     log "  GET /api/v2/git/status                   - Live git status (modified/staged)"
     log "  GET /api/v2/declaration-usage?module=&decl= - Cross-module usage graph"
     log "  GET /api/v2/module-source?module=         - Read module .purs source file"
+    log "  GET /api/v2/source-location?module=      - Resolve module to absolute file path"
     log "  GET/POST /api/v2/annotations             - List/create annotations"
     log "  GET/PATCH /api/v2/annotations/:id        - Get/update annotation"
     log "  GET /api/v2/report                       - Markdown codebase report"
@@ -208,6 +212,10 @@ main = launchAff_ do
     V2GetModuleSource ->
       case Object.lookup "module" query of
         Just moduleName -> Unified.getModuleSource db moduleName
+        Nothing -> ok "{ \"error\": \"module query param required\" }"
+    V2GetSourceLocation ->
+      case Object.lookup "module" query of
+        Just moduleName -> Unified.getSourceLocation db moduleName
         Nothing -> ok "{ \"error\": \"module query param required\" }"
     V2Annotations -> case method of
       Get -> Annotations.list db query

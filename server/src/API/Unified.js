@@ -793,3 +793,42 @@ export const buildModuleSourceJson = (row) => () => {
     return null;
   }
 };
+
+// =============================================================================
+// Source Location (file path only, for editor integration)
+// =============================================================================
+
+/**
+ * Resolve a module's source_span + repo_path to an absolute file path.
+ * Returns { filePath: "/absolute/path/to/Module.purs" } or null.
+ * PureScript FFI: Foreign -> Effect (Maybe String)
+ */
+export const buildSourceLocationJson = (row) => () => {
+  try {
+    const sourceSpan = typeof row.source_span === 'string'
+      ? JSON.parse(row.source_span) : row.source_span;
+
+    if (!sourceSpan || !sourceSpan.name) {
+      return null;
+    }
+
+    const filePath = sourceSpan.name;
+    const repoPath = row.repo_path || '.';
+    const projectRoot = process.cwd().replace(/\/server$/, '');
+    const fullPath = resolve(projectRoot, repoPath, filePath);
+
+    if (existsSync(fullPath)) {
+      return JSON.stringify({ filePath: fullPath });
+    }
+
+    // Try without repo_path
+    const altPath = resolve(projectRoot, filePath);
+    if (existsSync(altPath)) {
+      return JSON.stringify({ filePath: altPath });
+    }
+
+    return null;
+  } catch (error) {
+    return null;
+  }
+};

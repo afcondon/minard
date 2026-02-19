@@ -29,7 +29,8 @@ import Data.String.Common as SC
 import Data.String.CodeUnits as SCU
 import Data.String.Pattern (Pattern(..))
 import Effect (Effect)
-import Effect.Aff.Class (class MonadAff)
+import Data.Either (Either(..))
+import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
@@ -44,6 +45,9 @@ import CE2.Viz.DeclarationArcDiagram as ArcDiagram
 import CE2.Viz.DOMHelpers as DOMHelpers
 import CE2.Viz.ModuleSignatureMap as MSM
 import CE2.Viz.SignatureTree as SigTree
+
+-- | Open a URI in the browser (used for vscode:// links)
+foreign import openUri :: String -> Effect Unit
 
 -- =============================================================================
 -- Types
@@ -721,7 +725,14 @@ handleAction = case _ of
 
   OpenInEditor -> do
     state <- H.get
-    log $ "[ModuleSignatureMapViz] Open in editor (stub): " <> state.lastInput.moduleName
+    log $ "[ModuleSignatureMapViz] Opening in VS Code: " <> state.lastInput.moduleName
+    result <- liftAff $ Loader.fetchSourceLocation state.lastInput.moduleName
+    case result of
+      Right loc -> do
+        log $ "[ModuleSignatureMapViz] Resolved path: " <> loc.filePath
+        liftEffect $ openUri ("vscode://file/" <> loc.filePath)
+      Left err ->
+        log $ "[ModuleSignatureMapViz] Could not resolve path: " <> err
 
   ConfirmAnnotation annId -> do
     H.raise (AnnotationStatusChanged annId "confirmed")

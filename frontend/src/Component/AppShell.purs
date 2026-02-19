@@ -94,7 +94,7 @@ initialState _ =
   , modelData: Nothing
   , v2Data: Nothing
   , packageSetData: Nothing
-  , currentScene: GalaxyTreemap  -- Default; may change to ProjectManagement on boot
+  , currentScene: ProjectManagement  -- Always start here; user navigates from hub
   }
 
 -- =============================================================================
@@ -158,33 +158,31 @@ showPhase (Error msg) = "Error: " <> msg
 handleAction :: forall output m. MonadAff m => Action -> H.HalogenM State Action Slots output m Unit
 handleAction = case _ of
   Initialize -> do
-    log "[AppShell] Initializing — checking for loaded projects..."
+    log "[AppShell] Initializing — always starting at ProjectManagement..."
 
-    -- First, check if any projects are loaded
+    -- Always start at ProjectManagement. Load data in background if projects exist.
+    H.modify_ _
+      { phase = Ready
+      , currentScene = ProjectManagement
+      }
+
     void $ H.fork do
       projectsResult <- H.liftAff Loader.fetchV2Projects
       case projectsResult of
         Left _err -> do
-          -- Projects endpoint failed; try loading data anyway (backward compat)
-          log "[AppShell] Projects endpoint not available, proceeding with data load"
-          loadAllData
+          log "[AppShell] Projects endpoint not available"
         Right projects ->
           if Array.null projects then do
-            -- No projects loaded → go directly to ProjectManagement
-            log "[AppShell] No projects found — routing to ProjectManagement"
-            H.modify_ _
-              { phase = Ready
-              , currentScene = ProjectManagement
-              }
+            log "[AppShell] No projects found"
           else do
-            -- Projects exist → load data normally
-            log $ "[AppShell] Found " <> show (Array.length projects) <> " project(s), loading data..."
+            log $ "[AppShell] Found " <> show (Array.length projects) <> " project(s), loading data in background..."
             loadAllData
 
   DataLoaded loaded -> do
     log $ "[AppShell] Data loaded: " <> show loaded.model.moduleCount <> " modules, "
         <> show loaded.model.packageCount <> " packages"
         <> " (with " <> show (Array.length loaded.v2Packages) <> " v2 packages)"
+    -- Don't override currentScene — stay on whatever scene the user is viewing
     H.modify_ _
       { phase = Ready
       , modelData = Just loaded.model
@@ -193,7 +191,6 @@ handleAction = case _ of
           , modules: loaded.v2Modules
           , imports: loaded.v2Imports
           }
-      , currentScene = GalaxyTreemap
       }
 
   DataFailed err -> do

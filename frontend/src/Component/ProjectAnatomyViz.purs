@@ -30,6 +30,7 @@ import Halogen.Subscription as HS
 import CE2.Containers as C
 import CE2.Data.Loader as Loader
 import CE2.Viz.AnatomyBeeswarm as Beeswarm
+import Halogen.HTML.Events as HE
 
 -- =============================================================================
 -- Types
@@ -41,6 +42,8 @@ type Input =
 
 data Output
   = PackageClicked String
+  | NavigateToGalaxy
+  | NavigateToProjects
 
 type Slot = H.Slot Query Output
 
@@ -72,6 +75,8 @@ data Action
   | Receive Input
   | Finalize
   | HandlePackageClick String
+  | GoToGalaxy
+  | GoToProjects
 
 -- =============================================================================
 -- Component
@@ -187,6 +192,24 @@ render state =
         , HH.p
             [ HP.style "margin: 0; color: #888; font-style: italic;" ]
             [ HH.text "Click any package to explore its modules." ]
+        ]
+
+    -- CTA buttons
+    , HH.div
+        [ HP.style "max-width: 1200px; margin: 0 auto 24px; padding: 0 32px; display: flex; gap: 12px; align-items: center;" ]
+        [ HH.button
+            [ HE.onClick \_ -> GoToGalaxy
+            , HP.style "padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; background: #4E79A7; color: white;"
+            ]
+            [ HH.text "Explore the Galaxy" ]
+        , HH.button
+            [ HE.onClick \_ -> GoToProjects
+            , HP.style "padding: 10px 24px; border: 1px solid #C0BDB4; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; background: #fff; color: #555;"
+            ]
+            [ HH.text "Load Another Project" ]
+        , HH.span
+            [ HP.style "margin-left: 16px; font-size: 11px; color: #AAA; font-style: italic;" ]
+            [ HH.text "For AI-generated module summaries, run /annotate from Claude Code." ]
         ]
     ]
 
@@ -310,6 +333,14 @@ handleAction = case _ of
   HandlePackageClick pkgName -> do
     log $ "[ProjectAnatomyViz] Package clicked: " <> pkgName
     H.raise (PackageClicked pkgName)
+
+  GoToGalaxy -> do
+    log "[ProjectAnatomyViz] Navigate to Galaxy"
+    H.raise NavigateToGalaxy
+
+  GoToProjects -> do
+    log "[ProjectAnatomyViz] Navigate to Projects"
+    H.raise NavigateToProjects
 
   Finalize -> do
     state <- H.get

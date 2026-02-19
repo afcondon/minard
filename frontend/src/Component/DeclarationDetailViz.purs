@@ -25,10 +25,14 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Type.Proxy (Proxy(..))
 
+import Effect (Effect)
+import Effect.Class (liftEffect)
 import CE2.Data.Loader as Loader
 import CE2.Component.DeclarationUsageGraph as DeclarationUsageGraph
 import CE2.Viz.SourceCode as SourceCode
 import CE2.Viz.ModuleTreemapEnriched (kindColor)
+
+foreign import openUri :: String -> Effect Unit
 
 -- =============================================================================
 -- Types
@@ -71,6 +75,7 @@ data Action
   | ReceiveSource (Either String Loader.ModuleSource)
   | ClickedIdentifier String String String
   | ClickedModuleName
+  | OpenInEditor
 
 -- =============================================================================
 -- Component
@@ -133,6 +138,12 @@ render state =
                 [ HP.style $ "font-size: 9px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; background: " <> kindColor decl.kind <> "; color: white; font-weight: 600;" ]
                 [ HH.text (declKindLabel decl.kind) ]
             Nothing -> HH.text ""
+        , HH.span [ HP.style "flex: 1;" ] []
+        , HH.span
+            [ HP.style "font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
+            , HE.onClick \_ -> OpenInEditor
+            ]
+            [ HH.text "Open in editor" ]
         ]
 
     -- Source code panel (dominant, scrollable)
@@ -283,6 +294,17 @@ handleAction = case _ of
   ClickedModuleName -> do
     log "[DeclarationDetailViz] Module name clicked → back to overview"
     H.raise BackToModuleOverview
+
+  OpenInEditor -> do
+    state <- H.get
+    log $ "[DeclarationDetailViz] Opening in VS Code: " <> state.lastInput.moduleName
+    result <- liftAff $ Loader.fetchSourceLocation state.lastInput.moduleName
+    case result of
+      Right loc -> do
+        log $ "[DeclarationDetailViz] Resolved path: " <> loc.filePath
+        liftEffect $ openUri ("vscode://file/" <> loc.filePath)
+      Left err ->
+        log $ "[DeclarationDetailViz] Could not resolve path: " <> err
 
 -- =============================================================================
 -- Utilities

@@ -19,7 +19,8 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const url = `http://localhost:3000/?focus=${encodeURIComponent(moduleName)}`;
+    // Open the frontend (port 3001) with a hash route to the module signature map
+    const url = `http://localhost:3001/#ModuleSignatureMap/${encodeURIComponent(moduleName)}`;
     console.log(`Opening Code Explorer: ${url}`);
 
     await vscode.env.openExternal(vscode.Uri.parse(url));

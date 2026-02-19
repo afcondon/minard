@@ -26,6 +26,7 @@ import Halogen.HTML.Core (AttrName(..), ElemName(..), Namespace(..))
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import CE2.Data.Loader as Loader
+import CE2.Scene (Scene(..)) as Scene
 
 -- =============================================================================
 -- Types
@@ -33,11 +34,13 @@ import CE2.Data.Loader as Loader
 
 type Input =
   { projects :: Array Loader.ProjectInfo
+  , dataReady :: Boolean
   }
 
 data Output
   = ProjectAdded Loader.LoadResult
   | NavigateToProject Int
+  | NavigateToScene Scene.Scene
   | ProjectDeleted Int
 
 data Query a = RefreshProjects (Array Loader.ProjectInfo) a
@@ -58,6 +61,7 @@ derive instance eqAddPhase :: Eq AddPhase
 
 type State =
   { projects :: Array Loader.ProjectInfo
+  , dataReady :: Boolean
   , addPhase :: AddPhase
   , pathInput :: String
   , nameOverride :: String
@@ -77,6 +81,7 @@ data Action
   | ConfirmDelete Int
   | CancelDelete
   | ExploreProject Int
+  | GoToScene Scene.Scene
 
 -- =============================================================================
 -- Component
@@ -98,6 +103,7 @@ component =
 initialState :: Input -> State
 initialState input =
   { projects: input.projects
+  , dataReady: input.dataReady
   , addPhase: if Array.null input.projects then EnteringPath else Idle
   , pathInput: ""
   , nameOverride: ""
@@ -143,9 +149,14 @@ render :: forall m. MonadAff m => State -> H.ComponentHTML Action () m
 render state =
   HH.div
     [ HP.style containerStyle ]
-    [ if Array.null state.projects
-        then renderWelcome state
-        else renderManagement state
+    [ HH.div
+        [ HP.style "max-width: 800px; width: 100%; margin: 0 auto; padding: 60px 24px 80px;" ]
+        [ renderHero state
+        , renderArchitectureDiagram
+        , renderSankeySection
+        , renderWhatYoullSee
+        , renderGetStarted state
+        ]
     ]
 
 containerStyle :: String
@@ -154,27 +165,13 @@ containerStyle = "width: 100%; height: 100%; overflow-y: auto; background: #FAFA
   <> "color: #333;"
 
 -- =============================================================================
--- Welcome Mode — Rich Onboarding Page
--- =============================================================================
-
-renderWelcome :: forall m. MonadAff m => State -> H.ComponentHTML Action () m
-renderWelcome state =
-  HH.div
-    [ HP.style "max-width: 800px; width: 100%; margin: 0 auto; padding: 60px 24px 80px;" ]
-    [ renderHero
-    , renderArchitectureDiagram
-    , renderSankeySection
-    , renderWhatYoullSee
-    , renderGetStarted state
-    ]
-
--- =============================================================================
 -- Hero
 -- =============================================================================
 
-renderHero :: forall w i. HH.HTML w i
-renderHero =
-  HH.div
+renderHero :: forall m. MonadAff m => State -> H.ComponentHTML Action () m
+renderHero state =
+  let hasProjects = not (Array.null state.projects)
+  in HH.div
     [ HP.style "text-align: center; margin-bottom: 56px;" ]
     [ -- Logotype
       HH.div
@@ -190,9 +187,34 @@ renderHero =
         [ HP.style "font-size: 15px; color: #888; margin: 0 0 6px 0; letter-spacing: 0.5px;" ]
         [ HH.text "Code cartography for PureScript" ]
     , HH.p
-        [ HP.style "font-size: 12px; color: #AAA; margin: 0; font-style: italic;" ]
+        [ HP.style "font-size: 12px; color: #AAA; margin: 0 0 24px 0; font-style: italic;" ]
         [ HH.text "Lifting the fog of war since 2026" ]
+
+    -- Navigation links (when data is loaded)
+    , if hasProjects
+        then HH.div
+          [ HP.style "display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;" ]
+          [ navLink "Anatomy" Scene.ProjectAnatomy state.dataReady
+          , navLink "Galaxy" Scene.GalaxyTreemap state.dataReady
+          , navLink "Report" Scene.AnnotationReport state.dataReady
+          ]
+        else HH.text ""
     ]
+  where
+  navLink label scene enabled =
+    HH.button
+      [ HE.onClick \_ -> GoToScene scene
+      , HP.style $ "padding: 8px 20px; border: 1px solid "
+          <> (if enabled then "#C0BDB4" else "#E0DDD4")
+          <> "; border-radius: 20px; cursor: "
+          <> (if enabled then "pointer" else "default")
+          <> "; font-size: 13px; font-weight: 500; background: "
+          <> (if enabled then "#fff" else "#FAFAF8")
+          <> "; color: " <> (if enabled then "#444" else "#BBB")
+          <> "; transition: all 150ms ease;"
+      , HP.disabled (not enabled)
+      ]
+      [ HH.text label ]
 
 -- =============================================================================
 -- Architecture Diagram
@@ -567,111 +589,6 @@ cardStyle = "background: #fff; border: 1px solid #E0DDD4; border-radius: 6px; "
   <> "padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); margin-top: 16px;"
 
 -- =============================================================================
--- Management Mode (projects exist)
--- =============================================================================
-
-renderManagement :: forall m. MonadAff m => State -> H.ComponentHTML Action () m
-renderManagement state =
-  HH.div
-    [ HP.style "max-width: 720px; width: 100%; margin: 0 auto; padding: 60px 24px;" ]
-    [ HH.h1
-        [ HP.style "font-size: 18px; font-weight: 600; margin: 0 0 20px 0; letter-spacing: -0.3px;" ]
-        [ HH.text "Projects" ]
-    , renderProjectTable state
-    , HH.div
-        [ HP.style "margin-top: 24px;" ]
-        [ case state.addPhase of
-            Idle ->
-              HH.button
-                [ HE.onClick \_ -> StartAddProject
-                , HP.style addButtonStyle
-                ]
-                [ HH.text "+ Add Project" ]
-            _ ->
-              HH.div
-                [ HP.style cardStyle ]
-                [ HH.h2
-                    [ HP.style "font-size: 14px; font-weight: 600; margin: 0 0 16px 0;" ]
-                    [ HH.text "Add Project" ]
-                , renderAddForm state
-                ]
-        ]
-    ]
-
-addButtonStyle :: String
-addButtonStyle = "background: none; border: 1px dashed #C0BDB4; color: #666; "
-  <> "padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px;"
-
-renderProjectTable :: forall m. MonadAff m => State -> H.ComponentHTML Action () m
-renderProjectTable state =
-  HH.div
-    [ HP.style "background: #fff; border: 1px solid #E0DDD4; border-radius: 6px; overflow: hidden;" ]
-    [ HH.table
-        [ HP.style "width: 100%; border-collapse: collapse; font-size: 12px;" ]
-        [ HH.thead_
-            [ HH.tr [ HP.style "background: #F5F4F0; border-bottom: 1px solid #E0DDD4;" ]
-                [ th "Name"
-                , th "Path"
-                , th "Packages"
-                , th "Modules"
-                , th "Declarations"
-                , th ""
-                ]
-            ]
-        , HH.tbody_ (map (renderProjectRow state) state.projects)
-        ]
-    ]
-  where
-  th label = HH.th
-    [ HP.style "text-align: left; padding: 8px 12px; font-weight: 500; color: #888; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;" ]
-    [ HH.text label ]
-
-renderProjectRow :: forall m. MonadAff m => State -> Loader.ProjectInfo -> H.ComponentHTML Action () m
-renderProjectRow state project =
-  let isConfirming = state.confirmDeleteId == Just project.id
-  in HH.tr
-    [ HP.style "border-bottom: 1px solid #F0EDE6;" ]
-    [ HH.td [ HP.style cellStyle ]
-        [ HH.span [ HP.style "font-weight: 500;" ] [ HH.text project.name ] ]
-    , HH.td [ HP.style (cellStyle <> " color: #888; font-size: 11px;") ]
-        [ HH.text project.repoPath ]
-    , HH.td [ HP.style cellStyle ] [ HH.text (show project.stats.packageCount) ]
-    , HH.td [ HP.style cellStyle ] [ HH.text (show project.stats.moduleCount) ]
-    , HH.td [ HP.style cellStyle ] [ HH.text (show project.stats.declarationCount) ]
-    , HH.td [ HP.style (cellStyle <> " text-align: right;") ]
-        [ if isConfirming
-            then HH.span [ HP.style "display: flex; gap: 4px; justify-content: flex-end;" ]
-              [ HH.button
-                  [ HE.onClick \_ -> DoDelete project.id
-                  , HP.style "background: #E15759; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 10px;"
-                  ]
-                  [ HH.text "Confirm" ]
-              , HH.button
-                  [ HE.onClick \_ -> CancelDelete
-                  , HP.style "background: none; border: 1px solid #ccc; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 10px;"
-                  ]
-                  [ HH.text "Cancel" ]
-              ]
-            else HH.span [ HP.style "display: flex; gap: 4px; justify-content: flex-end;" ]
-              [ HH.button
-                  [ HE.onClick \_ -> ExploreProject project.id
-                  , HP.style actionBtnStyle
-                  ]
-                  [ HH.text "Explore" ]
-              , HH.button
-                  [ HE.onClick \_ -> ConfirmDelete project.id
-                  , HP.style (actionBtnStyle <> " color: #999;")
-                  ]
-                  [ HH.text "Remove" ]
-              ]
-        ]
-    ]
-  where
-  cellStyle = "padding: 10px 12px;"
-  actionBtnStyle = "background: none; border: 1px solid #ddd; padding: 3px 8px; "
-    <> "border-radius: 3px; cursor: pointer; font-size: 10px; color: #555;"
-
--- =============================================================================
 -- Add Project Form
 -- =============================================================================
 
@@ -870,7 +787,7 @@ handleAction = case _ of
   Initialize -> pure unit
 
   Receive input -> do
-    H.modify_ _ { projects = input.projects }
+    H.modify_ _ { projects = input.projects, dataReady = input.dataReady }
 
   StartAddProject ->
     H.modify_ _ { addPhase = EnteringPath, pathInput = "", nameOverride = "" }
@@ -933,3 +850,6 @@ handleAction = case _ of
 
   ExploreProject projectId ->
     H.raise (NavigateToProject projectId)
+
+  GoToScene scene ->
+    H.raise (NavigateToScene scene)

@@ -1082,7 +1082,9 @@ renderScene state =
 
   ProjectManagement ->
     HH.slot _projectManagementViz unit ProjectManagementViz.component
-      { projects: state.loadedProjects }
+      { projects: state.loadedProjects
+      , dataReady: state.packageSetData /= Nothing
+      }
       HandleProjectManagementOutput
 
   ProjectAnatomy ->
@@ -1388,6 +1390,9 @@ handleAction = case _ of
     ProjectManagementViz.NavigateToProject _projectId -> do
       log "[SceneCoordinator] Navigate to loaded project"
       H.raise ProjectLoaded
+    ProjectManagementViz.NavigateToScene scene -> do
+      log $ "[SceneCoordinator] Hub navigation to: " <> show scene
+      handleAction (NavigateTo scene)
     ProjectManagementViz.ProjectDeleted _projectId -> do
       log "[SceneCoordinator] Project deleted"
       -- Re-fetch projects list
@@ -1400,6 +1405,12 @@ handleAction = case _ of
     ProjectAnatomyViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] Anatomy package clicked: " <> pkgName
       handleAction (NavigateTo (PkgTreemap pkgName))
+    ProjectAnatomyViz.NavigateToGalaxy -> do
+      log "[SceneCoordinator] Anatomy → Galaxy"
+      handleAction (NavigateTo GalaxyTreemap)
+    ProjectAnatomyViz.NavigateToProjects -> do
+      log "[SceneCoordinator] Anatomy → Projects"
+      handleAction (NavigateTo ProjectManagement)
 
   HandleDeclarationDetailOutput output -> case output of
     DeclarationDetailViz.BackToModuleOverview -> do

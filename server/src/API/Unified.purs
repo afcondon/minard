@@ -40,6 +40,8 @@ module API.Unified
   , getDeclarationUsage
   -- Module source
   , getModuleSource
+  -- Source location (file path only, for editor integration)
+  , getSourceLocation
   ) where
 
 import Prelude
@@ -977,3 +979,33 @@ getModuleSource db moduleName = do
         Just j -> ok' jsonHeaders j
 
 foreign import buildModuleSourceJson :: Foreign -> Effect (Nullable String)
+
+-- =============================================================================
+-- GET /api/v2/source-location?module=<name>
+-- =============================================================================
+
+-- | Resolve a module name to its absolute file path on disk
+-- | Returns: { filePath: "/absolute/path/to/Module.purs" }
+-- | Used for editor integration (vscode:// URIs)
+getSourceLocation :: Database -> String -> Aff Response
+getSourceLocation db moduleName = do
+  rows <- queryAllParams db """
+    SELECT d.source_span, pr.repo_path
+    FROM declarations d
+    JOIN modules m ON d.module_id = m.id
+    JOIN package_versions pv ON m.package_version_id = pv.id
+    JOIN snapshot_packages sp ON sp.package_version_id = pv.id
+    JOIN snapshots s ON s.id = sp.snapshot_id
+    JOIN projects pr ON pr.id = s.project_id
+    WHERE m.name = ? AND d.source_span IS NOT NULL
+    LIMIT 1
+  """ [unsafeToForeign moduleName]
+  case firstRow rows of
+    Nothing -> notFound
+    Just row -> do
+      json <- liftEffect $ buildSourceLocationJson row
+      case toMaybe json of
+        Nothing -> notFound
+        Just j -> ok' jsonHeaders j
+
+foreign import buildSourceLocationJson :: Foreign -> Effect (Nullable String)

@@ -1,155 +1,131 @@
 # Minard
 
-**Overcome the Fog of War in AI-led development.**
+Code cartography for PureScript projects.
 
-Code cartography from package sets to call sites. Named for [Charles Joseph Minard](https://en.wikipedia.org/wiki/Charles_Joseph_Minard), whose 1869 visualization of Napoleon's Russian campaign remains "the best statistical graphic ever drawn" - showing army size, location, direction, temperature, and time in a single view.
+When development is as accelerated as it is now with LLMs, and when LLMs have a context window that is constantly emptying, it's vital that both parties have a source of truth that they share. Minard aims to be that source of truth and a locus of discussion between human and AI developers.
 
-Like Minard's chart tracked the Grande Armée's losses from 422,000 to 10,000, Minard (the tool) tracks your codebase: dead modules, orphaned exports, unreachable routes, coupling hotspots. At a glance, on a laptop screen.
+Named for [Charles Joseph Minard](https://en.wikipedia.org/wiki/Charles_Joseph_Minard), whose 1869 visualization of Napoleon's Russian campaign remains the best statistical graphic ever drawn.
 
-## Core Conceits
+## What It Does
 
-### Powers of Ten
+Point Minard at a PureScript workspace. It scans your source, parses every module, resolves the full dependency graph from your lock file, and loads everything into a DuckDB database. Then you explore.
 
-Navigate code at every scale:
-- **Package Set** → What's in my dependency universe?
-- **Package** → What modules comprise this library?
-- **Module** → What does this module export and import?
-- **Declaration** → What calls this function? What does it call?
-- **Call Site** → Show me exactly where
+The frontend is a single-page Halogen app with 13 interconnected views. Navigation follows a "Powers of Ten" pattern — start at the full package universe, drill into a package, into a module, into a declaration, down to individual call sites. Each level answers different questions.
 
-Each level answers different questions. The tool lets you zoom fluidly between them.
+### Views
 
-### Fog of War
+| Level | View | What you see |
+|-------|------|--------------|
+| Universe | Galaxy Treemap | Every package in your dependency set, sized by LOC, colored by namespace or cluster |
+| Universe | Galaxy Beeswarm | Same packages arranged by topological layer, filterable by scope |
+| Universe | Project Anatomy | Your workspace vs. direct vs. transitive deps, with colored spago.yaml blocks |
+| Neighborhood | Solar Swarm | Bubble-packed modules within packages |
+| Package | Package Treemap | Modules as cells in a treemap, with enriched circle-packed declarations inside |
+| Package | Module Beeswarm | Modules arranged by internal dependency depth |
+| Module | Module Signature Map | Every exported declaration with full rendered type signatures (via [sigil](https://github.com/afcondon/purescript-sigil)) |
+| Module | Module Overview | Bubble pack + declaration listing |
+| Declaration | Declaration Detail | Arc diagram showing call relationships, purity coloring |
+| Cross-cutting | Type Class Grid | All type classes with method counts, instance counts, inheritance |
+| Cross-cutting | Annotation Report | AI and human annotations on every module, threaded discussion |
+| Cross-cutting | Project Management | Onboard new projects, validate prerequisites, trigger loader |
 
-Modern development with LLM assistance creates a novel visibility problem:
+### Interaction
 
-| Actor | Problem | Without Minard |
-|-------|---------|----------------|
-| **Human** | Changes are voluminous, hard to track details | "I think we deleted that... or did we?" |
-| **LLM** | Context window amnesia, loses history between sessions | "Let me grep for that again..." |
-| **Both** | Drift between intent and implementation | Ship bugs, accumulate debt |
+- **Click** any package, module, or declaration to drill down
+- **Hold R** on any treemap for reachability overlay — see which modules are actually used
+- **Hold P** for purity overlay — blue for pure, amber for effectful
+- **Color modes** on treemaps: namespace, topological layer, community cluster
+- **Search** with typeahead across declarations
 
-**Minard's solution**: CLI for the AI (fast, queryable, authoritative), visualization for the human (patterns, anomalies, at-a-glance). Same database, complementary interfaces.
+## Current State
 
-## Components
+**Pre-release. Works locally. PureScript only.**
+
+The tool indexes its own codebase (117 packages, 864 modules) and navigates fluidly between all 13 views. The annotation system supports AI-generated module summaries with human review and threaded discussion. Project onboarding works end-to-end from the browser.
+
+What's not done: no hosted demo, no install story beyond "clone and build," no support for projects outside the local filesystem. The database schema is stable but not documented for external use.
+
+## Architecture
 
 ```
 minard/
-├── frontend/          # Halogen visualization app
-├── server/            # Node.js API over DuckDB
-├── database/          # DuckDB schema + loader scripts
-├── site-explorer/     # Route analysis + spidering
-├── vscode-extension/  # Editor integration
-└── loader/            # (planned) Fast Rust/Go data ingestion
+├── frontend/        23k LOC PureScript — Halogen app, Hylograph visualizations
+├── server/           3k LOC PureScript/JS — HTTPurple REST API over DuckDB
+├── minard-loader/    7k LOC Rust — scans PureScript workspaces, loads DuckDB
+├── database/         DuckDB file (schema v3.4)
+├── vscode-extension/ Jump between visualization and source
+├── site-explorer/    Route analysis for Halogen SPAs
+└── tools/            CLI utilities (minard-reach, minard-annotate)
 ```
 
-### Frontend (Halogen + Hylograph)
+### Frontend (PureScript + Halogen + Hylograph)
 
-Interactive visualization for exploring codebases:
-- Force-directed module dependency graphs
-- Treemaps by package, LOC, declaration count
-- Beeswarm plots for topological layers
-- Bubble packs for namespace hierarchy
-- Chord diagrams for coupling
+21 visualization modules using [Hylograph](https://github.com/afcondon/hylograph) — a PureScript visualization library built on D3 with a declarative AST (HATS) for bindings, selections, transitions, and force simulations. Type signatures rendered by [sigil](https://github.com/afcondon/purescript-sigil).
 
 ### Server (PureScript + HTTPurple)
 
-REST API over the database:
-- `/api/v2/packages` - List packages with stats
-- `/api/v2/modules` - List modules with imports
-- `/api/v2/all-imports` - Bulk import graph
-- `/api/v2/declarations/search/:query` - Type-aware search
+REST API serving package, module, declaration, import, and annotation data from DuckDB. Runs as a Node.js process.
 
-### Database (DuckDB)
+Key endpoints:
+- `/api/v2/packages` — packages with stats, dependencies, topological layers
+- `/api/v2/modules/:pkg` — modules with import counts, LOC, content hashes
+- `/api/v2/declarations/:pkg/:module` — declarations with type signatures, call data
+- `/api/v2/all-imports`, `/api/v2/all-calls` — bulk graphs for cross-package analysis
+- `/api/v2/annotations` — AI/human annotations with threading
+- `/api/v2/projects/*` — project management (list, validate, load, delete)
 
-Rich schema supporting:
-- Multiple projects, multiple snapshots per project
-- Package versions as first-class identity
-- Namespace hierarchy independent of packages
-- Type signatures as rendered text AND queryable AST
-- Module imports, function calls, git metrics
-- Route definitions and spider results
+### Loader (Rust)
 
-### Site Explorer
-
-Dual-mode route analysis for Halogen SPAs:
-- **Static**: Parse route ADT, extract component mappings
-- **Dynamic**: Puppeteer spidering, discover actual navigation
-- **Comparison**: Find unreachable routes, extra routes, orphaned modules
+Scans a PureScript workspace: parses `spago.yaml` and `spago.lock`, reads compiler output (`docs.json`, `externs.json`), resolves the registry snapshot, computes topological layers, extracts function calls, and bulk-loads everything into DuckDB via the Appender API. Full scan of a 117-package workspace runs in ~3 seconds.
 
 ### VS Code Extension
 
-Jump from visualization to source code.
+Bridges the visualization and the editor. Jump from a declaration view to the source line, open a package folder, or open a module file. Planned: navigation from editor to visualization (select a symbol, see it in context).
 
-## Quick Start
+### Database (DuckDB)
+
+Columnar analytics database. Schema supports multiple projects and snapshots. Tables for packages, modules, declarations, imports, function calls, type signatures, annotations, git metrics, and route definitions. Content hashing on modules enables stale-annotation detection across reloads.
+
+## Running Locally
+
+Prerequisites: PureScript toolchain (spago, purs), Node.js, Rust toolchain (for the loader).
 
 ```bash
-# Build everything
-cd apps/minard
-npm install
-spago build
+# Build the loader
+cd minard-loader && cargo build --release
 
-# Load a project
-node database/loader/ce-loader.js load --project my-app --path /path/to/project
+# Scan a workspace
+./minard-loader/target/release/minard-loader \
+  load --database database/ce-unified.duckdb \
+  --scan /path/to/your/purescript/workspace
 
-# Start the server
-node server/run.js
+# Build and start the server (must run from minard/)
+spago build -p minard-server
+node server/run.js          # port 3000
 
-# Start the frontend (dev)
-cd frontend && npm run serve
+# Build and start the frontend
+spago build -p minard-frontend
+spago bundle -p minard-frontend
+cd frontend && npx serve public -p 3001
 ```
 
-## Status
+Open http://localhost:3001.
 
-- **Frontend**: Production-ready, deployed
-- **Server**: Production-ready, deployed
-- **Database**: Stable schema (v3), well-documented
-- **Site Explorer**: Functional, needs integration
-- **Loader**: Works, but slow. Rewrite planned (Rust/Go)
-- **VS Code Extension**: Proof of concept
+Alternatively, skip the loader and use the browser's project management page to onboard a project after starting the server with an empty database.
 
-## Roadmap
+## AI Collaboration
 
-### Near-term
-- [ ] Incremental loading (currently ~30s for full reload)
-- [ ] Orphan visualization (highlight in force graph)
-- [ ] Cross-project analysis (library usage across consumers)
-- [ ] CLI expansion: `unused-exports`, `coupling-report`, `churn-report`
+Minard's annotation system is designed for dialogue between AI and human developers. AI agents read source code and write structured annotations (module summaries, quality observations, architecture notes). Humans review, confirm, dispute, or extend with their own context. Each annotation is threaded — replies form a conversation, and disagreements surface where code structure doesn't match architectural intent.
 
-### Medium-term
-- [ ] MCP server for direct LLM queries
-- [ ] Haskell project support
-- [ ] Loader rewrite in Rust/Go
+The annotation API is REST, so any tool that can `curl` can participate. A Claude Code skill (`/annotate`) is included for generating and reviewing annotations from the CLI.
 
-### Future
-- [ ] Demo with the original Minard dataset (stdlib-js has it!)
-- [ ] Other language support (TypeScript, Rust)
+## Design Principles
 
-## Philosophy
-
-Minard is opinionated:
-
-1. **Database-first**: Expensive computations happen at load time. Queries are fast.
-2. **CLI + Viz**: Not either/or. The AI needs CLI, the human needs visualization. Same truth, different views.
-3. **Declarative**: Uses Hylograph (HATS) for visualization. Describes *what*, not *how*.
-4. **Multi-scale**: No single view is enough. Powers of Ten navigation is core.
-
-## Etymology
-
-Charles Joseph Minard (1781-1870) was a French civil engineer who pioneered information graphics. His 1869 flow map of Napoleon's 1812 Russian campaign shows:
-
-- The army's size (width of line)
-- Geographic position (map)
-- Direction of travel (color: tan=advance, black=retreat)
-- Temperature during retreat (bottom graph)
-- Key events (city labels)
-
-All in one image. This is what we aspire to for code.
+1. **Database-first.** Expensive analysis at load time. Queries are fast.
+2. **CLI + Viz.** The AI needs queryable data. The human needs pictures. Same database, different interfaces.
+3. **Declarative.** Visualizations describe what, not how. Hylograph's HATS AST handles bindings and transitions.
+4. **Multi-scale.** No single view suffices. Fluid navigation across levels is the core interaction.
 
 ## License
 
 MIT
-
----
-
-*"At least your death march will look good."*
