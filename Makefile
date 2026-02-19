@@ -82,7 +82,11 @@ _build-server:
 	@echo "Building server..."
 	@spago build -p minard-server
 
-_build-frontend:
+_install-deps:
+	@echo "Installing npm dependencies..."
+	@npm install
+
+_build-frontend: _install-deps
 	@echo "Building frontend..."
 	@spago build -p minard-frontend
 	@spago bundle -p minard-frontend
