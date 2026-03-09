@@ -78,29 +78,15 @@ import CE2.Containers as C
 import CE2.Data.Loader as Loader
 import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
-import CE2.Viz.SourceCode as SourceCode
-import Data.Graph.Algorithms (reachableFrom, connectedComponents, labelPropagation) as GraphAlgo
-import CE2.Types (projectPackages, ViewTheme(..), ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageGitStatus, PackageReachability, PackageClusters, PackagePurity)
+import CE2.Types (ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageReachability, PackageClusters, PackagePurity)
 import CE2.Viz.DeclarationArcDiagram (isEffectful) as ArcDiagram
+import CE2.Component.SceneCoordinator.Pure (ViewMode(..), viewModeToString, viewModeFromString)
+import CE2.Component.SceneCoordinator.Pure as Pure
 
 -- FFI declarations for browser history integration
 foreign import pushHistoryState :: String -> String -> Effect Unit
 foreign import replaceHistoryState :: String -> String -> Effect Unit
 foreign import setupPopstateListener :: (String -> String -> Effect Unit) -> Effect (Effect Unit)
-
--- | Serialize ViewMode to string for browser history
-viewModeToString :: ViewMode -> String
-viewModeToString = case _ of
-  PrimaryView -> "primary"
-  MatrixView -> "matrix"
-  ChordView -> "chord"
-
--- | Deserialize ViewMode from string
-viewModeFromString :: String -> ViewMode
-viewModeFromString = case _ of
-  "matrix" -> MatrixView
-  "chord" -> ChordView
-  _ -> PrimaryView
 
 -- =============================================================================
 -- Types
@@ -240,20 +226,6 @@ smallPackageThreshold :: Int
 smallPackageThreshold = 200
 
 -- | Unified view mode for visualizations
--- | Replaces separate ModuleViewMode and PackageViewMode
--- | Resets to PrimaryView on scene change
-data ViewMode
-  = PrimaryView    -- Default: BubblePack for packages, Treemap for modules
-  | MatrixView     -- Adjacency matrix
-  | ChordView      -- Chord diagram
-
-derive instance eqViewMode :: Eq ViewMode
-
-instance showViewMode :: Show ViewMode where
-  show PrimaryView = "PrimaryView"
-  show MatrixView = "MatrixView"
-  show ChordView = "ChordView"
-
 -- | Component state - streamlined for teaser navigation
 type State =
   { -- Current scene
@@ -467,7 +439,7 @@ initialState input =
 
 render :: forall m. MonadAff m => State -> H.ComponentHTML Action Slots m
 render state =
-  let theme = themeForScene state.scene
+  let theme = Pure.themeForScene state.scene
       colors = themeColors theme
   in HH.div
     [ HP.class_ (HH.ClassName "scene-coordinator")
@@ -667,7 +639,7 @@ renderHeaderBar state =
         , renderSyncButton state textColor
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
-            [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
+            [ HH.text $ "[" <> Pure.canonicalStateCode state <> "]" ]
         ]
     ]
 
@@ -675,7 +647,7 @@ renderHeaderBar state =
 renderFooterBar :: forall m. State -> H.ComponentHTML Action Slots m
 renderFooterBar state =
   let
-    theme = themeForScene state.scene
+    theme = Pure.themeForScene state.scene
     textColor = if isDarkTheme theme then "rgba(255,255,255,0.8)" else "rgba(0,0,0,0.7)"
     bgColor = if isDarkTheme theme then "rgba(0,0,0,0.3)" else "rgba(0,0,0,0.05)"
   in HH.div
@@ -910,7 +882,7 @@ renderFooterControls state =
 -- | Streamlined to 6 scenes for teaser navigation
 renderScene :: forall m. MonadAff m => State -> H.ComponentHTML Action Slots m
 renderScene state =
-  let theme = themeForScene state.scene
+  let theme = Pure.themeForScene state.scene
   in case state.scene of
   GalaxyTreemap ->
     case state.packageSetData of
@@ -943,7 +915,7 @@ renderScene state =
           , scope: state.scope
           , theme: theme
           , colorMode: state.colorMode  -- Persists through transitions
-          , gitStatus: computePackageGitStatus state.gitStatus state.v2Data
+          , gitStatus: Pure.computePackageGitStatus state.gitStatus state.v2Data
           , initialPositions: state.capturedPositions
           , infraLayerThreshold: if state.hideInfraLinks then 2 else 0
           }
@@ -969,8 +941,8 @@ renderScene state =
                   -- Compute import maps for coordinated hover highlighting
                   importMaps = case state.v2Data of
                     Just v2 ->
-                      { imports: buildModuleImportMap v2.imports
-                      , importedBy: buildModuleImportedByMap v2.imports
+                      { imports: Pure.buildModuleImportMap v2.imports
+                      , importedBy: Pure.buildModuleImportedByMap v2.imports
                       }
                     Nothing ->
                       { imports: Map.empty, importedBy: Map.empty }
@@ -1001,7 +973,7 @@ renderScene state =
           ChordView ->
             case state.v2Data of
               Just v2 ->
-                let scopedPackages = solarSwarmScopedPackages state v2.packages
+                let scopedPackages = Pure.solarSwarmScopedPackages state v2.packages
                     depData = DependencyMatrix.buildFromPackageDepends scopedPackages
                 in HH.slot _dependencyChordViz "package" DependencyChordViz.component
                      { depData, containerId: C.packageChordContainerId
@@ -1015,7 +987,7 @@ renderScene state =
           MatrixView ->
             case state.v2Data of
               Just v2 ->
-                let scopedPackages = solarSwarmScopedPackages state v2.packages
+                let scopedPackages = Pure.solarSwarmScopedPackages state v2.packages
                     depData = DependencyMatrix.buildFromPackageDepends scopedPackages
                 in HH.slot _dependencyAdjacencyViz "package" DependencyAdjacencyViz.component
                      { depData, containerId: C.packageAdjacencyContainerId
@@ -1116,7 +1088,7 @@ renderScene state =
 
   ModuleOverview pkgName modName ->
     -- Module overview: bubble pack + declaration listing
-    case lookupModuleDeclarations state pkgName modName of
+    case Pure.lookupModuleDeclarations state pkgName modName of
       Just decls ->
         HH.slot _moduleOverviewViz unit ModuleOverviewViz.component
           { packageName: pkgName
@@ -1132,14 +1104,14 @@ renderScene state =
 
   DeclarationDetail pkgName modName declName ->
     -- Declaration detail: usage graph + expanded info
-    case lookupModuleDeclarations state pkgName modName of
+    case Pure.lookupModuleDeclarations state pkgName modName of
       Just decls ->
         HH.slot _declarationDetailViz unit DeclarationDetailViz.component
           { packageName: pkgName
           , moduleName: modName
           , declarationName: declName
           , declarations: decls
-          , knownDeclarations: buildKnownDeclarations state
+          , knownDeclarations: Pure.buildKnownDeclarations state
           }
           HandleDeclarationDetailOutput
       Nothing ->
@@ -1148,7 +1120,7 @@ renderScene state =
           [ HH.text "Loading declaration data..." ]
 
   ModuleSignatureMap pkgName modName ->
-    case lookupModuleDeclarations state pkgName modName of
+    case Pure.lookupModuleDeclarations state pkgName modName of
       Just decls ->
         let anns = fromMaybe [] (Map.lookup modName state.moduleAnnotations)
         in HH.slot _moduleSignatureMapViz unit ModuleSignatureMapViz.component
@@ -1225,7 +1197,7 @@ renderScene state =
   ModuleStructure pkgName modName ->
     case state.v2Data of
       Just v2 ->
-        case lookupModuleDeclarations state pkgName modName of
+        case Pure.lookupModuleDeclarations state pkgName modName of
           Just decls ->
             let
               modId = Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
@@ -1720,7 +1692,7 @@ handleAction = case _ of
             -- Find bundle module for this package (deterministic app detection)
             let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
                               >>= _.bundleModule
-                reach = computePackageReachability pkg bundleMod v2.imports v2.modules
+                reach = Pure.computePackageReachability pkg bundleMod v2.imports v2.modules
                 modeLabel = if reach.isApp
                   then case bundleMod of
                     Just m  -> "App reachability from " <> m <> " (explicit)"
@@ -2269,163 +2241,6 @@ clearAllVizContainers = do
   clearContainer "#pkg-treemap-container"
   clearContainer "#circlepack-container"
 
--- | Compute the scoped packages for SolarSwarm chord/matrix views
--- | Respects focalPackage: when set, filters to the focal neighborhood
--- | (focal + deps + dependents), matching what BubblePackBeeswarm shows
-solarSwarmScopedPackages :: State -> Array Loader.V2Package -> Array Loader.V2Package
-solarSwarmScopedPackages state allPackages =
-  let
-    projectPkgNames = Set.fromFoldable projectPackages
-    projectPkgs = Array.filter (\p -> Set.member p.name projectPkgNames) allPackages
-  in case state.focalPackage of
-    Nothing -> projectPkgs
-    Just focalName ->
-      let
-        -- Find the focal package's direct dependencies
-        focalDeps = case Array.find (\p -> p.name == focalName) allPackages of
-          Just pkg -> Set.fromFoldable pkg.depends
-          Nothing -> Set.empty
-        -- Find packages that depend on the focal package (reverse deps)
-        dependents = Set.fromFoldable $
-          Array.mapMaybe
-            (\pkg -> if Array.elem focalName pkg.depends then Just pkg.name else Nothing)
-            allPackages
-        -- Complete neighborhood: focal + deps + dependents
-        neighborhood = Set.insert focalName (Set.union focalDeps dependents)
-      in
-        Array.filter (\p -> Set.member p.name neighborhood) projectPkgs
-
--- | Compute package-level git status from module-level status
--- | Maps module names to their containing packages using v2Data
-computePackageGitStatus :: Maybe Loader.GitStatusData -> Maybe V2Data -> Maybe PackageGitStatus
-computePackageGitStatus mGitStatus mV2Data = do
-  gitStatus <- mGitStatus
-  v2 <- mV2Data
-  -- Build module name → package name map
-  let moduleToPackage :: Map String String
-      moduleToPackage = Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.package.name
-      -- Helper to find packages for a list of module names
-      findPackages :: Array String -> Set String
-      findPackages modNames = Set.fromFoldable $ Array.catMaybes $
-        modNames <#> \modName -> Map.lookup modName moduleToPackage
-  pure
-    { packagesWithModified: findPackages gitStatus.modified
-    , packagesWithStaged: findPackages gitStatus.staged
-    , packagesWithUntracked: findPackages gitStatus.untracked
-    }
-
--- | Get appropriate theme for a scene
--- | Five "Powers of Ten" levels: dark→light luminance gradient
--- |   Package Set (registry) → Midnight (near-black)
--- |   Neighborhood (project packages) → Blueprint blue
--- |   Package (modules) → Steel blue
--- |   Module (declarations) → Mist (pale blue)
--- |   Declaration → Daylight (white)
-themeForScene :: Scene -> ViewTheme
-themeForScene = case _ of
-  GalaxyTreemap -> MidnightTheme
-  GalaxyBeeswarm -> MidnightTheme
-  SolarSwarm -> BlueprintTheme
-  PkgTreemap _ -> SteelTheme
-  PkgModuleBeeswarm _ -> SteelTheme
-  ModuleOverview _ _ -> MistTheme
-  DeclarationDetail _ _ _ -> DaylightTheme
-  ModuleSignatureMap _ _ -> MistTheme
-  TypeClassGrid -> MidnightTheme
-  NamespaceTree -> DaylightTheme
-  AnnotationReport -> DaylightTheme
-  ProjectManagement -> DaylightTheme
-  ProjectAnatomy -> DaylightTheme
-  StructuralDecomp -> DaylightTheme
-  ModuleStructure _ _ -> DaylightTheme
-
--- | Canonical state code for precise communication
--- | See docs/kb/reference/ce2-state-machine-analysis.md for full naming system
--- |
--- | Galaxy level:  A (Treemap), B (Beeswarm)
--- | Solar level:   C + scope digit + optional focal + view suffix
--- |   Scopes: 0=All, 1=Trans, 2=Deps, 3=Proj
--- |   Focal: (pkgName) when focal package set
--- |   Views: (none)=Primary, M=Matrix, C=Chord
--- | Module level:  E(pkg) + view suffix, F(pkg)=Beeswarm
--- | Panel: +P suffix when open
--- | Note: D (PkgNeighborhood) was merged into C with focalPackage
-canonicalStateCode :: State -> String
-canonicalStateCode state = case state.scene of
-  GalaxyTreemap -> "A"
-
-  GalaxyBeeswarm -> "B" <> scopeDigit state.scope
-
-  SolarSwarm -> "C" <> scopeDigit state.scope <> focalSuffix <> viewSuffix state.viewMode
-    where focalSuffix = case state.focalPackage of
-            Just pkg -> "(" <> pkg <> ")"
-            Nothing -> ""
-
-  PkgTreemap pkg -> "E(" <> pkg <> ")" <> viewSuffix state.viewMode
-
-  PkgModuleBeeswarm pkg -> "F(" <> pkg <> ")"
-
-  ModuleOverview pkg mod -> "G(" <> pkg <> "," <> mod <> ")"
-
-  DeclarationDetail pkg mod decl -> "H(" <> pkg <> "," <> mod <> "," <> decl <> ")"
-
-  ModuleSignatureMap pkg mod -> "S(" <> pkg <> "," <> mod <> ")"
-
-  TypeClassGrid -> "T"       -- Type class grid view
-  NamespaceTree -> "N"       -- Namespace tree view
-
-  AnnotationReport -> "R"    -- Annotation report view
-  ProjectManagement -> "P"   -- Project management view
-  ProjectAnatomy -> "Y"      -- Project anatomy view
-  StructuralDecomp -> "D"    -- Structural decomposition view
-  ModuleStructure pkg mod -> "X(" <> pkg <> "," <> mod <> ")"  -- Module structure view
-
-  where
-  scopeDigit :: BeeswarmScope -> String
-  scopeDigit = case _ of
-    AllPackages -> "0"
-    ProjectWithTransitive -> "1"
-    ProjectWithDeps -> "2"
-    ProjectOnly -> "3"
-
-  viewSuffix :: ViewMode -> String
-  viewSuffix = case _ of
-    PrimaryView -> ""
-    MatrixView -> "M"
-    ChordView -> "C"
-
--- =============================================================================
--- Module/Declaration Lookup Helpers
--- =============================================================================
-
--- | Look up declarations for a module within a package
-lookupModuleDeclarations :: State -> String -> String -> Maybe (Array Loader.V2Declaration)
-lookupModuleDeclarations state pkgName modName = do
-  v2 <- state.v2Data
-  mod <- Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
-  Map.lookup mod.id state.packageDeclarations
-
--- | Build cross-reference index of all loaded declarations for source code navigation
-buildKnownDeclarations :: State -> Array SourceCode.KnownDeclaration
-buildKnownDeclarations state =
-  case state.v2Data of
-    Nothing -> []
-    Just v2 ->
-      let
-        -- Build module ID → { moduleName, packageName } lookup
-        moduleInfo = Map.fromFoldable $ map (\m -> Tuple m.id { moduleName: m.name, packageName: m.package.name }) v2.modules
-      in
-        Array.concatMap (\(Tuple modId decls) ->
-          case Map.lookup modId moduleInfo of
-            Nothing -> []
-            Just info -> map (\d ->
-              { name: d.name
-              , moduleName: info.moduleName
-              , packageName: info.packageName
-              , kind: d.kind
-              }) decls
-        ) (Map.toUnfoldable state.packageDeclarations)
-
 -- | Ensure declarations are loaded for a package's modules
 ensurePackageDeclarationsLoaded :: forall m. MonadAff m => State -> String -> H.HalogenM State Action Slots Output m Unit
 ensurePackageDeclarationsLoaded state pkgName =
@@ -2472,201 +2287,10 @@ confirmSearchSelection state idx =
   case Array.index state.searchResults idx of
     Nothing -> pure unit
     Just result -> do
-      let targetScene = sceneForResult result
+      let targetScene = Pure.sceneForResult result
       log $ "[SceneCoordinator] Search navigation to: " <> show targetScene
       H.modify_ _ { searchQuery = "", searchResults = [], searchOpen = false }
       handleAction (NavigateTo targetScene)
-
--- | Derive target scene from a search result
-sceneForResult :: Loader.UnifiedSearchResult -> Scene
-sceneForResult r = case r.entityType of
-  "package" -> PkgTreemap r.packageName
-  "module" -> ModuleSignatureMap r.packageName (fromMaybe r.name r.moduleName)
-  "declaration" -> DeclarationDetail r.packageName (fromMaybe "" r.moduleName) r.name
-  _ -> GalaxyTreemap
-
--- =============================================================================
--- Module Import Maps (for coordinated hover highlighting)
--- =============================================================================
-
--- | Build a map from module name to the modules it imports
-buildModuleImportMap :: Array Loader.V2ModuleImports -> Map String (Array String)
-buildModuleImportMap imports =
-  Map.fromFoldable $ imports <#> \imp -> Tuple imp.moduleName imp.imports
-
--- | Build a reverse map: module name to modules that import it
-buildModuleImportedByMap :: Array Loader.V2ModuleImports -> Map String (Array String)
-buildModuleImportedByMap imports =
-  let
-    -- For each import relationship, record the reverse
-    pairs :: Array (Tuple String String)
-    pairs = Array.concatMap (\imp ->
-        imp.imports <#> \imported -> Tuple imported imp.moduleName
-      ) imports
-  in
-    -- Group by imported module
-    foldl (\acc (Tuple imported importer) ->
-      Map.alter (Just <<< Array.cons importer <<< fromMaybe []) imported acc
-    ) Map.empty pairs
-
--- =============================================================================
--- Package Reachability Computation
--- =============================================================================
-
--- | Compute which modules in a package are reachable
--- | Two modes, determined by bundleModule:
--- |   - Library mode (Nothing): entry points are modules imported by external packages
--- |   - App mode (Just mainMod): entry point is the bundle module (e.g. CE2.Main)
--- | Uses `reachableFrom` from Data.Graph.Algorithms for BFS traversal
-computePackageReachability
-  :: String                         -- target package name
-  -> Maybe String                   -- bundle module (Just for apps, Nothing for libraries)
-  -> Array Loader.V2ModuleImports   -- all imports
-  -> Array Loader.V2ModuleListItem  -- all modules (with package info)
-  -> PackageReachability
-computePackageReachability targetPkg bundleModule allImports allModules =
-  let
-    -- Module name → package name
-    modToPkg :: Map String String
-    modToPkg = Map.fromFoldable $ allModules <#> \m -> Tuple m.name m.package.name
-
-    -- Modules in target package
-    targetMods :: Set String
-    targetMods = Set.fromFoldable $
-      Array.filter (\m -> m.package.name == targetPkg) allModules <#> _.name
-
-    -- Entry module comes directly from bundleModule in the database (e.g. "CE2.Main")
-
-    -- Forward import map: module → Set of what it imports
-    importsOf :: Map String (Set String)
-    importsOf = Map.fromFoldable $
-      allImports <#> \imp -> Tuple imp.moduleName (Set.fromFoldable imp.imports)
-
-    -- Build import graph restricted to target package
-    internalGraph =
-      { nodes: Array.fromFoldable targetMods
-      , edges: Map.fromFoldable $ (Array.fromFoldable targetMods) <#> \mod ->
-          Tuple mod (Set.intersection (fromMaybe Set.empty (Map.lookup mod importsOf)) targetMods)
-      }
-
-    -- Entry points depend on mode
-    entryPoints = case bundleModule of
-      Just mainMod | Set.member mainMod targetMods ->
-        Set.singleton mainMod  -- App mode: Main is the sole entry point
-      _ ->
-        -- Library mode: target modules imported by external modules
-        foldl (\acc imp ->
-          let importerPkg = Map.lookup imp.moduleName modToPkg
-          in if importerPkg /= Just targetPkg
-             then foldl (\a imported ->
-                    if Set.member imported targetMods
-                    then Set.insert imported a
-                    else a
-                  ) acc imp.imports
-             else acc
-        ) Set.empty allImports
-
-    -- Track whether we resolved as an app (for callers to know)
-    isApp = case bundleModule of
-              Just m -> Set.member m targetMods
-              Nothing -> false
-
-    -- BFS using library function, union results from all entry points
-    reachable = Set.unions $
-      (Array.fromFoldable entryPoints) <#> \ep -> GraphAlgo.reachableFrom ep internalGraph
-  in
-    { reachable, entryPoints, packageName: targetPkg, isApp }
-
--- | Compute global reachability: which modules across ALL packages are
--- | transitively reachable from the app entry point (first package with bundleModule).
--- | Returns PackageReachability with packageName: "*" for galaxy-level coloring.
-computeGlobalReachability
-  :: Array Loader.V2ModuleImports
-  -> Array Loader.V2ModuleListItem
-  -> Array Loader.V2Package
-  -> PackageReachability
-computeGlobalReachability allImports allModules allPackages =
-  let
-    -- Find entry point: first package with a bundleModule
-    mEntry = Array.findMap (\p -> p.bundleModule) allPackages
-
-    -- All module names
-    allModNames :: Set String
-    allModNames = Set.fromFoldable $ allModules <#> _.name
-
-    -- Global forward-import graph (no package restriction)
-    globalGraph =
-      { nodes: Array.fromFoldable allModNames
-      , edges: Map.fromFoldable $
-          allImports <#> \imp -> Tuple imp.moduleName (Set.fromFoldable imp.imports)
-      }
-
-    -- Entry points and BFS
-    entryPoints = case mEntry of
-      Just mainMod | Set.member mainMod allModNames -> Set.singleton mainMod
-      _ -> Set.empty
-
-    reachable = Set.unions $
-      (Array.fromFoldable entryPoints) <#> \ep -> GraphAlgo.reachableFrom ep globalGraph
-  in
-    { reachable, entryPoints, packageName: "*", isApp: true }
-
--- =============================================================================
--- Package Cluster Computation
--- =============================================================================
-
--- | Compute dependency clusters for modules within a package
--- | Uses connectedComponents for broad grouping and labelPropagation for finer communities
-computePackageClusters
-  :: String                         -- target package name
-  -> Array Loader.V2ModuleImports   -- all imports
-  -> Array Loader.V2ModuleListItem  -- all modules
-  -> PackageClusters
-computePackageClusters targetPkg allImports allModules =
-  let
-    -- Modules in target package
-    targetMods :: Set String
-    targetMods = Set.fromFoldable $
-      Array.filter (\m -> m.package.name == targetPkg) allModules <#> _.name
-
-    -- Forward import map: module → Set of what it imports (within package)
-    importsOf :: Map String (Set String)
-    importsOf = Map.fromFoldable $
-      allImports <#> \imp -> Tuple imp.moduleName (Set.fromFoldable imp.imports)
-
-    -- Build import graph restricted to target package (bidirectional for undirected clustering)
-    -- Make edges symmetric: if A imports B, both A→B and B→A are edges
-    forwardEdges = Map.fromFoldable $ (Array.fromFoldable targetMods) <#> \mod ->
-      Tuple mod (Set.intersection (fromMaybe Set.empty (Map.lookup mod importsOf)) targetMods)
-
-    -- Build reverse edges
-    reverseEdges = foldl (\acc (Tuple from targets) ->
-      foldl (\acc' to ->
-        Map.alter (\mSet -> Just (Set.insert from (fromMaybe Set.empty mSet))) to acc'
-      ) acc (Array.fromFoldable targets)
-    ) (Map.empty :: Map String (Set String)) (Map.toUnfoldable forwardEdges :: Array (Tuple String (Set String)))
-
-    -- Merge forward and reverse for undirected graph
-    symmetricEdges = Map.unionWith Set.union forwardEdges reverseEdges
-
-    internalGraph =
-      { nodes: Array.fromFoldable targetMods
-      , edges: symmetricEdges
-      }
-
-    -- Connected components
-    clusters = GraphAlgo.connectedComponents internalGraph
-
-    -- Label propagation for finer communities
-    communityLabels = GraphAlgo.labelPropagation internalGraph
-
-    -- Convert community labels (Map String String) to (Map String Int)
-    -- by assigning each unique label a numeric index
-    uniqueLabels = Set.fromFoldable $ Map.values communityLabels
-    labelToIdx = Map.fromFoldable $ Array.mapWithIndex (\i label -> Tuple label i) (Array.fromFoldable uniqueLabels)
-    communities = Map.mapMaybe (\label -> Map.lookup label labelToIdx) communityLabels
-  in
-    { clusters, communities, packageName: targetPkg }
 
 -- | Helper: compute and store clusters for a package (used in action handlers)
 computeAndStoreClusters :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
@@ -2674,7 +2298,7 @@ computeAndStoreClusters pkg = do
   state <- H.get
   case state.v2Data of
     Just v2 -> do
-      let clusters = computePackageClusters pkg v2.imports v2.modules
+      let clusters = Pure.computePackageClusters pkg v2.imports v2.modules
       log $ "[SceneCoordinator] Clusters for " <> pkg <> ": "
           <> show (Array.length clusters.clusters) <> " components, "
           <> show (Map.size clusters.communities) <> " community assignments"
@@ -2689,7 +2313,7 @@ computeAndStoreReachabilityForPeek pkg = do
     Just v2 -> do
       let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
                         >>= _.bundleModule
-          reach = computePackageReachability pkg bundleMod v2.imports v2.modules
+          reach = Pure.computePackageReachability pkg bundleMod v2.imports v2.modules
           modeLabel = if reach.isApp
             then case bundleMod of
               Just m  -> "App reachability from " <> m <> " (explicit)"
@@ -2707,7 +2331,7 @@ computeAndStoreGlobalReachability = do
   state <- H.get
   case state.v2Data of
     Just v2 -> do
-      let reach = computeGlobalReachability v2.imports v2.modules v2.packages
+      let reach = Pure.computeGlobalReachability v2.imports v2.modules v2.packages
       log $ "[SceneCoordinator] Global reachability: "
           <> show (Set.size reach.reachable) <> " reachable, "
           <> show (Set.size reach.entryPoints) <> " entry points"
