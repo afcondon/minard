@@ -45,7 +45,7 @@ import Effect (Effect)
 import Effect.Console (log)
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onCoordinatedHighlightWithTooltip, onClick)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onCoordinatedHighlightWithTooltip, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Element.Types (ElementType(..))
 -- Note: ElementType includes SVG, Group, Rect, Circle, Text, Path, Line, etc.
@@ -56,7 +56,7 @@ import DataViz.Layout.Hierarchy.Types (ValuedNode(..))
 import DataViz.Layout.Hierarchy.Treemap (TreemapNode(..), treemap, defaultTreemapConfig, squarify, phi)
 import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
-import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall, GitStatusData)
+import CE2.Data.Loader (V2ModuleListItem, V2ModuleImports, V2Declaration, V2ChildDeclaration, V2FunctionCall, GitStatusData, ModuleStructuralComplexity)
 import CE2.Types (ColorMode(..), GitFileStatus(..), gitStatusColor, PackageReachability, PackageClusters, PackagePurity, ReachabilityStatus(..), getModuleReachability)
 import CE2.Viz.DeclarationArcDiagram (isEffectful) as ArcDiagram
 
@@ -80,6 +80,8 @@ type Config =
   , isAppPackage :: Boolean      -- True for app packages (peek labels differ)
   , purityData :: Maybe PackagePurity  -- Purity data for purity peek overlay
   , purityPeek :: Boolean        -- True while P key held (show purity overlay)
+  , complexityData :: Maybe (Map String ModuleStructuralComplexity)  -- Coupling score data
+  , complexityPeek :: Boolean    -- True while C key held (show coupling score overlay)
   }
 
 -- | Module with computed treemap position
@@ -150,8 +152,8 @@ type ModuleStyling =
   , strokeWidth :: String
   }
 
-getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> Maybe Int -> ModuleStyling
-getModuleStyling colorMode gitStatus mReachStatus mClusterIdx = case colorMode of
+getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> Maybe Int -> Maybe Number -> ModuleStyling
+getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore = case colorMode of
   Reachability ->
     case mReachStatus of
       Just EntryPoint ->
@@ -216,6 +218,28 @@ getModuleStyling colorMode gitStatus mReachStatus mClusterIdx = case colorMode o
         { fillColor: "transparent"
         , strokeColor: "rgba(255, 255, 255, 0.3)"
         , strokeWidth: "1"
+        }
+  StructuralComplexity ->
+    case mCouplingScore of
+      Just score ->
+        -- Heat map: green (low) → amber (medium) → red (high)
+        -- Score ranges: 0-20 low, 20-100 medium, 100+ high
+        let t = min 1.0 (score / 200.0)
+            -- Green → amber → red interpolation
+            r = round (min 255.0 (46.0 + 209.0 * min 1.0 (t * 2.0)))
+            g = round (max 60.0 (204.0 - 144.0 * max 0.0 (t * 2.0 - 1.0)))
+            b = round (max 40.0 (113.0 - 73.0 * t))
+            fillOpacity = 0.25 + 0.35 * t  -- More opaque for higher scores
+            strokeOpacity = 0.5 + 0.5 * t
+        in { fillColor: "rgba(" <> show r <> "," <> show g <> "," <> show b <> "," <> show fillOpacity <> ")"
+           , strokeColor: "rgba(" <> show r <> "," <> show g <> "," <> show b <> "," <> show strokeOpacity <> ")"
+           , strokeWidth: if score > 100.0 then "3" else if score > 50.0 then "2" else "1"
+           }
+      Nothing ->
+        -- No data: neutral gray, visually distinct from low-coupling green
+        { fillColor: "rgba(128, 128, 128, 0.08)"
+        , strokeColor: "rgba(128, 128, 128, 0.15)"
+        , strokeWidth: "0.5"
         }
   _ ->
     -- Default styling: transparent so scene background shows through, white grid strokes
@@ -765,7 +789,9 @@ enrichedModuleCell config m =
     reachStatus = config.reachabilityData <#> \rd -> getModuleReachability rd m.name
     -- Get cluster index for this module
     clusterIdx = config.clusterData >>= \cd -> Map.lookup m.name cd.communities
-    styling = getModuleStyling config.colorMode gitStatus reachStatus clusterIdx
+    -- Get coupling score for this module
+    couplingScore = config.complexityData >>= \cd -> Map.lookup m.name cd <#> _.couplingScore
+    styling = getModuleStyling config.colorMode gitStatus reachStatus clusterIdx couplingScore
     -- Dim declaration bubbles for unreachable modules in Reachability mode
     declOpacity = case config.colorMode of
       Reachability -> case reachStatus of
@@ -961,6 +987,129 @@ enrichedModuleCell config m =
             (Array.mapMaybe (purityRingElem) m.declarations)
         else
           elem Group [] []
+
+      -- Complexity peek overlay (visible when C key held)
+      , if config.complexityPeek then
+          let
+            mComplexity = config.complexityData >>= \cd -> Map.lookup m.name cd
+            hasData = case mComplexity of
+              Nothing -> false
+              Just c -> c.internalCalls > 0 || c.crossModuleCalls > 0 || c.declCount > 0
+            score = case mComplexity of
+              Just c | hasData -> c.couplingScore
+              _ -> (-1.0)  -- sentinel for no-data
+            t = if score < 0.0 then 0.0 else min 1.0 (score / 200.0)
+            -- Color: heat map for data, gray for no-data
+            peekBgColor = if score < 0.0
+              then "rgba(128, 128, 128, 0.5)"
+              else let
+                cr = round (min 255.0 (46.0 + 209.0 * min 1.0 (t * 2.0)))
+                cg = round (max 60.0 (204.0 - 144.0 * max 0.0 (t * 2.0 - 1.0)))
+                cb = round (max 40.0 (113.0 - 73.0 * t))
+              in "rgba(" <> show cr <> "," <> show cg <> "," <> show cb <> ",0.7)"
+            peekTextColor = if score < 0.0 then "rgba(255,255,255,0.6)"
+              else if t > 0.3 then "white" else "rgba(0,0,0,0.87)"
+            peekMutedColor = if score < 0.0 then "rgba(255,255,255,0.4)"
+              else if t > 0.3 then "rgba(255,255,255,0.7)" else "rgba(0,0,0,0.5)"
+            visible = m.width > 25.0 && m.height > 20.0
+            -- Detailed view for cells large enough to show metrics table
+            showDetailed = m.width > 90.0 && m.height > 60.0
+            fontSize = if showDetailed then "10" else if m.width > 80.0 then "12" else if m.width > 50.0 then "10" else "8"
+            -- Build metric lines for detailed view
+            metricLines = case mComplexity of
+              Just c | hasData ->
+                [ { label: "decl", value: show c.declCount }
+                , { label: "int", value: show c.internalCalls }
+                , { label: "ext", value: show c.crossModuleCalls }
+                , { label: "dens", value: showDensity c.internalDensity }
+                , { label: "fan", value: show c.maxFanIn <> "/" <> show c.maxFanOut }
+                ]
+              _ -> []
+            -- Summary label for small cells
+            peekLabel = case mComplexity of
+              Nothing -> "no data"
+              Just c
+                | not hasData -> "no data"
+                | c.internalCalls == 0 && c.crossModuleCalls == 0 -> "flat"
+                | otherwise -> show (round c.couplingScore)
+          in
+            elem Group
+              [ staticStr "class" "complexity-peek-overlay"
+              , thunkedStr "opacity" (if visible then "1" else "0")
+              ]
+              ( [ elem Rect
+                    [ staticStr "x" "0"
+                    , staticStr "y" "0"
+                    , thunkedNum "width" m.width
+                    , thunkedNum "height" m.height
+                    , thunkedStr "fill" peekBgColor
+                    , staticStr "rx" "2"
+                    , staticStr "pointer-events" "none"
+                    ]
+                    []
+                ]
+                <> if showDetailed then
+                  -- Detailed: coupling score top-left, metric rows below
+                  [ elem Text
+                      [ staticNum "x" 6.0
+                      , staticNum "y" 14.0
+                      , staticStr "text-anchor" "start"
+                      , staticStr "dominant-baseline" "auto"
+                      , staticStr "font-size" "13"
+                      , thunkedStr "fill" peekTextColor
+                      , staticStr "font-weight" "bold"
+                      , staticStr "font-family" "system-ui, sans-serif"
+                      , staticStr "pointer-events" "none"
+                      , thunkedStr "textContent" peekLabel
+                      ]
+                      []
+                  ]
+                  <> Array.mapWithIndex (\i line ->
+                    elem Group []
+                      [ elem Text
+                          [ staticNum "x" 6.0
+                          , staticNum "y" (28.0 + toNumber i * 12.0)
+                          , staticStr "text-anchor" "start"
+                          , staticStr "font-size" "9"
+                          , thunkedStr "fill" peekMutedColor
+                          , staticStr "font-family" "system-ui, sans-serif"
+                          , staticStr "pointer-events" "none"
+                          , staticStr "textContent" line.label
+                          ]
+                          []
+                      , elem Text
+                          [ staticNum "x" 36.0
+                          , staticNum "y" (28.0 + toNumber i * 12.0)
+                          , staticStr "text-anchor" "start"
+                          , staticStr "font-size" "9"
+                          , thunkedStr "fill" peekTextColor
+                          , staticStr "font-weight" "600"
+                          , staticStr "font-family" "system-ui, sans-serif"
+                          , staticStr "pointer-events" "none"
+                          , staticStr "textContent" line.value
+                          ]
+                          []
+                      ]
+                  ) metricLines
+                else
+                  -- Small cell: centered coupling score only
+                  [ elem Text
+                      [ thunkedNum "x" (m.width / 2.0)
+                      , thunkedNum "y" (m.height / 2.0)
+                      , staticStr "text-anchor" "middle"
+                      , staticStr "dominant-baseline" "middle"
+                      , thunkedStr "font-size" fontSize
+                      , thunkedStr "fill" peekTextColor
+                      , staticStr "font-weight" "bold"
+                      , staticStr "font-family" "system-ui, sans-serif"
+                      , staticStr "pointer-events" "none"
+                      , thunkedStr "textContent" peekLabel
+                      ]
+                      []
+                  ]
+              )
+        else
+          elem Group [] []  -- Empty placeholder
       ]
 
 -- | Render an individual declaration circle with dependency highlighting
@@ -1178,3 +1327,10 @@ kindColor = case _ of
   "foreign"      -> "#e15759"  -- Red - FFI
   "alias"        -> "#b07aa1"  -- Purple - aliases
   _              -> "#bab0ac"  -- Gray - unknown
+
+-- | Show density as compact percentage (e.g. "0.42" → "42%")
+showDensity :: Number -> String
+showDensity n =
+  let pct = n * 100.0
+      rounded = round (pct * 10.0)
+  in show (toNumber rounded / 10.0) <> "%"

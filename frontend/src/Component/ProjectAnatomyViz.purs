@@ -426,8 +426,11 @@ handleAction = case _ of
 
   Receive input -> do
     state <- H.get
-    let packagesChanged = Array.length input.packages /= Array.length state.packages
-    when packagesChanged do
+    let totalModulesNew = foldl (\acc p -> acc + p.moduleCount) 0 input.packages
+        totalModulesOld = foldl (\acc p -> acc + p.moduleCount) 0 state.packages
+        dataChanged = Array.length input.packages /= Array.length state.packages
+                   || totalModulesNew /= totalModulesOld
+    when dataChanged do
       let stats = computeStats input.packages (Array.length state.unusedPackages)
       H.modify_ _ { packages = input.packages, stats = stats }
       startVisualization input.packages

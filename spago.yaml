@@ -1,2 +1,4 @@
 workspace:
-  extraPackages: {}
+  extraPackages:
+    hylograph-layout:
+      path: "/Users/afc/work/afc-work/purescript-hylograph-libs/purescript-hylograph-layout"

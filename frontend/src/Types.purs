@@ -356,6 +356,7 @@ data ColorMode
   | GitStatus           -- Color by git working tree status (modified/staged/clean)
   | Reachability        -- Color by external reachability (dead code detection)
   | ClusterView         -- Color by dependency cluster (connected components / communities)
+  | StructuralComplexity -- Color by coupling score (internal density + cross-module coupling)
 
 derive instance eqColorMode :: Eq ColorMode
 
@@ -368,6 +369,7 @@ instance showColorMode :: Show ColorMode where
   show GitStatus = "GitStatus"
   show Reachability = "Reachability"
   show ClusterView = "ClusterView"
+  show StructuralComplexity = "StructuralComplexity"
 
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String

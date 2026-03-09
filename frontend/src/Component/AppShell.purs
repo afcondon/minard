@@ -66,6 +66,7 @@ data Action
   | DataFailed String
   | PackageSetLoaded Loader.PackageSetData
   | HandleSceneCoordinatorOutput SceneCoordinator.Output
+  | RefreshDataLoaded Loader.LoadedModelWithV2
 
 -- | Child slots
 type Slots = ( sceneCoordinator :: SceneCoordinator.Slot Unit )
@@ -224,6 +225,27 @@ handleAction = case _ of
       H.modify_ _ { phase = Loading }
       void $ H.fork loadAllData
 
+    SceneCoordinator.RequestDataRefresh projects -> do
+      log $ "[AppShell] Sync requested for " <> show (Array.length projects) <> " project(s)"
+      void $ H.fork do
+        -- Step 1: Re-run Rust loader for each project (sequential)
+        _results <- H.liftAff $ Loader.reloadProjects projects
+        -- Step 2: Re-fetch bulk data (same as loadAllData but no phase change)
+        refreshAllData
+
+  RefreshDataLoaded loaded -> do
+    log $ "[AppShell] Refresh data loaded: " <> show loaded.model.moduleCount <> " modules, "
+        <> show loaded.model.packageCount <> " packages"
+    -- Update data without changing phase (viz stays visible)
+    H.modify_ _
+      { modelData = Just loaded.model
+      , v2Data = Just
+          { packages: loaded.v2Packages
+          , modules: loaded.v2Modules
+          , imports: loaded.v2Imports
+          }
+      }
+
 -- | Load all model data from the V2 API
 loadAllData :: forall output m. MonadAff m => H.HalogenM State Action Slots output m Unit
 loadAllData = do
@@ -236,4 +258,20 @@ loadAllData = do
       psResult <- H.liftAff Loader.fetchPackageSetFromV2
       case psResult of
         Left err -> log $ "[AppShell] Failed to fetch package set: " <> err
+        Right psData -> handleAction (PackageSetLoaded psData)
+
+-- | Refresh all data without changing phase (existing viz stays visible)
+refreshAllData :: forall output m. MonadAff m => H.HalogenM State Action Slots output m Unit
+refreshAllData = do
+  result <- H.liftAff Loader.loadModelFromV2WithRaw
+  case result of
+    Left err -> do
+      log $ "[AppShell] Refresh failed: " <> err
+      void $ H.tell _sceneCoordinator unit (SceneCoordinator.NotifyRefreshError err)
+    Right loaded -> do
+      handleAction (RefreshDataLoaded loaded)
+      -- Also refresh package set data
+      psResult <- H.liftAff Loader.fetchPackageSetFromV2
+      case psResult of
+        Left err -> log $ "[AppShell] Failed to refresh package set: " <> err
         Right psData -> handleAction (PackageSetLoaded psData)

@@ -104,12 +104,12 @@ export const runLoaderSync = (projectPath) => (dbPath) => (projectName) => (snap
   const start = Date.now();
 
   try {
-    let cmd = `"${loaderPath}" -q "${projectPath}" "${dbPath}"`;
+    let cmd = `"${loaderPath}" load -q "${projectPath}" -d "${dbPath}"`;
     if (projectName) {
-      cmd += ` --name "${projectName}"`;
+      cmd += ` -p "${projectName}"`;
     }
     if (snapshotLabel) {
-      cmd += ` --label "${snapshotLabel}"`;
+      cmd += ` -l "${snapshotLabel}"`;
     }
 
     const output = execSync(cmd, {

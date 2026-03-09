@@ -262,6 +262,30 @@ export const buildNamespacesJson = (rows) => {
   return JSON.stringify({ namespaces, count: namespaces.length });
 };
 
+export const buildNamespacePackagesJson = (rows) => {
+  const entries = (rows || []).map(row => ({
+    namespaceId: Number(row.namespace_id),
+    packageId: Number(row.package_id),
+    packageName: row.package_name,
+    moduleCount: Number(row.module_count) || 0
+  }));
+  return JSON.stringify({ entries, count: entries.length });
+};
+
+export const buildNamespaceTreeJson = (rows) => {
+  const nodes = (rows || []).map(row => ({
+    id: Number(row.id),
+    path: row.path,
+    segment: row.segment,
+    depth: Number(row.depth) || 0,
+    parentId: row.parent_id ? Number(row.parent_id) : null,
+    isLeaf: Boolean(row.is_leaf),
+    moduleCount: Number(row.module_count) || 0,
+    totalLoc: Number(row.total_loc) || 0
+  }));
+  return JSON.stringify({ nodes, count: nodes.length });
+};
+
 export const buildNamespaceWithChildrenJson = (ns) => (children) => (modules) => {
   return JSON.stringify({
     id: Number(ns.id),
@@ -351,6 +375,25 @@ export const buildModuleDeclarationStatsJson = (rows) => {
 
   const stats = Array.from(moduleStats.values());
   return JSON.stringify({ stats, count: stats.length });
+};
+
+// =============================================================================
+// Module Structural Complexity
+// =============================================================================
+
+export const buildModuleStructuralComplexityJson = (rows) => {
+  const modules = (rows || []).map(row => ({
+    moduleId: Number(row.module_id),
+    moduleName: row.module_name,
+    declCount: Number(row.decl_count) || 0,
+    internalCalls: Number(row.internal_calls) || 0,
+    crossModuleCalls: Number(row.cross_module_calls) || 0,
+    internalDensity: Number(row.internal_density) || 0,
+    maxFanIn: Number(row.max_fan_in) || 0,
+    maxFanOut: Number(row.max_fan_out) || 0,
+    couplingScore: Number(row.coupling_score) || 0
+  }));
+  return JSON.stringify({ modules, count: modules.length });
 };
 
 // =============================================================================

@@ -76,6 +76,12 @@ module CE2.Data.Loader
   , fetchModuleAnnotations
   , patchAnnotationStatus
   , createAnnotation
+    -- Namespace Tree
+  , V2NamespaceTreeNode
+  , fetchNamespaceTree
+    -- Namespace Packages mapping
+  , NamespacePackageEntry
+  , fetchNamespacePackages
     -- Source Location (editor integration)
   , SourceLocation
   , fetchSourceLocation
@@ -90,6 +96,10 @@ module CE2.Data.Loader
   , validateProjectPath
   , loadProject
   , deleteProject
+  , reloadProjects
+    -- Structural Complexity
+  , ModuleStructuralComplexity
+  , fetchModuleStructuralComplexity
   ) where
 
 import Prelude
@@ -1567,6 +1577,56 @@ fetchV2Namespace nsPath = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/namespaces/" <> nsPath)
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
 
+-- =============================================================================
+-- Namespace Tree (full tree, all depths)
+-- =============================================================================
+
+-- | A node in the full namespace tree
+type V2NamespaceTreeNode =
+  { id :: Int
+  , path :: String
+  , segment :: String
+  , depth :: Int
+  , parentId :: Maybe Int
+  , isLeaf :: Boolean
+  , moduleCount :: Int
+  , totalLoc :: Int
+  }
+
+type V2NamespaceTreeResponse = { nodes :: Array V2NamespaceTreeNode, count :: Int }
+
+-- | Fetch the full namespace tree (all depths, with total LOC)
+fetchNamespaceTree :: Aff (Either String (Array V2NamespaceTreeNode))
+fetchNamespaceTree = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/namespace-tree")
+  pure $ do
+    json <- result
+    response :: V2NamespaceTreeResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.nodes
+
+-- =============================================================================
+-- Namespace Packages Mapping
+-- =============================================================================
+
+-- | An entry mapping a namespace to a contributing package
+type NamespacePackageEntry =
+  { namespaceId :: Int
+  , packageId :: Int
+  , packageName :: String
+  , moduleCount :: Int
+  }
+
+type NamespacePackagesResponse = { entries :: Array NamespacePackageEntry, count :: Int }
+
+-- | Fetch the namespace → packages mapping
+fetchNamespacePackages :: Aff (Either String (Array NamespacePackageEntry))
+fetchNamespacePackages = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/namespace-packages")
+  pure $ do
+    json <- result
+    response :: NamespacePackagesResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.entries
+
 -- | Search declarations by name or type signature
 searchV2Declarations :: String -> Aff (Either String (Array V2SearchResult))
 searchV2Declarations query = do
@@ -1917,6 +1977,35 @@ fetchV2ModuleDeclarationStats = do
     json <- result
     response :: V2ModuleDeclarationStatsResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right response.stats
+
+-- =============================================================================
+-- Module Structural Complexity (for coupling score heat map)
+-- =============================================================================
+
+-- | Per-module structural complexity metrics from function call graph
+type ModuleStructuralComplexity =
+  { moduleId :: Int
+  , moduleName :: String
+  , declCount :: Int
+  , internalCalls :: Int
+  , crossModuleCalls :: Int
+  , internalDensity :: Number
+  , maxFanIn :: Int
+  , maxFanOut :: Int
+  , couplingScore :: Number
+  }
+
+type ModuleStructuralComplexityResponse =
+  { modules :: Array ModuleStructuralComplexity }
+
+-- | Fetch structural complexity metrics for all modules
+fetchModuleStructuralComplexity :: Aff (Either String (Array ModuleStructuralComplexity))
+fetchModuleStructuralComplexity = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/module-structural-complexity")
+  pure $ do
+    json <- result
+    response :: ModuleStructuralComplexityResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.modules
 
 -- =============================================================================
 -- Polyglot Summary (for sunburst visualization)
@@ -2278,3 +2367,13 @@ deleteProject projectId = do
   pure $ case result of
     Left err -> Left $ "DELETE error: " <> AW.printError err
     Right _ -> Right unit
+
+-- | Re-run the loader for each project (sequential — server blocks on execSync)
+reloadProjects :: Array ProjectInfo -> Aff (Array (Either String LoadResult))
+reloadProjects projects = traverse reloadOne projects
+  where
+  reloadOne project = loadProject
+    { path: project.repoPath
+    , name: Just project.name
+    , label: Nothing
+    }

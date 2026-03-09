@@ -150,7 +150,7 @@ render state =
   HH.div
     [ HP.style containerStyle ]
     [ HH.div
-        [ HP.style "max-width: 800px; width: 100%; margin: 0 auto; padding: 60px 24px 80px;" ]
+        [ HP.style "max-width: 1200px; width: 100%; margin: 0 auto; padding: 60px 24px 80px;" ]
         [ renderHero state
         , renderArchitectureDiagram
         , renderSankeySection
@@ -582,7 +582,7 @@ featureCard title subtitle body mImage =
         Just src -> HH.img
           [ HP.src src
           , HP.alt title
-          , HP.style "width: 240px; height: auto; border-radius: 4px; border: 1px solid #E8E6E0; flex-shrink: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"
+          , HP.style "width: 320px; height: auto; border-radius: 4px; border: 1px solid #E8E6E0; flex-shrink: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08);"
           ]
         Nothing -> HH.text ""
     ]
@@ -706,7 +706,7 @@ sectionHeadingStyle :: String
 sectionHeadingStyle = "font-size: 18px; font-weight: 600; margin: 0 0 8px 0; letter-spacing: -0.3px; color: #333;"
 
 sectionBodyStyle :: String
-sectionBodyStyle = "font-size: 13px; color: #666; margin: 0 0 4px 0; line-height: 1.6; max-width: 640px;"
+sectionBodyStyle = "font-size: 15px; color: #666; margin: 0 0 4px 0; line-height: 1.6; max-width: 800px;"
 
 cardStyle :: String
 cardStyle = "background: #fff; border: 1px solid #E0DDD4; border-radius: 6px; "

@@ -11,17 +11,17 @@ module CE2.Viz.AnatomyBeeswarm
   ( Config
   , BeeswarmHandle
   , AnatomyNodeRow
-  , PackageCategory(..)
   , render
   , cleanup
   , classify
   , computeDirectDepNames
   ) where
 
+-- Re-export shared classification from PackageCategory
+
 import Prelude
 
 import Data.Array as Array
-import Data.Foldable (foldl)
 import Data.Int (toNumber)
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Nullable as Nullable
@@ -60,15 +60,14 @@ import Hylograph.ForceEngine.Simulation (SimulationNode)
 import Hylograph.ForceEngine.Setup (withAlphaDecay)
 
 import CE2.Data.Loader (PackageSetPackage)
+import CE2.Data.PackageCategory (PackageCategory(..))
+import CE2.Data.PackageCategory as PC
 
 -- =============================================================================
 -- Types
 -- =============================================================================
 
--- | Package categories for anatomy coloring
-data PackageCategory = Workspace | DirectDep | Transitive
-
-derive instance eqPackageCategory :: Eq PackageCategory
+-- | PackageCategory is imported and re-exported from CE2.Data.PackageCategory
 
 -- | Configuration for anatomy beeswarm
 type Config =
@@ -106,29 +105,16 @@ type BeeswarmHandle =
   }
 
 -- =============================================================================
--- Classification
+-- Classification (delegating to shared PackageCategory module)
 -- =============================================================================
 
 -- | Compute the set of direct dependency names from workspace packages
 computeDirectDepNames :: Array PackageSetPackage -> Set String
-computeDirectDepNames packages =
-  let
-    wsNames = Set.fromFoldable $ Array.mapMaybe
-      (\p -> if p.source == "workspace" then Just p.name else Nothing) packages
-    allWsDeps = foldl (\acc p ->
-      if p.source == "workspace"
-        then Set.union acc (Set.fromFoldable p.depends)
-        else acc
-      ) Set.empty packages
-  in
-    Set.difference allWsDeps wsNames
+computeDirectDepNames = PC.computeDirectDepNames
 
 -- | Classify a package into workspace, direct dep, or transitive
 classify :: Set String -> Set String -> PackageSetPackage -> PackageCategory
-classify wsNames directDepNames pkg
-  | Set.member pkg.name wsNames = Workspace
-  | Set.member pkg.name directDepNames = DirectDep
-  | otherwise = Transitive
+classify = PC.classify
 
 -- =============================================================================
 -- Coloring

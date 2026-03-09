@@ -23,9 +23,11 @@ module API.Unified
   , getAllImports
   , getAllCalls
   , getModuleDeclarationStats
+  , getModuleStructuralComplexity
   -- Namespaces
   , listNamespaces
   , getNamespace
+  , getNamespaceTree
   -- Declarations
   , searchDeclarations
   -- Combined search
@@ -42,6 +44,8 @@ module API.Unified
   , getModuleSource
   -- Source location (file path only, for editor integration)
   , getSourceLocation
+  -- Namespace packages mapping
+  , getNamespacePackages
   ) where
 
 import Prelude
@@ -469,6 +473,33 @@ listNamespaces db = do
 foreign import buildNamespacesJson :: Array Foreign -> String
 
 -- =============================================================================
+-- GET /api/v2/namespace-tree
+-- =============================================================================
+
+-- | Full namespace tree with module counts and total LOC (no depth filter)
+getNamespaceTree :: Database -> Aff Response
+getNamespaceTree db = do
+  rows <- queryAll db """
+    SELECT
+      ns.id,
+      ns.path,
+      ns.segment,
+      ns.depth,
+      ns.parent_id,
+      ns.is_leaf,
+      COUNT(DISTINCT m.id) as module_count,
+      COALESCE(SUM(m.loc), 0) as total_loc
+    FROM module_namespaces ns
+    LEFT JOIN modules m ON m.namespace_id = ns.id
+    GROUP BY ns.id, ns.path, ns.segment, ns.depth, ns.parent_id, ns.is_leaf
+    ORDER BY ns.path
+  """
+  let json = buildNamespaceTreeJson rows
+  ok' jsonHeaders json
+
+foreign import buildNamespaceTreeJson :: Array Foreign -> String
+
+-- =============================================================================
 -- GET /api/v2/namespaces/:path
 -- =============================================================================
 
@@ -777,6 +808,87 @@ getModuleDeclarationStats db = do
 foreign import buildModuleDeclarationStatsJson :: Array Foreign -> String
 
 -- =============================================================================
+-- GET /api/v2/module-structural-complexity
+-- =============================================================================
+
+-- | Per-module structural complexity metrics computed from the function call graph.
+-- | Returns: { modules: [{ moduleId, moduleName, declCount, internalCalls, crossModuleCalls,
+-- |   internalDensity, maxFanIn, maxFanOut, couplingScore }] }
+-- |
+-- | couplingScore combines:
+-- |   - internalDensity (calls per declaration, capped at 3)
+-- |   - crossModuleCalls (external coupling load)
+-- |   - maxFanIn (most-depended-on declaration's inbound count)
+-- | Higher = more structurally interesting (potentially harder to refactor)
+getModuleStructuralComplexity :: Database -> Aff Response
+getModuleStructuralComplexity db = do
+  rows <- queryAll db """
+    WITH best_versions AS (
+      SELECT pv.id as pv_id
+      FROM package_versions pv
+      WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+    ),
+    module_decl_counts AS (
+      SELECT m.id as module_id, m.name as module_name,
+             COUNT(DISTINCT d.id) as decl_count
+      FROM modules m
+      JOIN best_versions bv ON m.package_version_id = bv.pv_id
+      JOIN declarations d ON d.module_id = m.id
+      GROUP BY m.id, m.name
+    ),
+    module_internal_calls AS (
+      SELECT fc.caller_module_id as module_id,
+             COUNT(*) as internal_calls
+      FROM function_calls fc
+      WHERE NOT fc.is_cross_module
+      GROUP BY fc.caller_module_id
+    ),
+    module_cross_calls AS (
+      SELECT fc.caller_module_id as module_id,
+             COUNT(*) as cross_module_calls
+      FROM function_calls fc
+      WHERE fc.is_cross_module
+      GROUP BY fc.caller_module_id
+    ),
+    module_max_fan AS (
+      SELECT m.id as module_id,
+             MAX(COALESCE(dm.external_caller_count, 0)) as max_fan_in,
+             MAX(COALESCE(dm.external_call_count, 0)) as max_fan_out
+      FROM modules m
+      JOIN best_versions bv ON m.package_version_id = bv.pv_id
+      JOIN declarations d ON d.module_id = m.id
+      LEFT JOIN declaration_metrics dm ON dm.declaration_id = d.id
+      GROUP BY m.id
+    )
+    SELECT
+      mdc.module_id,
+      mdc.module_name,
+      mdc.decl_count,
+      COALESCE(mic.internal_calls, 0) as internal_calls,
+      COALESCE(mcc.cross_module_calls, 0) as cross_module_calls,
+      CASE WHEN mdc.decl_count > 0
+           THEN ROUND(COALESCE(mic.internal_calls, 0) * 1.0 / mdc.decl_count, 3)
+           ELSE 0 END as internal_density,
+      COALESCE(mmf.max_fan_in, 0) as max_fan_in,
+      COALESCE(mmf.max_fan_out, 0) as max_fan_out,
+      ROUND(
+        LEAST(COALESCE(mic.internal_calls, 0) * 1.0 / GREATEST(mdc.decl_count, 1), 3.0) * 10
+        + COALESCE(mcc.cross_module_calls, 0) * 0.5
+        + COALESCE(mmf.max_fan_in, 0) * 2.0
+      , 1) as coupling_score
+    FROM module_decl_counts mdc
+    LEFT JOIN module_internal_calls mic ON mic.module_id = mdc.module_id
+    LEFT JOIN module_cross_calls mcc ON mcc.module_id = mdc.module_id
+    LEFT JOIN module_max_fan mmf ON mmf.module_id = mdc.module_id
+    WHERE mdc.decl_count > 0
+    ORDER BY coupling_score DESC
+  """
+  let json = buildModuleStructuralComplexityJson rows
+  ok' jsonHeaders json
+
+foreign import buildModuleStructuralComplexityJson :: Array Foreign -> String
+
+-- =============================================================================
 -- GET /api/v2/polyglot-summary
 -- =============================================================================
 
@@ -1009,3 +1121,28 @@ getSourceLocation db moduleName = do
         Just j -> ok' jsonHeaders j
 
 foreign import buildSourceLocationJson :: Foreign -> Effect (Nullable String)
+
+-- =============================================================================
+-- GET /api/v2/namespace-packages
+-- =============================================================================
+
+-- | Namespace → packages mapping: which packages contribute modules to each namespace
+getNamespacePackages :: Database -> Aff Response
+getNamespacePackages db = do
+  rows <- queryAll db """
+    SELECT
+      ns.id as namespace_id,
+      pv.id as package_id,
+      pv.name as package_name,
+      COUNT(DISTINCT m.id) as module_count
+    FROM module_namespaces ns
+    JOIN modules m ON m.namespace_id = ns.id
+    JOIN package_versions pv ON m.package_version_id = pv.id
+    WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+    GROUP BY ns.id, pv.id, pv.name
+    ORDER BY ns.id, module_count DESC
+  """
+  let json = buildNamespacePackagesJson rows
+  ok' jsonHeaders json
+
+foreign import buildNamespacePackagesJson :: Array Foreign -> String

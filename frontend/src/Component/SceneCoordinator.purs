@@ -67,6 +67,9 @@ import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.ProjectManagementViz as ProjectManagementViz
 import CE2.Component.ProjectAnatomyViz as ProjectAnatomyViz
+import CE2.Component.NamespaceTreeViz as NamespaceTreeViz
+import CE2.Component.StructuralDecompViz as StructuralDecompViz
+import CE2.Component.ModuleStructureViz as ModuleStructureViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
@@ -132,6 +135,7 @@ data Output
   = RequestPackageSetData
   | SceneChanged Scene
   | ProjectLoaded          -- A project was loaded; AppShell should re-fetch all data
+  | RequestDataRefresh (Array Loader.ProjectInfo)  -- User clicked Sync; re-run loader + re-fetch
 
 -- | Slot type for parent component
 type Slot = H.Slot Query Output
@@ -139,6 +143,7 @@ type Slot = H.Slot Query Output
 -- | Queries from parent
 data Query a
   = SetScene Scene a
+  | NotifyRefreshError String a  -- Refresh failed; set error state
 
 -- | Child component slots (streamlined - removed debug components)
 type Slots =
@@ -157,6 +162,9 @@ type Slots =
   , annotationReportViz :: AnnotationReportViz.Slot Unit
   , projectManagementViz :: ProjectManagementViz.Slot Unit
   , projectAnatomyViz :: ProjectAnatomyViz.Slot Unit
+  , namespaceTreeViz :: NamespaceTreeViz.Slot Unit
+  , structuralDecompViz :: StructuralDecompViz.Slot Unit
+  , moduleStructureViz :: ModuleStructureViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -203,6 +211,24 @@ _projectManagementViz = Proxy
 
 _projectAnatomyViz :: Proxy "projectAnatomyViz"
 _projectAnatomyViz = Proxy
+
+_namespaceTreeViz :: Proxy "namespaceTreeViz"
+_namespaceTreeViz = Proxy
+
+_structuralDecompViz :: Proxy "structuralDecompViz"
+_structuralDecompViz = Proxy
+
+_moduleStructureViz :: Proxy "moduleStructureViz"
+_moduleStructureViz = Proxy
+
+-- | Refresh phase for Sync button lifecycle
+data RefreshPhase
+  = RefreshIdle
+  | RefreshSyncing
+  | RefreshDone
+  | RefreshError String
+
+derive instance eqRefreshPhase :: Eq RefreshPhase
 
 -- | Captured position for transitions (from treemap cells or beeswarm)
 type CapturedPosition = { name :: String, x :: Number, y :: Number, r :: Number }
@@ -282,6 +308,12 @@ type State =
     -- Type class stats (lazy loaded for TypeClassGrid scene)
   , typeClassStats :: Maybe Loader.TypeClassStats
 
+    -- Namespace tree data (lazy loaded for NamespaceTree scene)
+  , namespaceTreeData :: Maybe (Array Loader.V2NamespaceTreeNode)
+
+    -- Namespace → packages mapping (lazy loaded for NamespaceTree scene)
+  , namespacePackages :: Maybe (Array Loader.NamespacePackageEntry)
+
     -- Git status (lazy loaded when Git mode activated)
   , gitStatus :: Maybe Loader.GitStatusData
 
@@ -299,6 +331,10 @@ type State =
   , purityData :: Maybe PackagePurity
   , purityPeek :: Boolean
 
+    -- Structural complexity data (lazy loaded when StructuralComplexity mode activated)
+  , complexityData :: Maybe (Map.Map String Loader.ModuleStructuralComplexity)
+  , complexityPeek :: Boolean
+
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
@@ -307,6 +343,9 @@ type State =
 
     -- Browser history integration
   , historyCleanup :: Maybe (Effect Unit)  -- Cleanup function for popstate listener
+
+    -- Incremental refresh
+  , refreshPhase :: RefreshPhase
 
     -- Search typeahead
   , searchQuery :: String
@@ -332,6 +371,7 @@ data Action
   | HandleAnnotationReportOutput AnnotationReportViz.Output
   | HandleProjectManagementOutput ProjectManagementViz.Output
   | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
+  | HandleModuleStructureOutput ModuleStructureViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -346,6 +386,12 @@ data Action
   | ReachabilityPeekOff                   -- R key released - hide peek overlay
   | PurityPeekOn                          -- P key pressed - show purity overlay
   | PurityPeekOff                         -- P key released - hide purity overlay
+  | ToggleComplexityMode                  -- Toggle structural complexity coloring
+  | ComplexityPeekOn                      -- C key pressed - show coupling score overlay
+  | ComplexityPeekOff                     -- C key released - hide coupling score overlay
+  -- Incremental refresh
+  | RequestRefresh                        -- User clicks Sync button
+  | ClearRefreshDone                      -- Timer fires 1.5s after sync completion
   -- Search typeahead
   | SearchInput String                    -- User typed in search box
   | SearchResultsReceived Int (Array Loader.UnifiedSearchResult)  -- Results arrived (seqId, results)
@@ -393,6 +439,8 @@ initialState input =
   , hoveredPackage: Nothing
   , hoveredModule: Nothing
   , typeClassStats: Nothing
+  , namespaceTreeData: Nothing
+  , namespacePackages: Nothing
   , gitStatus: Nothing
   , reachabilityData: Nothing
   , reachabilityPeek: false
@@ -400,9 +448,12 @@ initialState input =
   , clusterData: Nothing
   , purityData: Nothing
   , purityPeek: false
+  , complexityData: Nothing
+  , complexityPeek: false
   , hideInfraLinks: false
   , loadedProjects: []
   , historyCleanup: Nothing
+  , refreshPhase: RefreshIdle
   , searchQuery: ""
   , searchResults: []
   , searchSelectedIndex: 0
@@ -460,6 +511,42 @@ toggleButtonStyle isActive textColor =
     <> "border: 1px solid " <> (if isActive then textColor else "rgba(0,0,0,0.25)") <> "; "
     <> "color: " <> textColor <> "; "
     <> "cursor: pointer; font-size: 9px; padding: 2px 6px; border-radius: 3px;"
+
+-- | Render the Sync button with phase-dependent appearance
+renderSyncButton :: forall m. State -> String -> H.ComponentHTML Action Slots m
+renderSyncButton state textColor = case state.refreshPhase of
+  RefreshIdle ->
+    HH.button
+      [ HE.onClick \_ -> RequestRefresh
+      , HP.style $ toggleButtonStyle false textColor
+      , HP.title "Re-run loader and refresh data from disk"
+      ]
+      [ HH.text "Sync" ]
+  RefreshSyncing ->
+    HH.button
+      [ HP.disabled true
+      , HP.style $ "background: none; border: 1px solid rgba(0,0,0,0.15); "
+          <> "color: " <> textColor <> "; cursor: wait; font-size: 9px; padding: 2px 6px; "
+          <> "border-radius: 3px; opacity: 0.7;"
+      ]
+      [ HH.text "Syncing\x2026" ]
+  RefreshDone ->
+    HH.button
+      [ HP.disabled true
+      , HP.style $ "background: rgba(0,128,0,0.1); border: 1px solid rgba(0,128,0,0.4); "
+          <> "color: " <> textColor <> "; cursor: default; font-size: 9px; padding: 2px 6px; "
+          <> "border-radius: 3px;"
+      ]
+      [ HH.text "\x2713 Synced" ]
+  RefreshError _msg ->
+    HH.button
+      [ HE.onClick \_ -> RequestRefresh
+      , HP.style $ "background: rgba(200,0,0,0.1); border: 1px solid rgba(200,0,0,0.4); "
+          <> "color: #8b0000; cursor: pointer; font-size: 9px; padding: 2px 6px; "
+          <> "border-radius: 3px;"
+      , HP.title "Sync failed — click to retry"
+      ]
+      [ HH.text "Sync \x2718" ]
 
 -- | Render the header bar with breadcrumb navigation
 renderHeaderBar :: forall m. State -> H.ComponentHTML Action Slots m
@@ -537,10 +624,30 @@ renderHeaderBar state =
             ]
             [ HH.text "Types" ]
         , HH.button
+            [ HE.onClick \_ -> NavigateTo NamespaceTree
+            , HP.style $ toggleButtonStyle (state.scene == NamespaceTree) textColor
+            ]
+            [ HH.text "Namespaces" ]
+        , HH.button
             [ HE.onClick \_ -> NavigateTo AnnotationReport
             , HP.style $ toggleButtonStyle (state.scene == AnnotationReport) textColor
             ]
             [ HH.text "Report" ]
+        , let structureTarget = case state.scene of
+                ModuleSignatureMap pkg mod -> ModuleStructure pkg mod
+                ModuleOverview pkg mod -> ModuleStructure pkg mod
+                DeclarationDetail pkg mod _ -> ModuleStructure pkg mod
+                ModuleStructure _ _ -> state.scene  -- already there
+                _ -> StructuralDecomp
+              isStructure = case state.scene of
+                StructuralDecomp -> true
+                ModuleStructure _ _ -> true
+                _ -> false
+          in HH.button
+            [ HE.onClick \_ -> NavigateTo structureTarget
+            , HP.style $ toggleButtonStyle isStructure textColor
+            ]
+            [ HH.text "Structure" ]
         , HH.button
             [ HE.onClick \_ -> ToggleGitMode
             , HP.style $ toggleButtonStyle (state.colorMode == GitStatus) textColor
@@ -557,6 +664,7 @@ renderHeaderBar state =
             , HP.title "Cluster: modules colored by dependency cluster (connected components). Hold R to peek reachability."
             ]
             [ HH.text "Cluster" ]
+        , renderSyncButton state textColor
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
             [ HH.text $ "[" <> canonicalStateCode state <> "]" ]
@@ -947,6 +1055,8 @@ renderScene state =
                   , isAppPackage: fromMaybe false (state.reachabilityData <#> _.isApp)
                   , purityData: state.purityData
                   , purityPeek: state.purityPeek
+                  , complexityData: state.complexityData
+                  , complexityPeek: state.complexityPeek
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1067,6 +1177,23 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading type class data..." ]
 
+  NamespaceTree ->
+    case state.namespaceTreeData of
+      Just nsData ->
+        HH.slot _namespaceTreeViz unit NamespaceTreeViz.component
+          { namespaceTree: nsData
+          , namespacePackages: state.namespacePackages
+          , packages: case state.v2Data of
+              Just v2 -> v2.packages
+              Nothing -> []
+          , theme: theme
+          }
+          absurd
+      Nothing ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading namespace tree..." ]
+
   AnnotationReport ->
     case state.allAnnotations, state.v2Data of
       Just anns, Just v2 ->
@@ -1079,6 +1206,52 @@ renderScene state =
         HH.div
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading annotations..." ]
+
+  StructuralDecomp ->
+    case state.v2Data of
+      Just v2 ->
+        HH.slot _structuralDecompViz unit StructuralDecompViz.component
+          { allImports: v2.imports <#> \mi -> { moduleName: mi.moduleName, imports: mi.imports }
+          , packages: v2.packages <#> \p -> { name: p.name, source: p.source, modules: v2.modules
+              # Array.filter (\m -> m.package.name == p.name)
+              # map _.name }
+          }
+          absurd
+      Nothing ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading module data..." ]
+
+  ModuleStructure pkgName modName ->
+    case state.v2Data of
+      Just v2 ->
+        case lookupModuleDeclarations state pkgName modName of
+          Just decls ->
+            let
+              modId = Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
+                        <#> _.id
+              moduleCalls = case modId of
+                Just mid -> fromMaybe [] (Map.lookup mid state.packageCalls)
+                Nothing -> []
+              internalCalls = Array.filter (not <<< _.isCrossModule) moduleCalls
+              crossCalls = Array.filter _.isCrossModule moduleCalls
+              declInfos = decls <#> \d -> { name: d.name, kind: d.kind }
+              moduleSourceMap = Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.package.source
+            in HH.slot _moduleStructureViz unit ModuleStructureViz.component
+              { packageName: pkgName
+              , moduleName: modName
+              , declarations: declInfos
+              , functionCalls: internalCalls
+              , crossModuleCalls: crossCalls
+              , moduleSourceMap
+              }
+              HandleModuleStructureOutput
+          Nothing ->
+            HH.div [ HP.class_ (HH.ClassName "loading") ]
+              [ HH.text "Loading declarations..." ]
+      Nothing ->
+        HH.div [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading module data..." ]
 
   ProjectManagement ->
     HH.slot _projectManagementViz unit ProjectManagementViz.component
@@ -1139,6 +1312,8 @@ handleAction = case _ of
           HS.notify keyListener ReachabilityPeekOn
         Just ke | key ke == "p" && not (repeat ke) ->
           HS.notify keyListener PurityPeekOn
+        Just ke | key ke == "c" && not (repeat ke) ->
+          HS.notify keyListener ComplexityPeekOn
         _ -> pure unit
 
     keyupListener <- liftEffect $ ET.eventListener \e ->
@@ -1147,6 +1322,8 @@ handleAction = case _ of
           HS.notify keyListener ReachabilityPeekOff
         Just ke | key ke == "p" ->
           HS.notify keyListener PurityPeekOff
+        Just ke | key ke == "c" ->
+          HS.notify keyListener ComplexityPeekOff
         _ -> pure unit
 
     liftEffect do
@@ -1174,7 +1351,8 @@ handleAction = case _ of
         packageSetDataChanged = case input.packageSetData, state.packageSetData of
           Just _, Nothing -> true
           Nothing, Just _ -> true
-          _, _ -> false
+          Just new, Just old -> Array.length new.packages /= Array.length old.packages
+          Nothing, Nothing -> false
 
         dataChanged = modelDataChanged || packageSetDataChanged
 
@@ -1184,8 +1362,31 @@ handleAction = case _ of
       , packageSetData = input.packageSetData
       }
 
+    -- If we were syncing, mark as done regardless of whether data changed
+    preState <- H.get
+    when (preState.refreshPhase == RefreshSyncing) do
+      H.modify_ _ { refreshPhase = RefreshDone }
+      void $ H.fork do
+        liftAff $ Aff.delay (Milliseconds 1500.0)
+        handleAction ClearRefreshDone
+
     when dataChanged do
-      log "[SceneCoordinator] Data changed, re-rendering"
+      log "[SceneCoordinator] Data changed — invalidating lazy caches"
+      H.modify_ _
+        { packageDeclarations = Map.empty
+        , packageCalls = Map.empty
+        , allCallsLoaded = false
+        , moduleAnnotations = Map.empty
+        , allAnnotations = Nothing
+        , declarationStats = Nothing
+        , typeClassStats = Nothing
+        , namespaceTreeData = Nothing
+        , namespacePackages = Nothing
+        , gitStatus = Nothing
+        , reachabilityData = Nothing
+        , clusterData = Nothing
+        , purityData = Nothing
+        }
       newState <- H.get
       prepareSceneData newState
 
@@ -1412,6 +1613,14 @@ handleAction = case _ of
       log "[SceneCoordinator] Anatomy → Projects"
       handleAction (NavigateTo ProjectManagement)
 
+  HandleModuleStructureOutput output -> case output of
+    ModuleStructureViz.NavigateToDeclaration declName -> do
+      state <- H.get
+      case state.scene of
+        ModuleStructure pkg mod ->
+          handleAction (NavigateTo (DeclarationDetail pkg mod declName))
+        _ -> pure unit
+
   HandleDeclarationDetailOutput output -> case output of
     DeclarationDetailViz.BackToModuleOverview -> do
       state <- H.get
@@ -1568,6 +1777,26 @@ handleAction = case _ of
   PurityPeekOff -> do
     H.modify_ _ { purityPeek = false }
 
+  ToggleComplexityMode -> do
+    state <- H.get
+    if state.colorMode == StructuralComplexity
+      then do
+        log "[SceneCoordinator] Structural complexity mode OFF"
+        H.modify_ _ { colorMode = DefaultUniform }
+      else do
+        log "[SceneCoordinator] Structural complexity mode ON"
+        H.modify_ _ { colorMode = StructuralComplexity }
+        when (state.complexityData == Nothing) loadComplexityData
+
+  ComplexityPeekOn -> do
+    state <- H.get
+    when (not state.searchOpen) do
+      H.modify_ _ { complexityPeek = true }
+      when (state.complexityData == Nothing) loadComplexityData
+
+  ComplexityPeekOff -> do
+    H.modify_ _ { complexityPeek = false }
+
   -- =========================================================================
   -- Search Typeahead Actions
   -- =========================================================================
@@ -1626,6 +1855,33 @@ handleAction = case _ of
     void $ H.fork do
       liftAff $ Aff.delay (Milliseconds 200.0)
       H.modify_ _ { searchOpen = false }
+
+  RequestRefresh -> do
+    state <- H.get
+    case state.refreshPhase of
+      RefreshIdle -> do
+        -- Ensure loadedProjects is populated before syncing
+        projects <- if Array.null state.loadedProjects
+          then do
+            result <- liftAff Loader.fetchV2Projects
+            case result of
+              Right ps -> do
+                H.modify_ _ { loadedProjects = ps }
+                pure ps
+              Left _ -> pure []
+          else pure state.loadedProjects
+        log $ "[SceneCoordinator] Sync requested for " <> show (Array.length projects) <> " project(s)"
+        H.modify_ _ { refreshPhase = RefreshSyncing }
+        H.raise (RequestDataRefresh projects)
+      RefreshError _ -> do
+        log "[SceneCoordinator] Sync retry requested"
+        st <- H.get
+        H.modify_ _ { refreshPhase = RefreshSyncing }
+        H.raise (RequestDataRefresh st.loadedProjects)
+      _ -> pure unit  -- Ignore if already syncing or in done state
+
+  ClearRefreshDone -> do
+    H.modify_ _ { refreshPhase = RefreshIdle }
 
   HandleSlideOutPanelOutput output -> case output of
     SlideOutPanel.PanelClosed -> do
@@ -1871,6 +2127,35 @@ prepareSceneData state = case state.scene of
           Left err ->
             log $ "[SceneCoordinator] Failed to load type class stats: " <> err
 
+  NamespaceTree -> do
+    log "[SceneCoordinator] NamespaceTree"
+    -- Fetch tree data if not cached
+    case state.namespaceTreeData of
+      Just nsData ->
+        log $ "[SceneCoordinator] NamespaceTree: " <> show (Array.length nsData) <> " nodes cached"
+      Nothing -> do
+        log "[SceneCoordinator] Loading namespace tree..."
+        result <- liftAff Loader.fetchNamespaceTree
+        case result of
+          Right nsData -> do
+            log $ "[SceneCoordinator] Loaded " <> show (Array.length nsData) <> " namespace nodes"
+            H.modify_ _ { namespaceTreeData = Just nsData }
+          Left err ->
+            log $ "[SceneCoordinator] Failed to load namespace tree: " <> err
+    -- Fetch namespace→packages mapping if not cached
+    case state.namespacePackages of
+      Just nsPkgs ->
+        log $ "[SceneCoordinator] Namespace packages: " <> show (Array.length nsPkgs) <> " entries cached"
+      Nothing -> do
+        log "[SceneCoordinator] Loading namespace packages..."
+        nsPkgResult <- liftAff Loader.fetchNamespacePackages
+        case nsPkgResult of
+          Right entries -> do
+            log $ "[SceneCoordinator] Loaded " <> show (Array.length entries) <> " namespace-package entries"
+            H.modify_ _ { namespacePackages = Just entries }
+          Left err ->
+            log $ "[SceneCoordinator] Failed to load namespace packages: " <> err
+
   AnnotationReport -> do
     case state.allAnnotations of
       Just _ -> log "[SceneCoordinator] AnnotationReport: data cached"
@@ -1910,6 +2195,45 @@ prepareSceneData state = case state.scene of
       Left err ->
         log $ "[SceneCoordinator] Failed to load projects: " <> err
 
+  StructuralDecomp -> do
+    -- Data is already available in v2Data (imports loaded upfront)
+    log "[SceneCoordinator] StructuralDecomp"
+
+  ModuleStructure pkgName modName -> do
+    log $ "[SceneCoordinator] ModuleStructure: " <> modName
+    -- Need declarations and function calls for this module
+    st <- H.get
+    case st.v2Data of
+      Just v2 -> do
+        -- Ensure declarations loaded
+        let mod = Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
+        case mod of
+          Just m -> do
+            when (not (Map.member m.id st.packageDeclarations)) do
+              log $ "[SceneCoordinator] Fetching declarations for " <> modName
+              newDecls <- liftAff $ Loader.fetchV2PackageDeclarations [m]
+              st2 <- H.get
+              H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
+            -- Ensure function calls loaded
+            when (not st.allCallsLoaded) do
+              log "[SceneCoordinator] Fetching all function calls for module structure"
+              result <- liftAff Loader.fetchV2AllCalls
+              case result of
+                Right allCalls -> do
+                  let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
+                        Tuple mc.moduleId (mc.calls <#> \c -> { callerName: c.callerName
+                          , calleeModule: c.calleeModule
+                          , calleeName: c.calleeName
+                          , isCrossModule: c.isCrossModule
+                          , callCount: c.callCount
+                          })
+                  H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
+                Left err ->
+                  log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
+          Nothing ->
+            log $ "[SceneCoordinator] Module not found: " <> modName
+      Nothing -> pure unit
+
   ProjectAnatomy -> do
     -- Package set data is already loaded in DataLoaded phase — no extra fetch needed
     case state.packageSetData of
@@ -1927,6 +2251,10 @@ handleQuery :: forall m a. MonadAff m => Query a -> H.HalogenM State Action Slot
 handleQuery = case _ of
   SetScene targetScene a -> do
     handleAction (NavigateTo targetScene)
+    pure (Just a)
+  NotifyRefreshError msg a -> do
+    log $ "[SceneCoordinator] Refresh error: " <> msg
+    H.modify_ _ { refreshPhase = RefreshError msg }
     pure (Just a)
 
 -- =============================================================================
@@ -2004,9 +2332,12 @@ themeForScene = case _ of
   DeclarationDetail _ _ _ -> DaylightTheme
   ModuleSignatureMap _ _ -> MistTheme
   TypeClassGrid -> MidnightTheme
+  NamespaceTree -> DaylightTheme
   AnnotationReport -> DaylightTheme
   ProjectManagement -> DaylightTheme
   ProjectAnatomy -> DaylightTheme
+  StructuralDecomp -> DaylightTheme
+  ModuleStructure _ _ -> DaylightTheme
 
 -- | Canonical state code for precise communication
 -- | See docs/kb/reference/ce2-state-machine-analysis.md for full naming system
@@ -2041,10 +2372,13 @@ canonicalStateCode state = case state.scene of
   ModuleSignatureMap pkg mod -> "S(" <> pkg <> "," <> mod <> ")"
 
   TypeClassGrid -> "T"       -- Type class grid view
+  NamespaceTree -> "N"       -- Namespace tree view
 
   AnnotationReport -> "R"    -- Annotation report view
   ProjectManagement -> "P"   -- Project management view
   ProjectAnatomy -> "Y"      -- Project anatomy view
+  StructuralDecomp -> "D"    -- Structural decomposition view
+  ModuleStructure pkg mod -> "X(" <> pkg <> "," <> mod <> ")"  -- Module structure view
 
   where
   scopeDigit :: BeeswarmScope -> String
@@ -2399,3 +2733,15 @@ computeAndStorePurityForPeek pkg = do
           <> show (Map.size modulePurity) <> " modules analyzed"
       H.modify_ _ { purityData = Just purity }
     Nothing -> pure unit
+
+-- | Load structural complexity data from backend (global, not per-package)
+loadComplexityData :: forall m. MonadAff m => H.HalogenM State Action Slots Output m Unit
+loadComplexityData = do
+  result <- liftAff Loader.fetchModuleStructuralComplexity
+  case result of
+    Right modules -> do
+      let complexityMap = Map.fromFoldable $ modules <#> \m -> Tuple m.moduleName m
+      log $ "[SceneCoordinator] Loaded structural complexity for " <> show (Map.size complexityMap) <> " modules"
+      H.modify_ _ { complexityData = Just complexityMap }
+    Left err ->
+      log $ "[SceneCoordinator] Failed to load complexity: " <> err

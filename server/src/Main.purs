@@ -10,6 +10,7 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Console (log)
+import Effect.Ref as Ref
 import Foreign.Object as Object
 import HTTPurple (Method(..), serve, ok, ok', toString)
 import HTTPurple.Headers (headers)
@@ -40,9 +41,12 @@ data Route
   | V2GetAllImports
   | V2GetAllCalls
   | V2GetModuleDeclarationStats
+  | V2GetModuleStructuralComplexity
   -- Namespaces
   | V2ListNamespaces
   | V2GetNamespace String
+  | V2NamespaceTree
+  | V2NamespacePackages
   -- Search
   | V2SearchDeclarations String
   | V2Search String
@@ -87,8 +91,11 @@ route = root $ sum
   , "V2GetAllImports": path "api/v2/all-imports" noArgs
   , "V2GetAllCalls": path "api/v2/all-calls" noArgs
   , "V2GetModuleDeclarationStats": path "api/v2/module-declaration-stats" noArgs
+  , "V2GetModuleStructuralComplexity": path "api/v2/module-structural-complexity" noArgs
   , "V2ListNamespaces": path "api/v2/namespaces" noArgs
   , "V2GetNamespace": path "api/v2/namespaces" segment
+  , "V2NamespaceTree": path "api/v2/namespace-tree" noArgs
+  , "V2NamespacePackages": path "api/v2/namespace-packages" noArgs
   , "V2SearchDeclarations": path "api/v2/declarations/search" segment
   , "V2Search": path "api/v2/search" segment
   , "V2PolyglotSummary": path "api/v2/polyglot-summary" noArgs
@@ -117,6 +124,7 @@ dbPath = "./database/ce-unified.duckdb"
 main :: Effect Unit
 main = launchAff_ do
   db <- DB.openDB dbPath
+  dbRef <- liftEffect $ Ref.new db
   liftEffect $ log $ "Connected to database: " <> dbPath
 
   -- Ensure annotations table exists (idempotent migration)
@@ -144,7 +152,7 @@ main = launchAff_ do
   liftEffect $ log "Annotations table ready"
 
   liftEffect do
-    _ <- serve { port: 3000 } { route, router: mkRouter db }
+    _ <- serve { port: 3000 } { route, router: mkRouter dbRef }
     log "Minard API server running on http://localhost:3000"
     log ""
     log "Endpoints:"
@@ -162,6 +170,8 @@ main = launchAff_ do
     log "  GET /api/v2/module-declaration-stats     - Declaration stats by module"
     log "  GET /api/v2/namespaces                   - List top-level namespaces"
     log "  GET /api/v2/namespaces/:path             - Get namespace with children"
+    log "  GET /api/v2/namespace-tree               - Full namespace tree with LOC"
+    log "  GET /api/v2/namespace-packages           - Namespace to package mapping"
     log "  GET /api/v2/declarations/search/:query   - Search declarations"
     log "  GET /api/v2/search/:query               - Combined search (decl+module+pkg)"
     log "  GET /api/v2/polyglot-summary             - Polyglot project summary"
@@ -180,73 +190,77 @@ main = launchAff_ do
     log "  GET /health                              - Health check"
   where
   corsHeaders = headers { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
-  mkRouter db { route: r, query, method, body } =
+  mkRouter dbRef { route: r, query, method, body } = do
+    db <- liftEffect $ Ref.read dbRef
     let mProject = Object.lookup "project" query >>= Int.fromString
-    in case r of
-    V2Stats -> Unified.getStats db
-    V2ListPackages -> Unified.listPackages db mProject
-    V2UnusedPackages -> Unified.listUnusedPackages db mProject
-    V2GetPackage pkgId -> Unified.getPackage db pkgId
-    V2ListModules -> Unified.listModules db mProject
-    V2GetModule modId -> Unified.getModule db modId
-    V2GetModuleDeclarations modId -> Unified.getModuleDeclarations db modId
-    V2GetModuleImports modId -> Unified.getModuleImports db modId
-    V2GetModuleCalls modId -> Unified.getModuleCalls db modId
-    V2GetModuleReexports modId -> Unified.getModuleReexports db modId
-    V2GetAllImports -> Unified.getAllImports db
-    V2GetAllCalls -> Unified.getAllCalls db
-    V2GetModuleDeclarationStats -> Unified.getModuleDeclarationStats db
-    V2ListNamespaces -> Unified.listNamespaces db
-    V2GetNamespace nsPath -> Unified.getNamespace db nsPath
-    V2SearchDeclarations q -> Unified.searchDeclarations db q
-    V2Search q -> Unified.searchAll db q
-    V2PolyglotSummary -> Unified.getPolyglotSummary db
-    V2TypeClassStats -> Unified.getTypeClassStats db
-    V2GitStatus -> Unified.getGitStatus
-    V2GetDeclarationUsage ->
-      let mModule = Object.lookup "module" query
-          mDecl = Object.lookup "decl" query
-      in case mModule, mDecl of
-        Just moduleName, Just declName -> Unified.getDeclarationUsage db moduleName declName
-        _, _ -> ok "{ \"error\": \"module and decl query params required\" }"
-    V2GetModuleSource ->
-      case Object.lookup "module" query of
-        Just moduleName -> Unified.getModuleSource db moduleName
-        Nothing -> ok "{ \"error\": \"module query param required\" }"
-    V2GetSourceLocation ->
-      case Object.lookup "module" query of
-        Just moduleName -> Unified.getSourceLocation db moduleName
-        Nothing -> ok "{ \"error\": \"module query param required\" }"
-    V2Annotations -> case method of
-      Get -> Annotations.list db query
-      Post -> do
-        bodyStr <- toString body
-        Annotations.create db bodyStr
-      Options -> ok' corsHeaders ""
-      _ -> ok "{ \"error\": \"Method not allowed\" }"
-    V2Annotation annId -> case method of
-      Get -> Annotations.get db annId
-      Patch -> do
-        bodyStr <- toString body
-        Annotations.update db annId bodyStr
-      Options -> ok' corsHeaders ""
-      _ -> ok "{ \"error\": \"Method not allowed\" }"
-    V2Report -> Annotations.report db
-    V2ListProjects -> Projects.listProjects db
-    V2ValidatePath -> case method of
-      Post -> do
-        bodyStr <- toString body
-        Projects.validatePath bodyStr
-      Options -> ok' corsHeaders ""
-      _ -> ok "{ \"error\": \"Method not allowed\" }"
-    V2LoadProject -> case method of
-      Post -> do
-        bodyStr <- toString body
-        Projects.loadProject db bodyStr dbPath
-      Options -> ok' corsHeaders ""
-      _ -> ok "{ \"error\": \"Method not allowed\" }"
-    V2DeleteProject projectId -> case method of
-      Delete -> Projects.deleteProject db projectId
-      Options -> ok' corsHeaders ""
-      _ -> ok "{ \"error\": \"Method not allowed\" }"
-    Health -> ok "OK"
+    case r of
+      V2Stats -> Unified.getStats db
+      V2ListPackages -> Unified.listPackages db mProject
+      V2UnusedPackages -> Unified.listUnusedPackages db mProject
+      V2GetPackage pkgId -> Unified.getPackage db pkgId
+      V2ListModules -> Unified.listModules db mProject
+      V2GetModule modId -> Unified.getModule db modId
+      V2GetModuleDeclarations modId -> Unified.getModuleDeclarations db modId
+      V2GetModuleImports modId -> Unified.getModuleImports db modId
+      V2GetModuleCalls modId -> Unified.getModuleCalls db modId
+      V2GetModuleReexports modId -> Unified.getModuleReexports db modId
+      V2GetAllImports -> Unified.getAllImports db
+      V2GetAllCalls -> Unified.getAllCalls db
+      V2GetModuleDeclarationStats -> Unified.getModuleDeclarationStats db
+      V2GetModuleStructuralComplexity -> Unified.getModuleStructuralComplexity db
+      V2ListNamespaces -> Unified.listNamespaces db
+      V2GetNamespace nsPath -> Unified.getNamespace db nsPath
+      V2NamespaceTree -> Unified.getNamespaceTree db
+      V2NamespacePackages -> Unified.getNamespacePackages db
+      V2SearchDeclarations q -> Unified.searchDeclarations db q
+      V2Search q -> Unified.searchAll db q
+      V2PolyglotSummary -> Unified.getPolyglotSummary db
+      V2TypeClassStats -> Unified.getTypeClassStats db
+      V2GitStatus -> Unified.getGitStatus
+      V2GetDeclarationUsage ->
+        let mModule = Object.lookup "module" query
+            mDecl = Object.lookup "decl" query
+        in case mModule, mDecl of
+          Just moduleName, Just declName -> Unified.getDeclarationUsage db moduleName declName
+          _, _ -> ok "{ \"error\": \"module and decl query params required\" }"
+      V2GetModuleSource ->
+        case Object.lookup "module" query of
+          Just moduleName -> Unified.getModuleSource db moduleName
+          Nothing -> ok "{ \"error\": \"module query param required\" }"
+      V2GetSourceLocation ->
+        case Object.lookup "module" query of
+          Just moduleName -> Unified.getSourceLocation db moduleName
+          Nothing -> ok "{ \"error\": \"module query param required\" }"
+      V2Annotations -> case method of
+        Get -> Annotations.list db query
+        Post -> do
+          bodyStr <- toString body
+          Annotations.create db bodyStr
+        Options -> ok' corsHeaders ""
+        _ -> ok "{ \"error\": \"Method not allowed\" }"
+      V2Annotation annId -> case method of
+        Get -> Annotations.get db annId
+        Patch -> do
+          bodyStr <- toString body
+          Annotations.update db annId bodyStr
+        Options -> ok' corsHeaders ""
+        _ -> ok "{ \"error\": \"Method not allowed\" }"
+      V2Report -> Annotations.report db
+      V2ListProjects -> Projects.listProjects db
+      V2ValidatePath -> case method of
+        Post -> do
+          bodyStr <- toString body
+          Projects.validatePath bodyStr
+        Options -> ok' corsHeaders ""
+        _ -> ok "{ \"error\": \"Method not allowed\" }"
+      V2LoadProject -> case method of
+        Post -> do
+          bodyStr <- toString body
+          Projects.loadProject dbRef bodyStr dbPath
+        Options -> ok' corsHeaders ""
+        _ -> ok "{ \"error\": \"Method not allowed\" }"
+      V2DeleteProject projectId -> case method of
+        Delete -> Projects.deleteProject db projectId
+        Options -> ok' corsHeaders ""
+        _ -> ok "{ \"error\": \"Method not allowed\" }"
+      Health -> ok "OK"

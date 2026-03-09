@@ -51,6 +51,8 @@ type Input =
   , isAppPackage :: Boolean                  -- True for app packages (Main entry point)
   , purityData :: Maybe PackagePurity        -- For purity peek overlay
   , purityPeek :: Boolean                    -- True while P key held (show overlay)
+  , complexityData :: Maybe (Map String Loader.ModuleStructuralComplexity)  -- For coupling score coloring
+  , complexityPeek :: Boolean               -- True while C key held (show coupling scores)
   }
 
 -- | Output to parent
@@ -158,11 +160,13 @@ handleAction = case _ of
         clusterChanged = (input.clusterData <#> _.packageName) /= (lastInput.clusterData <#> _.packageName)
         purityChanged = (input.purityData <#> _.packageName) /= (lastInput.purityData <#> _.packageName)
         purityPeekChanged = input.purityPeek /= lastInput.purityPeek
+        complexityChanged = (input.complexityData <#> Map.size) /= (lastInput.complexityData <#> Map.size)
+        complexityPeekChanged = input.complexityPeek /= lastInput.complexityPeek
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
-    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged || reachabilityChanged || peekChanged || clusterChanged || purityChanged || purityPeekChanged) do
+    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged || reachabilityChanged || peekChanged || clusterChanged || purityChanged || purityPeekChanged || complexityChanged || complexityPeekChanged) do
       log $ "[ModuleTreemapEnrichedViz] Input changed, re-rendering"
       renderTreemap input
 
@@ -211,6 +215,8 @@ renderTreemap input = do
     , isAppPackage: input.isAppPackage
     , purityData: input.purityData
     , purityPeek: input.purityPeek
+    , complexityData: input.complexityData
+    , complexityPeek: input.complexityPeek
     }
     pkgModules
     pkgImports

@@ -38,9 +38,12 @@ data Scene
   | DeclarationDetail String String String  -- Single declaration detail (pkg, module, decl)
   | ModuleSignatureMap String String -- Full-screen signature treemap (pkg, module)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
+  | NamespaceTree                   -- Horizontal tidy tree of module namespace hierarchy
   | AnnotationReport                -- Interactive annotation report view
   | ProjectManagement               -- Project onboarding / management screen
   | ProjectAnatomy                  -- Project anatomy: workspace/direct/transitive beeswarm
+  | StructuralDecomp                -- Biconnected component decomposition of module graph
+  | ModuleStructure String String   -- Declaration-level decomposition (pkg, module)
 
 derive instance eqScene :: Eq Scene
 
@@ -54,9 +57,12 @@ instance showScene :: Show Scene where
   show (DeclarationDetail pkg mod decl) = "DeclarationDetail(" <> pkg <> "," <> mod <> "," <> decl <> ")"
   show (ModuleSignatureMap pkg mod) = "ModuleSignatureMap(" <> pkg <> "," <> mod <> ")"
   show TypeClassGrid = "TypeClassGrid"
+  show NamespaceTree = "NamespaceTree"
   show AnnotationReport = "AnnotationReport"
   show ProjectManagement = "ProjectManagement"
   show ProjectAnatomy = "ProjectAnatomy"
+  show StructuralDecomp = "StructuralDecomp"
+  show (ModuleStructure pkg mod) = "ModuleStructure(" <> pkg <> "," <> mod <> ")"
 
 -- | Get the parent scene for back navigation
 parentScene :: Scene -> Scene
@@ -70,9 +76,12 @@ parentScene = case _ of
   DeclarationDetail pkg mod _ -> ModuleSignatureMap pkg mod  -- Back to signature map (primary module view)
   ModuleSignatureMap pkg _ -> PkgTreemap pkg                -- Back to package treemap
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
+  NamespaceTree -> GalaxyTreemap           -- Namespace tree returns to galaxy
   AnnotationReport -> GalaxyTreemap        -- Report view returns to galaxy
   ProjectManagement -> ProjectManagement   -- Root-level, no parent
   ProjectAnatomy -> ProjectAnatomy         -- Root-level, no parent
+  StructuralDecomp -> GalaxyTreemap       -- Cross-cutting view returns to galaxy
+  ModuleStructure pkg mod -> ModuleSignatureMap pkg mod  -- Back to module sig map
 
 -- | A segment in the breadcrumb trail
 type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
@@ -87,7 +96,10 @@ sceneBreadcrumbs = case _ of
   GalaxyTreemap       -> [reg]
   GalaxyBeeswarm      -> [reg]
   TypeClassGrid       -> [reg]
+  NamespaceTree       -> [reg, { kind: "", label: "Namespaces", scene: NamespaceTree }]
   AnnotationReport    -> [reg, { kind: "", label: "Report", scene: AnnotationReport }]
+  StructuralDecomp    -> [reg, { kind: "", label: "Structure", scene: StructuralDecomp }]
+  ModuleStructure p m -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Structure", scene: ModuleStructure p m }]
   SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
   PkgTreemap pkg      -> [reg, pkgSeg pkg]
   PkgModuleBeeswarm p -> [reg, pkgSeg p]
@@ -113,9 +125,12 @@ sceneLabel = case _ of
   DeclarationDetail _ _ decl -> decl
   ModuleSignatureMap _ mod -> shortModuleName mod
   TypeClassGrid -> "Type Classes"
+  NamespaceTree -> "Namespace Tree"
   AnnotationReport -> "Annotations"
   ProjectManagement -> "Projects"
   ProjectAnatomy -> "Project Anatomy"
+  StructuralDecomp -> "Structural Decomposition"
+  ModuleStructure _ mod -> shortModuleName mod <> " Structure"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
 isGalaxyScene :: Scene -> Boolean
@@ -154,9 +169,20 @@ sceneFromString str
   | str == "GalaxyBeeswarm" = Just GalaxyBeeswarm
   | str == "SolarSwarm" = Just SolarSwarm
   | str == "TypeClassGrid" = Just TypeClassGrid
+  | str == "NamespaceTree" = Just NamespaceTree
   | str == "AnnotationReport" = Just AnnotationReport
   | str == "ProjectManagement" = Just ProjectManagement
   | str == "ProjectAnatomy" = Just ProjectAnatomy
+  | str == "StructuralDecomp" = Just StructuralDecomp
+  | String.take 16 str == "ModuleStructure(" =
+      let inner = String.drop 16 str
+          content = String.take (String.length inner - 1) inner
+      in case String.indexOf (String.Pattern ",") content of
+          Just idx ->
+            let pkg = String.take idx content
+                mod = String.drop (idx + 1) content
+            in Just (ModuleStructure pkg mod)
+          Nothing -> Nothing
   | String.take 11 str == "PkgTreemap(" =
       let inner = String.drop 11 str
           pkg = String.take (String.length inner - 1) inner  -- Remove trailing ")"

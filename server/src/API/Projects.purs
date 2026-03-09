@@ -17,7 +17,9 @@ import Prelude
 import Data.Maybe (Maybe(..))
 import Data.Nullable (Nullable, toMaybe, toNullable)
 import Data.Traversable (for_)
-import Database.DuckDB (Database, queryAll, exec)
+import Database.DuckDB (Database, queryAll, exec, closeDB, openDB)
+import Effect.Ref (Ref)
+import Effect.Ref as Ref
 import Effect (Effect)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
@@ -102,17 +104,24 @@ validatePath bodyStr =
 -- =============================================================================
 
 -- | Load a project by running the Rust loader synchronously.
--- | The execSync call blocks the Node event loop, which is intentional:
--- | it prevents concurrent DuckDB access issues.
-loadProject :: Database -> String -> String -> Aff Response
-loadProject _db bodyStr dbPath =
+-- | Closes the DuckDB connection first (exclusive lock), runs the loader,
+-- | then reopens and updates the shared Ref so all routes use the fresh handle.
+loadProject :: Ref Database -> String -> String -> Aff Response
+loadProject dbRef bodyStr dbPath =
   case toMaybe (parseProjectBody bodyStr) of
     Nothing -> badRequest' jsonHeaders """{"error":"Invalid JSON body"}"""
     Just body ->
       case toMaybe (validateLoadFields body) of
         Nothing -> badRequest' jsonHeaders """{"error":"Missing required field: path"}"""
         Just v -> do
+          -- Close DB to release DuckDB exclusive lock
+          db <- liftEffect $ Ref.read dbRef
+          closeDB db
+          -- Run loader (blocks event loop — no concurrent requests possible)
           result <- liftEffect (runLoaderSync v.path dbPath (toNullable (toMaybe v.name)) (toNullable (toMaybe v.label)))
+          -- Reopen DB and update shared ref
+          newDb <- openDB dbPath
+          liftEffect $ Ref.write newDb dbRef
           ok' jsonHeaders result
 
 -- =============================================================================

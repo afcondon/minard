@@ -132,16 +132,16 @@
               "halogen": ">=7.0.0 <8.0.0"
             },
             {
-              "hylograph-layout": ">=0.1.0 <0.2.0"
+              "hylograph-layout": "*"
             },
             {
-              "hylograph-selection": ">=0.2.0 <0.3.0"
+              "hylograph-selection": ">=0.3.1 <0.4.0"
             },
             {
-              "hylograph-simulation": ">=0.2.0 <0.3.0"
+              "hylograph-simulation": ">=0.3.0 <0.4.0"
             },
             {
-              "hylograph-simulation-halogen": ">=0.2.0 <0.3.0"
+              "hylograph-simulation-halogen": ">=0.3.0 <0.4.0"
             },
             {
               "integers": ">=6.0.0 <7.0.0"
@@ -314,7 +314,11 @@
         }
       }
     },
-    "extra_packages": {}
+    "extra_packages": {
+      "hylograph-layout": {
+        "path": "/Users/afc/work/afc-work/purescript-hylograph-libs/purescript-hylograph-layout"
+      }
+    }
   },
   "packages": {
     "aff": {
@@ -1007,8 +1011,8 @@
     },
     "hylograph-graph": {
       "type": "registry",
-      "version": "0.1.0",
-      "integrity": "sha256-0sfy5Z0U+X78LNRO/H6xJwi45ECaHr/FF2SNNcpAhew=",
+      "version": "0.2.0",
+      "integrity": "sha256-TmOOCHbF8KbOLHegvKINm635hoGI2tTgSdiYCOeqSXM=",
       "dependencies": [
         "arrays",
         "either",
@@ -1026,9 +1030,8 @@
       ]
     },
     "hylograph-layout": {
-      "type": "registry",
-      "version": "0.1.0",
-      "integrity": "sha256-KyDQFHRo++cD0y1/2e3Zgyve1PmWeUILoYHBQiNtBpY=",
+      "type": "local",
+      "path": "/Users/afc/work/afc-work/purescript-hylograph-libs/purescript-hylograph-layout",
       "dependencies": [
         "arrays",
         "either",
@@ -1050,8 +1053,8 @@
     },
     "hylograph-selection": {
       "type": "registry",
-      "version": "0.2.0",
-      "integrity": "sha256-KTsBdX9zmTupTFnqxQ9hs6UjxrM+gCj0y4u9YYzY3+8=",
+      "version": "0.3.1",
+      "integrity": "sha256-02bb82LelMRywIs5ZvTtwLCnBh8VXrjbSpx+to2nRl8=",
       "dependencies": [
         "arrays",
         "colors",
@@ -1088,8 +1091,8 @@
     },
     "hylograph-simulation": {
       "type": "registry",
-      "version": "0.2.0",
-      "integrity": "sha256-kjyoBdf50CPbhzIL1FMwmC+2+jxnY59uf8rWkNJG1No=",
+      "version": "0.3.0",
+      "integrity": "sha256-rGVrcFiVaEiIEoIRkmr4aDtfgSZSjzROVVDOL9m05X4=",
       "dependencies": [
         "aff",
         "arrays",
@@ -1131,8 +1134,8 @@
     },
     "hylograph-simulation-halogen": {
       "type": "registry",
-      "version": "0.2.0",
-      "integrity": "sha256-/OLFj2jwlBcTgVDaBf3PjBzqjMoTjRUXDkt+5nTfe2Q=",
+      "version": "0.3.0",
+      "integrity": "sha256-p/0rV/uZWnk6VdKvWouxOJXnuHSxqNtQtDnLrBr8Gbg=",
       "dependencies": [
         "effect",
         "halogen-subscriptions",
