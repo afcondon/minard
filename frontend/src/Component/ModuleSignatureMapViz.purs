@@ -17,6 +17,7 @@ module CE2.Component.ModuleSignatureMapViz
 import Prelude
 
 import Data.Array as Array
+import Data.Foldable (foldl, foldMap)
 import Data.Int (toNumber) as Int
 import Data.Map (Map)
 import Data.Map as Map
@@ -40,11 +41,17 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 
+import CE2.Data.Decomposition as Dec
 import CE2.Data.Loader as Loader
+import CE2.Data.SubDeclarationAnalysis as SDA
+import CE2.Component.ModuleStructureViz as StructViz
 import CE2.Viz.DeclarationArcDiagram as ArcDiagram
+import CE2.Viz.DeclarationLayerDiagram as LayerDiagram
 import CE2.Viz.DOMHelpers as DOMHelpers
 import CE2.Viz.ModuleSignatureMap as MSM
 import CE2.Viz.SignatureTree as SigTree
+
+import Hylograph.HATS.InterpreterTick (clearContainer, rerender)
 
 -- | Open a URI in the browser (used for vscode:// links)
 foreign import openUri :: String -> Effect Unit
@@ -76,6 +83,10 @@ type Slot = H.Slot Query Output
 
 data Query a = NoQuery a
 
+data DiagramMode = LayerView | ArcView | DeclStructureView | ConcernClusterView
+
+derive instance eqDiagramMode :: Eq DiagramMode
+
 type State =
   { initialized :: Boolean
   , actionListener :: Maybe (HS.Listener Action)
@@ -84,7 +95,16 @@ type State =
   , annotations :: Array Loader.V2Annotation
   , measuredCells :: Array MSM.MeasuredCell
   , arcLayout :: Maybe ArcDiagram.ArcLayout
+  , layerLayout :: Maybe LayerDiagram.LayerLayout
+  , diagramMode :: DiagramMode
+  , diagramReason :: String
   , hoveredArcNode :: Maybe String
+  , hoveredLayerNode :: Maybe String
+  , declGraph :: Maybe (Dec.SimpleGraph String)
+  , declDecomp :: Maybe Dec.DecompInfo
+  , subDeclAnalysis :: Maybe SDA.SubDeclAnalysis
+  , subDeclGraph :: Maybe (Dec.SimpleGraph String)
+  , structureRendered :: Boolean   -- track if HATS structure views need re-rendering
   , replyingTo :: Maybe Int
   , replyText :: String
   , collapsedThreads :: Set Int
@@ -98,6 +118,8 @@ data Action
   | CellClicked (Effect Unit)
   | ArcNodeHovered (Maybe String)
   | ArcNodeClicked String
+  | LayerNodeHovered (Maybe String)
+  | SwitchDiagramMode DiagramMode
   | ScrollToLanes
   | OpenInEditor
   | ConfirmAnnotation Int
@@ -134,7 +156,16 @@ initialState input =
   , annotations: input.annotations
   , measuredCells: []
   , arcLayout: Nothing
+  , layerLayout: Nothing
+  , diagramMode: LayerView
+  , diagramReason: ""
   , hoveredArcNode: Nothing
+  , hoveredLayerNode: Nothing
+  , declGraph: Nothing
+  , declDecomp: Nothing
+  , subDeclAnalysis: Nothing
+  , subDeclGraph: Nothing
+  , structureRendered: false
   , replyingTo: Nothing
   , replyText: ""
   , collapsedThreads: Set.empty
@@ -168,7 +199,7 @@ render state =
     -- (which use innerHTML prop) into annotation columns when annotations
     -- arrive asynchronously and shift the children array.
     [ HH.div [] (renderAnnotationHeader state)
-    , renderArcDiagram state
+    , renderDiagramSection state
     , if Array.null state.lanes && state.initialized then
         HH.div
           [ HP.style "display:flex;align-items:center;justify-content:center;height:100%;color:#999;font-size:14px;" ]
@@ -178,21 +209,72 @@ render state =
     ]
 
 -- =============================================================================
+-- Diagram section: tabs + selected view
+-- =============================================================================
+
+renderDiagramSection :: forall m. State -> H.ComponentHTML Action () m
+renderDiagramSection state =
+  let
+    hasArc = case state.arcLayout of
+      Just l -> not (Array.null l.edges)
+      Nothing -> false
+    hasLayer = case state.layerLayout of
+      Just l -> not (Array.null l.nodes)
+      Nothing -> false
+    hasCalls = hasArc || hasLayer  -- module has internal call structure
+  in
+    if not hasCalls then
+      HH.div [] []  -- placeholder for stable child structure
+    else
+      HH.div [ HP.style "margin: 8px 0 12px 0;" ]
+        [ -- Tab bar + reason
+          HH.div [ HP.style "display: flex; align-items: baseline; gap: 0; margin-bottom: 8px; border-bottom: 1px solid #ddd;" ]
+            [ renderDiagramTab "Layers" LayerView state.diagramMode
+            , renderDiagramTab "Arcs" ArcView state.diagramMode
+            , renderDiagramTab "Declarations" DeclStructureView state.diagramMode
+            , renderDiagramTab "Concerns" ConcernClusterView state.diagramMode
+            , if state.diagramReason /= "" then
+                HH.span [ HP.style "margin-left: 12px; font-size: 10px; color: #999; font-style: italic;" ]
+                  [ HH.text state.diagramReason ]
+              else HH.text ""
+            ]
+        , -- Active diagram
+          case state.diagramMode of
+            LayerView -> renderLayerDiagram state
+            ArcView -> renderArcDiagram state
+            DeclStructureView ->
+              HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px;" ] []
+            ConcernClusterView ->
+              HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px;" ] []
+        ]
+
+renderDiagramTab :: forall m. String -> DiagramMode -> DiagramMode -> H.ComponentHTML Action () m
+renderDiagramTab label mode activeMode =
+  let
+    isActive = mode == activeMode
+    style = "padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid "
+      <> (if isActive then "#888; background: #fff; color: #333; border-bottom: 1px solid #fff; margin-bottom: -1px; z-index: 1;"
+          else "#ddd; background: #f5f5f5; color: #888; border-bottom: 1px solid #ddd;")
+      <> " border-radius: 3px 3px 0 0;"
+  in
+    HH.div
+      [ HP.style style
+      , HE.onClick \_ -> SwitchDiagramMode mode
+      ]
+      [ HH.text label ]
+
+-- =============================================================================
 -- Arc Diagram renderer
 -- =============================================================================
 
 renderArcDiagram :: forall m. State -> H.ComponentHTML Action () m
 renderArcDiagram state = case state.arcLayout of
-  Nothing ->
-    -- Empty placeholder to maintain three-child structure
-    HH.div [] []
+  Nothing -> emptyMessage "No intra-module function calls between exported declarations"
   Just layout
-    | Array.null layout.edges ->
-        HH.div [] []
+    | Array.null layout.edges -> emptyMessage "No intra-module function calls between exported declarations"
     | otherwise ->
         let declCount = Array.length state.lastInput.declarations
-        in HH.div
-          [ HP.style "margin: 8px 0 12px 0;" ]
+        in HH.div []
           [ svgElem "svg"
               [ sa "viewBox" ("0 0 " <> show layout.width <> " " <> show layout.height)
               , sa "width" "100%"
@@ -205,6 +287,150 @@ renderArcDiagram state = case state.arcLayout of
               )
           , renderCtaBar declCount
           ]
+
+-- =============================================================================
+-- Layer Diagram renderer
+-- =============================================================================
+
+emptyMessage :: forall m w. String -> HH.HTML w m
+emptyMessage msg = HH.div [ HP.style "padding: 24px; color: #999; font-size: 12px; text-align: center;" ] [ HH.text msg ]
+
+renderLayerDiagram :: forall m. State -> H.ComponentHTML Action () m
+renderLayerDiagram state = case state.layerLayout of
+  Nothing -> emptyMessage "No internal call hierarchy — declarations do not call each other"
+  Just layout
+    | Array.null layout.nodes -> emptyMessage "No internal call hierarchy — declarations do not call each other"
+    | otherwise ->
+        HH.div []
+          [ svgElem "svg"
+              [ sa "viewBox" ("0 0 " <> show layout.width <> " " <> show layout.height)
+              , sa "width" "100%"
+              , sa "preserveAspectRatio" "xMidYMid meet"
+              , HP.style "display: block; border: 1px solid #e5e5e5; border-radius: 4px; background: #fafafa;"
+              ]
+              ( renderLayerBands layout
+              <> (layout.edges <#> renderLayerEdge state layout)
+              <> (layout.nodes <#> renderLayerNode state layout)
+              <> (layout.nodes <#> renderLayerLabel state layout)
+              )
+          ]
+
+-- | Background bands for each layer
+renderLayerBands :: forall m w. LayerDiagram.LayerLayout -> Array (HH.HTML w m)
+renderLayerBands layout =
+  layout.layers <#> \l ->
+    let
+      y = 30.0 + Int.toNumber (layout.maxLayer - l.layer) * 60.0
+      isEven = l.layer `mod` 2 == 0
+    in svgElem "rect"
+      [ sa "x" "0", sa "y" (show y)
+      , sa "width" (show layout.width), sa "height" "60"
+      , sa "fill" (if isEven then "#f8f8f8" else "#fff")
+      , sa "stroke" "none"
+      ] []
+
+renderLayerEdge :: forall m w. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerEdge -> HH.HTML w m
+renderLayerEdge state _layout edge =
+  let
+    isConnected = case state.hoveredLayerNode of
+      Nothing -> true
+      Just hovered -> edge.fromName == hovered || edge.toName == hovered
+    opacity = if isConnected then "0.3" else "0.05"
+    color = if edge.crossesLayers > 1 then "#c05a4e" else "#94a3b8"
+  in svgElem "line"
+    [ sa "x1" (show edge.fromX), sa "y1" (show edge.fromY)
+    , sa "x2" (show edge.toX), sa "y2" (show edge.toY)
+    , sa "stroke" color
+    , sa "stroke-width" "0.8"
+    , sa "stroke-opacity" opacity
+    ] []
+
+renderLayerNode :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action () m
+renderLayerNode state _layout node =
+  let
+    isHovered = state.hoveredLayerNode == Just node.name
+    isConnected = case state.hoveredLayerNode of
+      Nothing -> true
+      Just hovered -> hovered == node.name || layerNodeConnected hovered node.name state.layerLayout
+    r = if isHovered then show (node.r + 2.0) else show node.r
+    opacity = if isConnected then "1" else "0.2"
+    -- Use concern group color if available, otherwise kind-based color
+    fillColor = case concernGroupForDecl node.name state.subDeclAnalysis of
+      Just gi -> StructViz.blockColor gi
+      Nothing -> layerKindColor node.kind node.effectful
+  in svgElem "circle"
+    [ sa "cx" (show node.x), sa "cy" (show node.y)
+    , sa "r" r
+    , sa "fill" fillColor
+    , sa "stroke" "#fff", sa "stroke-width" "0.8"
+    , sa "opacity" opacity
+    , sa "cursor" "pointer"
+    , HE.onMouseEnter \_ -> LayerNodeHovered (Just node.name)
+    , HE.onMouseLeave \_ -> LayerNodeHovered Nothing
+    ] []
+
+renderLayerLabel :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action () m
+renderLayerLabel state _layout node =
+  let
+    isConnected = case state.hoveredLayerNode of
+      Nothing -> true
+      Just hovered -> hovered == node.name || layerNodeConnected hovered node.name state.layerLayout
+    opacity = if isConnected then "1" else "0.15"
+    label = if SCU.length node.name > 18 then SCU.take 17 node.name <> "\x2026" else node.name
+    labelY = node.y + node.r + 12.0
+    labelColor = case concernGroupForDecl node.name state.subDeclAnalysis of
+      Just gi -> StructViz.blockColor gi
+      Nothing -> if node.effectful then "#d97706" else "#2563eb"
+  in svgElem "text"
+    [ sa "x" (show node.x), sa "y" (show labelY)
+    , sa "text-anchor" "start"
+    , sa "font-size" "8px"
+    , sa "font-family" "system-ui, sans-serif"
+    , sa "fill" labelColor
+    , sa "opacity" opacity
+    , sa "pointer-events" "none"
+    , sa "transform" ("rotate(-45," <> show node.x <> "," <> show labelY <> ")")
+    ]
+    [ HH.text label ]
+
+-- | Look up the concern group index for a declaration name.
+-- | First checks if the declaration contains a case expression (direct match).
+-- | Then checks which concern group's branches reference this declaration most.
+concernGroupForDecl :: String -> Maybe SDA.SubDeclAnalysis -> Maybe Int
+concernGroupForDecl _name Nothing = Nothing
+concernGroupForDecl name (Just analysis) =
+  -- Direct match: declaration contains a case expression
+  case Array.findIndex (\ce -> ce.functionName == name) analysis.caseExpressions of
+    Just i -> Just i
+    Nothing ->
+      -- Indirect: find which group's branches reference this declaration most
+      let
+        groupRefs = Array.mapWithIndex (\i ce ->
+          { group: i
+          , refs: foldl (\acc br -> if Set.member name br.identifierRefs then acc + 1 else acc) 0 ce.branches
+          }) analysis.caseExpressions
+        best = foldl (\acc gr -> if gr.refs > acc.refs then gr else acc) { group: 0, refs: 0 } groupRefs
+      in if best.refs > 0 then Just best.group else Nothing
+
+-- | Color by declaration kind, with effectful distinction
+layerKindColor :: String -> Boolean -> String
+layerKindColor kind effectful
+  | effectful = "#d97706"  -- amber for effectful
+  | otherwise = case kind of
+      "value" -> "#3b82f6"
+      "data" -> "#10b981"
+      "newtype" -> "#10b981"
+      "type_synonym" -> "#8b5cf6"
+      "type_class" -> "#f59e0b"
+      _ -> "#6b7280"
+
+-- | Check if two nodes are connected in the layer layout
+layerNodeConnected :: String -> String -> Maybe LayerDiagram.LayerLayout -> Boolean
+layerNodeConnected a b = case _ of
+  Nothing -> false
+  Just layout -> Array.any (\e ->
+    (e.fromName == a && e.toName == b) || (e.fromName == b && e.toName == a)
+    ) layout.edges
 
 renderArcEdge :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcEdge -> H.ComponentHTML Action () m
 renderArcEdge state _layout edge =
@@ -689,6 +915,12 @@ handleAction = case _ of
     H.modify_ _ { actionListener = Just listener, initialized = true }
 
     renderSignatureMap input
+    -- If heuristic chose a HATS-based view, trigger its imperative render
+    afterState <- H.get
+    case afterState.diagramMode of
+      DeclStructureView -> renderDeclStructure
+      ConcernClusterView -> renderConcernClusters
+      _ -> pure unit
 
   Receive input -> do
     state <- H.get
@@ -697,8 +929,15 @@ handleAction = case _ of
     let callsChanged = Map.size input.functionCalls /= Map.size state.lastInput.functionCalls
     H.modify_ _ { lastInput = input, annotations = input.annotations }
     when ((changed || callsChanged) && state.initialized) do
-      H.modify_ _ { lanes = [], measuredCells = [], arcLayout = Nothing }
+      H.modify_ _ { lanes = [], measuredCells = [], arcLayout = Nothing, layerLayout = Nothing
+                   , declGraph = Nothing, declDecomp = Nothing
+                   , subDeclAnalysis = Nothing, subDeclGraph = Nothing }
       renderSignatureMap input
+      afterState' <- H.get
+      case afterState'.diagramMode of
+        DeclStructureView -> renderDeclStructure
+        ConcernClusterView -> renderConcernClusters
+        _ -> pure unit
 
   Finalize -> do
     log "[ModuleSignatureMapViz] Finalizing"
@@ -715,6 +954,20 @@ handleAction = case _ of
 
   ArcNodeClicked declName -> do
     liftEffect $ DOMHelpers.scrollElementIntoView ("sig-cell-" <> declName)
+
+  LayerNodeHovered mName -> do
+    H.modify_ _ { hoveredLayerNode = mName }
+
+  SwitchDiagramMode mode -> do
+    -- Clear HATS containers to prevent stale SVGs showing alongside new view
+    liftEffect do
+      clearContainer "#decl-structure-container"
+      clearContainer "#concern-cluster-container"
+    H.modify_ _ { diagramMode = mode, structureRendered = false }
+    case mode of
+      DeclStructureView -> renderDeclStructure
+      ConcernClusterView -> renderConcernClusters
+      _ -> pure unit
 
   ScrollToLanes -> do
     state <- H.get
@@ -788,14 +1041,176 @@ renderSignatureMap input = do
     }
     input.declarations
   let newLanes = MSM.groupIntoLanes measured
-  let arcLay = ArcDiagram.computeLayout
-        { moduleName: input.moduleName
+  let layoutInput = { moduleName: input.moduleName
         , declarations: input.declarations
         , functionCalls: input.functionCalls
         , layoutWidth: 900.0
         }
+  let arcLay = ArcDiagram.computeLayout layoutInput
   let mArcLayout = if Array.null arcLay.edges then Nothing else Just arcLay
-  H.modify_ _ { lanes = newLanes, measuredCells = measured, arcLayout = mArcLayout }
+  let layerLay = LayerDiagram.computeLayout layoutInput
+  let mLayerLayout = if Array.null layerLay.nodes then Nothing else Just layerLay
+  -- Pre-compute declaration call graph for structure views
+  -- Include ALL internal names from call edges, not just exported declarations
+  let allCalls = foldMap identity input.functionCalls
+      internalCalls = Array.filter (\c -> not c.isCrossModule && c.calleeModule == input.moduleName && c.callerName /= c.calleeName) allCalls
+      -- Start with exported declarations, then add any names from call graph edges
+      exportedNames = Set.fromFoldable $ input.declarations <#> _.name
+      callNames = foldl (\acc c -> Set.insert c.callerName (Set.insert c.calleeName acc)) Set.empty internalCalls
+      declNames = Set.union exportedNames callNames
+      edges = foldl (\acc call ->
+        if Set.member call.callerName declNames && Set.member call.calleeName declNames
+        then
+          Map.alter (Just <<< Set.insert call.calleeName <<< fromMaybe Set.empty) call.callerName
+            (Map.alter (Just <<< Set.insert call.callerName <<< fromMaybe Set.empty) call.calleeName acc)
+        else acc
+      ) Map.empty internalCalls
+      declGraph = { nodes: Set.toUnfoldable declNames :: Array String, edges }
+      declDecomp = Dec.analyzeGraph declGraph
+  -- Eagerly fetch source and compute concern analysis (for color linkage across tabs)
+  { mAnalysis, mSubDeclGraph } <- do
+    result <- liftAff $ Loader.fetchModuleSource input.moduleName
+    case result of
+      Left _ -> pure { mAnalysis: Nothing, mSubDeclGraph: Nothing }
+      Right src -> do
+        let analysis = SDA.analyzeModuleSource src.source
+        let { declarations: subDecls, internalCalls: subCalls } = SDA.branchesToDeclGraph analysis.allBranches
+        let subNames = Set.fromFoldable $ subDecls <#> _.name
+        let subEdges = foldl (\acc call ->
+              if Set.member call.callerName subNames && Set.member call.calleeName subNames
+              then
+                Map.alter (Just <<< Set.insert call.calleeName <<< fromMaybe Set.empty) call.callerName
+                  (Map.alter (Just <<< Set.insert call.callerName <<< fromMaybe Set.empty) call.calleeName acc)
+              else acc
+            ) Map.empty subCalls
+        let subGraph = { nodes: Set.toUnfoldable subNames :: Array String, edges: subEdges }
+        pure { mAnalysis: Just analysis, mSubDeclGraph: Just subGraph }
+  -- Heuristic: choose default tab based on what's most informative
+  let hasConcerns = case mAnalysis of
+        Just a -> Array.length a.caseExpressions > 0
+        Nothing -> false
+  let { mode: defaultMode, reason } = chooseDiagramMode mLayerLayout declDecomp hasConcerns
+  H.modify_ _ { lanes = newLanes, measuredCells = measured
+               , arcLayout = mArcLayout, layerLayout = mLayerLayout
+               , declGraph = Just declGraph, declDecomp = Just declDecomp
+               , subDeclAnalysis = mAnalysis, subDeclGraph = mSubDeclGraph
+               , diagramMode = defaultMode, diagramReason = reason }
+
+-- =============================================================================
+-- Diagram mode heuristic
+-- =============================================================================
+
+-- | Choose the most informative default diagram tab for a module.
+chooseDiagramMode :: Maybe LayerDiagram.LayerLayout -> Dec.DecompInfo -> Boolean -> { mode :: DiagramMode, reason :: String }
+chooseDiagramMode mLayerLayout declDecomp hasConcerns =
+  let
+    nBlocks = declDecomp.metrics.biconnectedComponentCount
+    nAPs = declDecomp.metrics.articulationPointCount
+    maxBlock = declDecomp.metrics.maxBlockSize
+    nDecls = Map.size declDecomp.nodeBlock
+    tree = declDecomp.metrics.treelikeness
+  in
+    -- Large dominant block with low treelikeness → tangled, show concerns (if available)
+    if maxBlock > 10 && tree < 0.3 && hasConcerns then
+      { mode: ConcernClusterView
+      , reason: show maxBlock <> "-node tangled core — concern separation may help"
+      }
+    -- Multiple tightly-coupled clusters with articulation points → show structure
+    else if nBlocks > 2 && nAPs > 0 then
+      { mode: DeclStructureView
+      , reason: show nBlocks <> " clusters connected by " <> show nAPs <> " hub declaration" <> (if nAPs > 1 then "s" else "")
+      }
+    -- Deep layer hierarchy → show layers
+    else case mLayerLayout of
+      Just l | l.maxLayer >= 3 ->
+        { mode: LayerView
+        , reason: show (l.maxLayer + 1) <> " call depth levels — layered internal architecture"
+        }
+      Just l | l.maxLayer > 0 ->
+        { mode: LayerView
+        , reason: show (Array.length l.nodes) <> " declarations across " <> show (l.maxLayer + 1) <> " layers"
+        }
+      _ ->
+        { mode: ArcView
+        , reason: show nDecls <> " declarations — flat structure"
+        }
+
+-- =============================================================================
+-- Structure view rendering (HATS-based, rendered imperatively into containers)
+-- =============================================================================
+
+-- | Render the declaration structure (biconnected components) into a HATS container
+renderDeclStructure :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
+renderDeclStructure = do
+  state <- H.get
+  case state.declGraph, state.declDecomp of
+    Just graph, Just info
+      | Array.null graph.nodes -> liftEffect do
+          clearContainer "#decl-structure-container"
+          DOMHelpers.setInnerHTML "#decl-structure-container"
+            "<div style=\"padding: 24px; color: #999; font-size: 12px; text-align: center;\">No internal call graph — declarations do not call each other</div>"
+      | otherwise -> do
+          let kindMap = foldl (\acc d -> Map.insert d.name d.kind acc) Map.empty state.lastInput.declarations
+          liftEffect do
+            clearContainer "#decl-structure-container"
+            _ <- rerender "#decl-structure-container" (StructViz.callGraphTree graph info kindMap)
+            pure unit
+    _, _ -> liftEffect do
+      DOMHelpers.setInnerHTML "#decl-structure-container"
+        "<div style=\"padding: 24px; color: #999; font-size: 12px; text-align: center;\">No declaration data available</div>"
+
+-- | Render the concern-clustered graph into a HATS container.
+-- | Fetches module source if not yet analyzed.
+renderConcernClusters :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
+renderConcernClusters = do
+  state <- H.get
+  case state.subDeclAnalysis of
+    Just analysis -> renderConcernGraph analysis
+    Nothing -> do
+      -- Fetch source and analyze
+      result <- liftAff $ Loader.fetchModuleSource state.lastInput.moduleName
+      case result of
+        Left err ->
+          log $ "[ConcernClusters] Failed to fetch source: " <> err
+        Right src -> do
+          let analysis = SDA.analyzeModuleSource src.source
+          log $ "[ConcernClusters] " <> state.lastInput.moduleName <> ": "
+              <> show (Array.length analysis.allBranches) <> " branches, "
+              <> show (Array.length analysis.caseExpressions) <> " case expressions"
+          -- Build sub-declaration graph
+          let { declarations, internalCalls } = SDA.branchesToDeclGraph analysis.allBranches
+          let declNames = Set.fromFoldable $ declarations <#> _.name
+          let edges = foldl (\acc call ->
+                if Set.member call.callerName declNames && Set.member call.calleeName declNames
+                then
+                  Map.alter (Just <<< Set.insert call.calleeName <<< fromMaybe Set.empty) call.callerName
+                    (Map.alter (Just <<< Set.insert call.callerName <<< fromMaybe Set.empty) call.calleeName acc)
+                else acc
+              ) Map.empty internalCalls
+          let graph = { nodes: Set.toUnfoldable declNames :: Array String, edges }
+          H.modify_ _ { subDeclAnalysis = Just analysis, subDeclGraph = Just graph }
+          renderConcernGraph analysis
+
+renderConcernGraph :: forall m. MonadAff m => SDA.SubDeclAnalysis -> H.HalogenM State Action () Output m Unit
+renderConcernGraph analysis = do
+  state <- H.get
+  if Array.null analysis.caseExpressions then
+    liftEffect do
+      clearContainer "#concern-cluster-container"
+      DOMHelpers.setInnerHTML "#concern-cluster-container"
+        "<div style=\"padding: 24px; color: #999; font-size: 12px; text-align: center;\">No case expressions found — concern clustering requires pattern-matching branches (e.g. handleAction)</div>"
+  else case state.subDeclGraph of
+    Just graph ->
+      liftEffect do
+        clearContainer "#concern-cluster-container"
+        _ <- rerender "#concern-cluster-container"
+               (StructViz.concernClusteredTree graph analysis.caseExpressions)
+        pure unit
+    Nothing -> pure unit
+
+-- =============================================================================
+-- Declaration click callback
+-- =============================================================================
 
 -- | Create a declaration click callback that notifies the Halogen listener
 makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit

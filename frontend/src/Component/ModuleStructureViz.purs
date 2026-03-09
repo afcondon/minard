@@ -11,6 +11,10 @@ module CE2.Component.ModuleStructureViz
   , Output(..)
   , Query
   , Slot
+  -- Reusable HATS rendering functions
+  , callGraphTree
+  , concernClusteredTree
+  , blockColor
   ) where
 
 import Prelude
@@ -120,6 +124,99 @@ kindColor = case _ of
   "type_class" -> "#f59e0b"
   "foreign" -> "#6b7280"
   _ -> "#6b7280"
+
+-- =============================================================================
+-- Force layout for group centers
+-- =============================================================================
+
+type ForceNode = { x :: Number, y :: Number, vx :: Number, vy :: Number }
+
+-- | Simple force-directed layout for N group centers.
+-- | Attraction between linked groups (weighted by cross-edge count),
+-- | repulsion between all pairs, collision avoidance by group radius,
+-- | and centering force.
+forceLayoutGroups
+  :: { width :: Number, height :: Number, centerX :: Number, centerY :: Number }
+  -> Map.Map (Tuple Int Int) Int  -- cross-group edge weights
+  -> Array Number                 -- group radii
+  -> Array ForceNode              -- initial positions
+  -> Int                          -- iterations
+  -> Array ForceNode
+forceLayoutGroups bounds weights radii initial iterations =
+  let
+    n = Array.length initial
+    alpha0 = 1.0
+    decay = alpha0 / Int.toNumber iterations
+
+    step :: Number -> Array ForceNode -> Array ForceNode
+    step alpha nodes =
+      let
+        -- Repulsion: all pairs push apart
+        repelled = mapWithIndex (\i ni ->
+          foldl (\acc j ->
+            if i == j then acc
+            else case nodes Array.!! j of
+              Nothing -> acc
+              Just nj ->
+                let
+                  dx = ni.x - nj.x
+                  dy = ni.y - nj.y
+                  dist = max 1.0 (Number.sqrt (dx * dx + dy * dy))
+                  -- Collision: minimum distance = sum of radii + gap
+                  ri = fromMaybe 30.0 (radii Array.!! i)
+                  rj = fromMaybe 30.0 (radii Array.!! j)
+                  minDist = ri + rj + 60.0
+                  force = if dist < minDist
+                    then 2000.0 / (dist * dist) + (minDist - dist) * 1.5
+                    else 2000.0 / (dist * dist)
+                in acc { vx = acc.vx + dx / dist * force * alpha
+                       , vy = acc.vy + dy / dist * force * alpha
+                       }
+          ) ni (Array.range 0 (n - 1))
+        ) nodes
+
+        -- Attraction: linked groups pull together, weighted
+        attracted = mapWithIndex (\i ni ->
+          foldl (\acc (Tuple (Tuple gi gj) w) ->
+            let targetIdx = if gi == i then gj else if gj == i then gi else -1
+            in if targetIdx < 0 then acc
+               else case nodes Array.!! targetIdx of
+                 Nothing -> acc
+                 Just nj ->
+                   let
+                     dx = nj.x - ni.x
+                     dy = nj.y - ni.y
+                     dist = max 1.0 (Number.sqrt (dx * dx + dy * dy))
+                     strength = Int.toNumber w * 0.08
+                   in acc { vx = acc.vx + dx / dist * strength * alpha
+                          , vy = acc.vy + dy / dist * strength * alpha
+                          }
+          ) ni (Map.toUnfoldable weights :: Array (Tuple (Tuple Int Int) Int))
+        ) repelled
+
+        -- Centering force
+        centered = map (\ni ->
+          ni { vx = ni.vx + (bounds.centerX - ni.x) * 0.01 * alpha
+             , vy = ni.vy + (bounds.centerY - ni.y) * 0.01 * alpha
+             }
+        ) attracted
+
+        -- Apply velocity with damping, clamp to bounds
+        margin = 60.0
+        moved = map (\ni ->
+          let
+            x = max margin (min (bounds.width - margin) (ni.x + ni.vx * 0.4))
+            y = max margin (min (bounds.height - margin) (ni.y + ni.vy * 0.4))
+          in ni { x = x, y = y, vx = ni.vx * 0.6, vy = ni.vy * 0.6 }
+        ) centered
+      in moved
+
+    -- Run iterations with decaying alpha
+    result = foldl (\nodes i ->
+      let alpha = max 0.01 (alpha0 - Int.toNumber i * decay)
+      in step alpha nodes
+    ) initial (Array.range 0 (iterations - 1))
+  in result
 
 -- =============================================================================
 -- Component
@@ -849,15 +946,15 @@ loadSubDeclarationAnalysis = do
           renderSubDeclGraph analysis
 
 renderSubDeclGraph :: forall m. MonadAff m => SDA.SubDeclAnalysis -> H.HalogenM State Action () Output m Unit
-renderSubDeclGraph _analysis = do
+renderSubDeclGraph analysis = do
   state <- H.get
-  case state.subDeclGraph, state.subDeclDecomp of
-    Just graph, Just info -> do
+  case state.subDeclGraph of
+    Just graph -> do
       liftEffect do
         clearContainer "#module-structure-graph"
-        _ <- rerender "#module-structure-graph" (callGraphTree graph info [] state.input)
+        _ <- rerender "#module-structure-graph" (concernClusteredTree graph analysis.caseExpressions)
         pure unit
-    _, _ -> pure unit
+    _ -> pure unit
 
 computeAndRender :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
 computeAndRender = do
@@ -875,7 +972,8 @@ computeAndRender = do
 
   liftEffect do
     clearContainer "#module-structure-graph"
-    _ <- rerender "#module-structure-graph" (callGraphTree graph info crossEdges state.input)
+    let kindMap = foldl (\acc d -> Map.insert d.name d.kind acc) Map.empty state.input.declarations
+    _ <- rerender "#module-structure-graph" (callGraphTree graph info kindMap)
     pure unit
 
 -- =============================================================================
@@ -917,19 +1015,183 @@ buildCallGraph input =
     { graph, crossEdges: crossEdges <> incomingCross }
 
 -- =============================================================================
--- HATS Rendering: Call Graph
+-- HATS Rendering: Concern-Clustered Graph
 -- =============================================================================
 
-callGraphTree :: Dec.SimpleGraph String -> Dec.DecompInfo -> Array { from :: String, to :: String, toModule :: String } -> Input -> Tree
-callGraphTree graph info _crossEdges input =
+-- | Render branches clustered by parent case expression.
+-- | Each case expression gets a circle of nodes; cross-group edges show the seams.
+concernClusteredTree :: Dec.SimpleGraph String -> Array SDA.CaseExprInfo -> Tree
+concernClusteredTree graph caseExprs =
+  let
+    nGroups = Array.length caseExprs
+    width = 900.0
+    height = 600.0
+    centerX = width / 2.0
+    centerY = height / 2.0
+
+    -- Build branch → group index map for edge weight computation
+    branchGroup = foldl (\acc (Tuple gi ce) ->
+      foldl (\a branch -> Map.insert branch.name gi a) acc ce.branches
+    ) Map.empty (mapWithIndex Tuple caseExprs)
+
+    -- Compute cross-group edge weights: how many edges between group i and group j
+    crossGroupWeights = foldl (\acc name ->
+      let targets = fromMaybe Set.empty (Map.lookup name graph.edges)
+      in foldl (\a tgt ->
+        if name < tgt then
+          case Map.lookup name branchGroup, Map.lookup tgt branchGroup of
+            Just gi, Just gj | gi /= gj ->
+              let key = Tuple (min gi gj) (max gi gj)
+              in Map.alter (Just <<< (_ + 1) <<< fromMaybe 0) key a
+            _, _ -> a
+        else a
+      ) acc (Set.toUnfoldable targets :: Array String)
+    ) (Map.empty :: Map.Map (Tuple Int Int) Int) graph.nodes
+
+    -- Group radii (needed for collision avoidance)
+    groupRadii = mapWithIndex (\_ ce ->
+      max 25.0 (Number.sqrt (Int.toNumber (Array.length ce.branches)) * 18.0)
+    ) caseExprs
+
+    -- Force-directed layout for group centers
+    -- Initialize in a circle, then iterate
+    mainRadius = min (width * 0.32) (height * 0.32)
+    initialPositions = mapWithIndex (\i _ce ->
+      let angle = 2.0 * Number.pi * Int.toNumber i / Int.toNumber (max nGroups 1) - Number.pi / 2.0
+      in { x: centerX + mainRadius * Number.cos angle
+         , y: centerY + mainRadius * Number.sin angle
+         , vx: 0.0, vy: 0.0
+         }
+    ) caseExprs
+
+    -- Run 200 iterations of force simulation
+    groupCenters = map (\p -> { x: p.x, y: p.y }) $
+      forceLayoutGroups { width, height, centerX, centerY }
+        crossGroupWeights groupRadii initialPositions 200
+
+    -- Build node positions: each group's nodes in a circle around its center
+    nodePositions = foldl (\acc (Tuple gi ce) ->
+      let
+        center = fromMaybe { x: centerX, y: centerY } (groupCenters Array.!! gi)
+        n = Array.length ce.branches
+        r = max 25.0 (Number.sqrt (Int.toNumber n) * 18.0)
+      in foldl (\a (Tuple ni branch) ->
+        let
+          angle = 2.0 * Number.pi * Int.toNumber ni / Int.toNumber (max n 1) - Number.pi / 2.0
+          x = center.x + r * Number.cos angle
+          y = center.y + r * Number.sin angle
+        in Map.insert branch.name { x, y, group: gi } a
+      ) acc (mapWithIndex Tuple ce.branches)
+    ) Map.empty (mapWithIndex Tuple caseExprs)
+
+    -- Group background circles (hulls)
+    groupBgs = Array.mapMaybe (\(Tuple gi ce) ->
+      case groupCenters Array.!! gi of
+        Nothing -> Nothing
+        Just center ->
+          let
+            n = Array.length ce.branches
+            r = max 25.0 (Number.sqrt (Int.toNumber n) * 18.0) + 14.0
+          in Just $ elem Circle
+            [ staticNum "cx" center.x, staticNum "cy" center.y
+            , staticNum "r" r
+            , staticStr "fill" (blockColor gi)
+            , staticNum "fill-opacity" 0.08
+            , staticStr "stroke" (blockColor gi)
+            , staticNum "stroke-opacity" 0.2
+            , staticNum "stroke-width" 1.5
+            ] []
+    ) (mapWithIndex Tuple caseExprs)
+
+    -- Group labels (case expression function name)
+    groupLabels = Array.mapMaybe (\(Tuple gi ce) ->
+      case groupCenters Array.!! gi of
+        Nothing -> Nothing
+        Just center ->
+          let
+            n = Array.length ce.branches
+            r = max 25.0 (Number.sqrt (Int.toNumber n) * 18.0) + 22.0
+          in Just $ elem Text
+            [ staticNum "x" center.x, staticNum "y" (center.y - r)
+            , staticStr "text-anchor" "middle", staticStr "font-size" "11px"
+            , staticStr "font-weight" "600"
+            , staticStr "fill" (blockColor gi), staticStr "font-family" "system-ui, sans-serif"
+            , staticStr "textContent" $ ce.functionName <> " (" <> show n <> ")"
+            ] []
+    ) (mapWithIndex Tuple caseExprs)
+
+    -- Edges: intra-group = curves through group center; inter-group = straight lines
+    edgeElems = Array.concatMap (\name ->
+      let targets = fromMaybe Set.empty (Map.lookup name graph.edges)
+      in Array.mapMaybe (\tgt ->
+        if name < tgt then
+          case Map.lookup name nodePositions, Map.lookup tgt nodePositions of
+            Just p1, Just p2 ->
+              let sameGroup = p1.group == p2.group
+              in if sameGroup then
+                -- Intra-group: quadratic bezier curved through group center
+                case groupCenters Array.!! p1.group of
+                  Just gc ->
+                    let
+                      -- Control point biased toward group center
+                      cpx = (p1.x + p2.x) / 2.0 * 0.4 + gc.x * 0.6
+                      cpy = (p1.y + p2.y) / 2.0 * 0.4 + gc.y * 0.6
+                      d = "M" <> show p1.x <> "," <> show p1.y
+                        <> " Q" <> show cpx <> "," <> show cpy
+                        <> " " <> show p2.x <> "," <> show p2.y
+                    in Just $ elem Path
+                      [ staticStr "d" d
+                      , staticStr "fill" "none"
+                      , staticStr "stroke" (blockColor p1.group)
+                      , staticNum "stroke-width" 0.5
+                      , staticNum "stroke-opacity" 0.12
+                      ] []
+                  Nothing -> Nothing
+              else
+                -- Inter-group: straight line, colored by source group
+                Just $ elem Line
+                  [ staticNum "x1" p1.x, staticNum "y1" p1.y
+                  , staticNum "x2" p2.x, staticNum "y2" p2.y
+                  , staticStr "stroke" (blockColor p1.group)
+                  , staticNum "stroke-width" 1.0
+                  , staticNum "stroke-opacity" 0.25
+                  ] []
+            _, _ -> Nothing
+        else Nothing
+      ) (Set.toUnfoldable targets :: Array String)
+    ) graph.nodes
+
+    -- Node circles (no labels — hover to be added later)
+    nodeElems = Array.mapMaybe (\name ->
+      case Map.lookup name nodePositions of
+        Nothing -> Nothing
+        Just pos ->
+          Just $ elem Circle
+            [ staticNum "cx" pos.x, staticNum "cy" pos.y, staticNum "r" 5.0
+            , staticStr "fill" (blockColor pos.group)
+            , staticStr "stroke" "#fff", staticNum "stroke-width" 0.8
+            ] []
+    ) graph.nodes
+  in
+    elem SVG
+      [ staticStr "viewBox" $ "0 0 " <> show width <> " " <> show height
+      , staticStr "width" "100%"
+      , staticStr "preserveAspectRatio" "xMidYMid meet"
+      , staticStr "style" "background: #fafafa; border-radius: 4px;"
+      ]
+      (groupBgs <> edgeElems <> nodeElems <> groupLabels)
+
+-- =============================================================================
+-- HATS Rendering: Call Graph (Declaration view)
+-- =============================================================================
+
+callGraphTree :: Dec.SimpleGraph String -> Dec.DecompInfo -> Map.Map String String -> Tree
+callGraphTree graph info kindMap =
   let
     -- Layout: pure computation from hylograph-layout
     bctLayout = BCT.layout BCT.defaultConfig graph
     width = bctLayout.width
     height = bctLayout.height
-
-    -- Build declaration kind lookup
-    kindMap = foldl (\acc d -> Map.insert d.name d.kind acc) Map.empty input.declarations
 
     -- Block background circles
     blockBgs = Array.mapMaybe (\(Tuple blockIdx bl) ->
