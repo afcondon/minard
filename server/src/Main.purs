@@ -4,7 +4,7 @@ import Prelude
 
 import Data.Generic.Rep (class Generic)
 import Data.Int (fromString) as Int
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Database.DuckDB as DB
 import Effect (Effect)
 import Effect.Aff (launchAff_)
@@ -154,8 +154,21 @@ main = launchAff_ do
   """
   liftEffect $ log "Annotations table ready"
 
+  -- Resolve default snapshot from current git HEAD (try hash first, then branch name)
+  headHash <- liftEffect Unified.getGitHeadHash
+  branchName <- liftEffect Unified.getGitBranchName
+  liftEffect $ log $ "Git HEAD: " <> headHash <> " (" <> branchName <> ")"
+  mByHash <- if headHash == "" then pure Nothing
+    else Unified.findSnapshotIdByHash db headHash
+  mDefaultSnapshot <- case mByHash of
+    Just _ -> pure mByHash
+    Nothing -> if branchName == "" then pure Nothing
+      else Unified.findSnapshotIdByRef db branchName
+  liftEffect $ log $ "Default snapshot: " <> show mDefaultSnapshot
+  defaultSnapshotRef <- liftEffect $ Ref.new mDefaultSnapshot
+
   liftEffect do
-    _ <- serve { port: 3000 } { route, router: mkRouter dbRef }
+    _ <- serve { port: 3000 } { route, router: mkRouter dbRef defaultSnapshotRef }
     log "Minard API server running on http://localhost:3000"
     log ""
     log "Endpoints:"
@@ -194,10 +207,13 @@ main = launchAff_ do
     log "  GET /health                              - Health check"
   where
   corsHeaders = headers { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
-  mkRouter dbRef { route: r, query, method, body } = do
+  mkRouter dbRef defaultSnapshotRef { route: r, query, method, body } = do
     db <- liftEffect $ Ref.read dbRef
+    mDefaultSnapshot <- liftEffect $ Ref.read defaultSnapshotRef
     let mProject = Object.lookup "project" query >>= Int.fromString
-    let mSnapshot = Object.lookup "snapshot" query >>= Int.fromString
+    let mSnapshot = case Object.lookup "snapshot" query >>= Int.fromString of
+          Just s -> Just s
+          Nothing -> mDefaultSnapshot
     case r of
       V2Stats -> Unified.getStats db
       V2ListPackages -> Unified.listPackages db mProject mSnapshot

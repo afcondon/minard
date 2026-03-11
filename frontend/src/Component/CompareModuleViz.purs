@@ -27,6 +27,7 @@ import Data.Const (Const)
 import Data.Either (Either(..))
 import Data.Tuple (Tuple(..))
 import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.Class.Console (log)
 import Effect.Class (liftEffect)
 import Halogen as H
 import Halogen.HTML as HH
@@ -366,12 +367,17 @@ loadBothColumns = do
 
   -- Left (before) column: fetch from snapshot API if beforeSnapshotId is set
   leftData <- case input.beforeSnapshotId of
-    Just snapId -> computeColumnFromSnapshot snapId input.leftPackage input.leftModule
+    Just snapId -> do
+      log $ "[CompareModuleViz] Loading BEFORE from snapshot " <> show snapId
+      d <- computeColumnFromSnapshot snapId input.leftPackage input.leftModule
+      log $ "[CompareModuleViz] BEFORE: " <> show (Array.length d.decls) <> " decls"
+      pure d
     Nothing -> computeColumn input input.leftPackage input.leftModule
   H.modify_ _ { left = Just leftData }
 
   -- Right (after) column: always from current data
   rightData <- computeColumn input input.rightPackage input.rightModule
+  log $ "[CompareModuleViz] AFTER: " <> show (Array.length rightData.decls) <> " decls"
   H.modify_ _ { right = Just rightData }
 
   renderHATSPanels

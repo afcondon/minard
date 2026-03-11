@@ -1,6 +1,8 @@
 // FFI for API.Unified
 // JSON builders for unified schema API responses
 
+export const extractSnapshotId = (row) => Number(row.id);
+
 // =============================================================================
 // Stats
 // =============================================================================
@@ -645,6 +647,22 @@ export const buildDeclarationUsageJson = (callerRows) => (calleeRows) => {
 import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { resolve, join } from 'path';
+
+export const getGitHeadHash = () => {
+  try {
+    return execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+  } catch (_) {
+    return '';
+  }
+};
+
+export const getGitBranchName = () => {
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+  } catch (_) {
+    return '';
+  }
+};
 
 /**
  * Get current git status and map file paths to module names.

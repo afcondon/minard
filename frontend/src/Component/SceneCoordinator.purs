@@ -24,7 +24,7 @@ import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe, isNothing)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set as Set
 import Data.String as String
 import Data.Tuple (Tuple(..))
@@ -1605,11 +1605,8 @@ handleAction = case _ of
           snapshotsResult <- liftAff Loader.fetchSnapshots
           case snapshotsResult of
             Right snapshots | Array.length snapshots > 1 -> do
-              -- Prefer a snapshot without git_ref (historical/archived), else fall back to oldest
-              let mBefore = case Array.find (\s -> isNothing s.gitRef) snapshots of
-                    Just x -> Just x
-                    Nothing -> Array.last snapshots
-              case mBefore of
+              -- Pick the snapshot with the fewest modules as "before" (the older/simpler state)
+              case Array.sortBy (\a b -> compare a.moduleCount b.moduleCount) snapshots # Array.head of
                 Just before -> do
                   log $ "[SceneCoordinator] Comparing with snapshot " <> show before.id <> " (" <> fromMaybe "?" before.label <> ")"
                   handleAction (NavigateTo (CompareSnapshots pkg mod before.id))

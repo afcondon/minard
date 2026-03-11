@@ -48,6 +48,10 @@ module API.Unified
   , getNamespacePackages
   -- Snapshots
   , listSnapshots
+  , getGitHeadHash
+  , getGitBranchName
+  , findSnapshotIdByHash
+  , findSnapshotIdByRef
   ) where
 
 import Prelude
@@ -109,7 +113,7 @@ listPackages db mProject mSnapshot = do
       SELECT COALESCE(?,
         (SELECT s.id FROM snapshots s
          WHERE s.project_id = (SELECT project_id FROM target)
-         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+         ORDER BY s.id DESC LIMIT 1)
       ) as snapshot_id
     )
     SELECT
@@ -254,7 +258,7 @@ listModules db mProject mSnapshot = do
       SELECT COALESCE(?,
         (SELECT s.id FROM snapshots s
          WHERE s.project_id = (SELECT project_id FROM target)
-         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+         ORDER BY s.id DESC LIMIT 1)
       ) as snapshot_id
     )
     SELECT
@@ -733,7 +737,7 @@ getAllImports db mProject mSnapshot = do
       SELECT COALESCE(?,
         (SELECT s.id FROM snapshots s
          WHERE s.project_id = (SELECT project_id FROM target)
-         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+         ORDER BY s.id DESC LIMIT 1)
       ) as snapshot_id
     ),
     active_packages AS (
@@ -786,7 +790,7 @@ getAllCalls db mProject mSnapshot = do
       SELECT COALESCE(?,
         (SELECT s.id FROM snapshots s
          WHERE s.project_id = (SELECT project_id FROM target)
-         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+         ORDER BY s.id DESC LIMIT 1)
       ) as snapshot_id
     ),
     active_packages AS (
@@ -1219,3 +1223,38 @@ listSnapshots db mProject = do
   ok' jsonHeaders json
 
 foreign import buildSnapshotsJson :: Array Foreign -> String
+
+-- =============================================================================
+-- Git HEAD hash (for resolving default snapshot)
+-- =============================================================================
+
+foreign import getGitHeadHash :: Effect String
+
+-- | Find the snapshot ID matching a given git hash for project 1
+findSnapshotIdByHash :: Database -> String -> Aff (Maybe Int)
+findSnapshotIdByHash db hash = do
+  rows <- queryAllParams db """
+    SELECT id FROM snapshots
+    WHERE project_id = (SELECT MIN(id) FROM projects)
+      AND git_hash = ?
+  """ [unsafeToForeign hash]
+  pure $ case firstRow rows of
+    Just r -> Just (extractSnapshotId r)
+    Nothing -> Nothing
+
+foreign import extractSnapshotId :: Foreign -> Int
+
+foreign import getGitBranchName :: Effect String
+
+-- | Find the snapshot ID matching a git_ref (branch name)
+findSnapshotIdByRef :: Database -> String -> Aff (Maybe Int)
+findSnapshotIdByRef db ref = do
+  rows <- queryAllParams db """
+    SELECT id FROM snapshots
+    WHERE project_id = (SELECT MIN(id) FROM projects)
+      AND git_ref = ?
+    ORDER BY id DESC LIMIT 1
+  """ [unsafeToForeign ref]
+  pure $ case firstRow rows of
+    Just r -> Just (extractSnapshotId r)
+    Nothing -> Nothing
