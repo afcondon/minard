@@ -246,7 +246,9 @@ main = launchAff_ do
           _, _ -> ok "{ \"error\": \"module and decl query params required\" }"
       V2GetModuleSource ->
         case Object.lookup "module" query of
-          Just moduleName -> Unified.getModuleSource db moduleName
+          Just moduleName -> case Object.lookup "snapshot" query >>= Int.fromString of
+            Just snapId -> Unified.getModuleSourceFromSnapshot db moduleName snapId
+            Nothing -> Unified.getModuleSource db moduleName
           Nothing -> ok "{ \"error\": \"module query param required\" }"
       V2GetSourceLocation ->
         case Object.lookup "module" query of

@@ -42,6 +42,7 @@ module API.Unified
   , getDeclarationUsage
   -- Module source
   , getModuleSource
+  , getModuleSourceFromSnapshot
   -- Source location (file path only, for editor integration)
   , getSourceLocation
   -- Namespace packages mapping
@@ -1134,6 +1135,29 @@ getModuleSource db moduleName = do
 
 foreign import buildModuleSourceJson :: Foreign -> Effect (Nullable String)
 
+-- | Read source for a module from a specific snapshot's project repo_path
+getModuleSourceFromSnapshot :: Database -> String -> Int -> Aff Response
+getModuleSourceFromSnapshot db moduleName snapshotId = do
+  rows <- queryAllParams db """
+    SELECT d.source_span, pr.repo_path
+    FROM declarations d
+    JOIN modules m ON d.module_id = m.id
+    JOIN package_versions pv ON m.package_version_id = pv.id
+    JOIN snapshot_packages sp ON sp.package_version_id = pv.id
+    JOIN snapshots s ON s.id = sp.snapshot_id
+    JOIN projects pr ON pr.id = s.project_id
+    WHERE m.name = ? AND sp.snapshot_id = ?
+      AND d.source_span IS NOT NULL
+    LIMIT 1
+  """ [unsafeToForeign moduleName, unsafeToForeign snapshotId]
+  case firstRow rows of
+    Nothing -> notFound
+    Just row -> do
+      json <- liftEffect $ buildModuleSourceJson row
+      case toMaybe json of
+        Nothing -> notFound
+        Just j -> ok' jsonHeaders j
+
 -- =============================================================================
 -- GET /api/v2/source-location?module=<name>
 -- =============================================================================
@@ -1197,9 +1221,6 @@ foreign import buildNamespacePackagesJson :: Array Foreign -> String
 listSnapshots :: Database -> Maybe Int -> Aff Response
 listSnapshots db mProject = do
   rows <- queryAllParams db """
-    WITH target AS (
-      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
-    )
     SELECT
       s.id,
       s.project_id,
@@ -1216,9 +1237,9 @@ listSnapshots db mProject = do
        JOIN package_versions pv2 ON sp2.package_version_id = pv2.id
        WHERE sp2.snapshot_id = s.id AND pv2.source = 'workspace') as workspace_package_count
     FROM snapshots s
-    WHERE s.project_id = (SELECT project_id FROM target)
+    WHERE (? IS NULL OR s.project_id = ?)
     ORDER BY s.id DESC
-  """ [unsafeToForeign (toNullable mProject)]
+  """ [unsafeToForeign (toNullable mProject), unsafeToForeign (toNullable mProject)]
   let json = buildSnapshotsJson rows
   ok' jsonHeaders json
 

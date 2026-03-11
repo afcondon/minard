@@ -1605,12 +1605,23 @@ handleAction = case _ of
           snapshotsResult <- liftAff Loader.fetchSnapshots
           case snapshotsResult of
             Right snapshots | Array.length snapshots > 1 -> do
-              -- Pick the snapshot with the fewest modules as "before" (the older/simpler state)
-              case Array.sortBy (\a b -> compare a.moduleCount b.moduleCount) snapshots # Array.head of
+              -- Find the "current" snapshot (most modules among high ws-pkg-count snapshots)
+              let withWsPkgs = Array.filter (\s -> s.workspacePackageCount > 1) snapshots
+              let currentSnap = Array.sortBy (\a b -> compare b.moduleCount a.moduleCount) withWsPkgs # Array.head
+              let currentGitHash = currentSnap >>= _.gitHash
+              -- "Before" candidates: different git hash (different commit = different worktree)
+              -- with workspace packages > 1 (real projects, not small sub-packages)
+              let candidates = Array.filter (\s ->
+                    s.gitHash /= currentGitHash && s.workspacePackageCount > 1
+                  ) snapshots
+              case Array.sortBy (\a b -> compare b.moduleCount a.moduleCount) candidates # Array.head of
                 Just before -> do
-                  log $ "[SceneCoordinator] Comparing with snapshot " <> show before.id <> " (" <> fromMaybe "?" before.label <> ")"
+                  log $ "[SceneCoordinator] Comparing with snapshot " <> show before.id
+                    <> " (" <> fromMaybe "?" before.label <> ")"
+                    <> " hash=" <> fromMaybe "?" (before.gitHash <#> String.take 7)
                   handleAction (NavigateTo (CompareSnapshots pkg mod before.id))
-                Nothing -> pure unit
+                Nothing ->
+                  log "[SceneCoordinator] No suitable 'before' snapshot found (need a different commit)"
             Right _ ->
               log "[SceneCoordinator] Only one snapshot available — load a second snapshot to compare"
             Left err ->

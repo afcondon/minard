@@ -1,6 +1,6 @@
 -- | Compare Module Visualization
 -- |
--- | Side-by-side 2×4 grid showing all 4 diagram types (Layers, Arcs,
+-- | Side-by-side 2×3 grid showing 3 diagram types (Layers,
 -- | Declarations, Concerns) for two modules simultaneously. Designed for
 -- | before/after refactoring comparison or comparing a module with its
 -- | extracted counterpart.
@@ -131,15 +131,11 @@ render state =
     , sectionLabel "Layers"
     , renderLayerPanel state.left
     , renderLayerPanel state.right
-    -- Row 2: Arcs
-    , sectionLabel "Arcs"
-    , renderArcPanel state.left
-    , renderArcPanel state.right
-    -- Row 3: Declarations
+    -- Row 2: Declarations
     , sectionLabel "Declarations"
     , HH.div [ HP.id "compare-left-decl", HP.style panelStyle ] []
     , HH.div [ HP.id "compare-right-decl", HP.style panelStyle ] []
-    -- Row 4: Concerns
+    -- Row 3: Concerns
     , sectionLabel "Concerns"
     , HH.div [ HP.id "compare-left-concern", HP.style panelStyle ] []
     , HH.div [ HP.id "compare-right-concern", HP.style panelStyle ] []
@@ -505,7 +501,24 @@ computeColumnFromSnapshot snapshotId pkgName modName = do
   let graph = { nodes: Array.fromFoldable declNames, edges }
   let decomp = if Array.null graph.nodes then Nothing else Just (Dec.analyzeGraph graph)
 
-  -- Skip concern analysis for before-snapshot (source not on disk)
+  -- Concern analysis from snapshot source (via worktree repo_path)
+  { mAnalysis, mSubDeclGraph } <- do
+    result <- liftAff $ Loader.fetchModuleSourceForSnapshot modName snapshotId
+    case result of
+      Left _ -> pure { mAnalysis: Nothing, mSubDeclGraph: Nothing }
+      Right src -> do
+        let analysis = SDA.analyzeModuleSource src.source
+        let { declarations: subDecls, internalCalls: subCalls } = SDA.branchesToDeclGraph analysis.allBranches
+        let subNames = Set.fromFoldable $ subDecls <#> _.name
+        let subEdges = foldl (\acc call ->
+              if Set.member call.callerName subNames && Set.member call.calleeName subNames
+              then Map.alter (Just <<< Set.insert call.calleeName <<< fromMaybe Set.empty) call.callerName
+                     (Map.alter (Just <<< Set.insert call.callerName <<< fromMaybe Set.empty) call.calleeName acc)
+              else acc
+            ) Map.empty subCalls
+        let subGraph = { nodes: Array.fromFoldable subNames :: Array String, edges: subEdges }
+        pure { mAnalysis: Just analysis, mSubDeclGraph: Just subGraph }
+
   pure
     { moduleName: modName
     , packageName: pkgName
@@ -515,8 +528,8 @@ computeColumnFromSnapshot snapshotId pkgName modName = do
     , arcLayout: mArcLayout
     , declGraph: Just graph
     , declDecomp: decomp
-    , subDeclAnalysis: Nothing  -- Source not available for old snapshot
-    , subDeclGraph: Nothing
+    , subDeclAnalysis: mAnalysis
+    , subDeclGraph: mSubDeclGraph
     }
 
 -- =============================================================================

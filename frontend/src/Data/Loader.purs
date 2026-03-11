@@ -69,6 +69,7 @@ module CE2.Data.Loader
     -- Module Source
   , ModuleSource
   , fetchModuleSource
+  , fetchModuleSourceForSnapshot
     -- Annotations
   , V2Annotation
   , V2AnnotationsResponse
@@ -1591,6 +1592,13 @@ type ModuleSource =
 fetchModuleSource :: String -> Aff (Either String ModuleSource)
 fetchModuleSource moduleName = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/module-source?module=" <> moduleName)
+  pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- | Fetch module source from a specific snapshot (worktree on disk)
+fetchModuleSourceForSnapshot :: String -> Int -> Aff (Either String ModuleSource)
+fetchModuleSourceForSnapshot moduleName snapshotId = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/module-source?module="
+    <> moduleName <> "&snapshot=" <> show snapshotId)
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
 
 -- =============================================================================

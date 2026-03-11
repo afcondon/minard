@@ -233,7 +233,6 @@ renderDiagramSection state =
         [ -- Tab bar + reason
           HH.div [ HP.style "display: flex; align-items: baseline; gap: 0; margin-bottom: 8px; border-bottom: 1px solid #ddd;" ]
             [ renderDiagramTab "Layers" LayerView state.diagramMode
-            , renderDiagramTab "Arcs" ArcView state.diagramMode
             , renderDiagramTab "Declarations" DeclStructureView state.diagramMode
             , renderDiagramTab "Concerns" ConcernClusterView state.diagramMode
             , if state.diagramReason /= "" then
@@ -244,7 +243,7 @@ renderDiagramSection state =
         , -- Active diagram
           case state.diagramMode of
             LayerView -> renderLayerDiagram state
-            ArcView -> renderArcDiagram state
+            ArcView -> renderLayerDiagram state  -- Arc tab removed; fall back to layers
             DeclStructureView ->
               HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px;" ] []
             ConcernClusterView ->
@@ -1143,7 +1142,7 @@ chooseDiagramMode mLayerLayout declDecomp hasConcerns =
         , reason: show (Array.length l.nodes) <> " declarations across " <> show (l.maxLayer + 1) <> " layers"
         }
       _ ->
-        { mode: ArcView
+        { mode: LayerView
         , reason: show nDecls <> " declarations — flat structure"
         }
 
