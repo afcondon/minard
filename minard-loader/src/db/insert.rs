@@ -535,6 +535,27 @@ pub fn delete_old_snapshots(conn: &Connection, project_id: i64, keep_snapshot_id
     Ok(count)
 }
 
+/// Delete a snapshot for a specific project+commit (for re-loading at the same commit).
+/// Preserves snapshots from other commits for multi-snapshot comparison.
+/// Returns true if a snapshot was deleted.
+pub fn delete_snapshot_for_commit(conn: &Connection, project_id: i64, git_hash: &str) -> Result<bool> {
+    let result: std::result::Result<i64, _> = conn.query_row(
+        "SELECT id FROM snapshots WHERE project_id = ? AND git_hash = ?",
+        params![project_id, git_hash],
+        |row| row.get(0),
+    );
+
+    match result {
+        Ok(snapshot_id) => {
+            conn.execute("DELETE FROM snapshot_packages WHERE snapshot_id = ?", params![snapshot_id])?;
+            conn.execute("DELETE FROM snapshots WHERE id = ?", params![snapshot_id])?;
+            Ok(true)
+        }
+        Err(duckdb::Error::QueryReturnedNoRows) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Delete all module data for a package version (cascading through child tables).
 /// Used to force-reload workspace packages whose source code has changed.
 pub fn delete_package_module_data(conn: &Connection, package_version_id: i64) -> Result<usize> {

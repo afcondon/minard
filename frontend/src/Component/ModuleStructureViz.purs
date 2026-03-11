@@ -58,6 +58,7 @@ type Input =
   , functionCalls :: Array FunctionCall
   , crossModuleCalls :: Array FunctionCall  -- calls to/from other modules
   , moduleSourceMap :: Map.Map String String  -- moduleName → package source ("workspace"|"registry"|"extra")
+  , siblingModules :: Array String  -- other modules in same package, for compare picker
   }
 
 -- | Simplified declaration info
@@ -75,7 +76,9 @@ type FunctionCall =
   , callCount :: Int
   }
 
-data Output = NavigateToDeclaration String  -- declaration name
+data Output
+  = NavigateToDeclaration String  -- declaration name
+  | CompareWith String            -- compare current module with this sibling module
 
 data Query (a :: Type)
 
@@ -100,6 +103,7 @@ data Action
   | Receive Input
   | SwitchView ViewMode
   | SelectConcernGroup Int
+  | PickCompareModule String  -- user selected a module from the compare dropdown
 
 -- =============================================================================
 -- Block colors
@@ -263,6 +267,7 @@ render state =
                 <> show (Array.length state.input.functionCalls) <> " internal calls, "
                 <> show (Array.length state.input.crossModuleCalls) <> " cross-module"
             ]
+        , renderComparePicker state.input.moduleName state.input.siblingModules
         , renderViewTabs state.viewMode
         ]
     , case state.viewMode of
@@ -299,6 +304,37 @@ render state =
               HH.div [ HP.style "display: flex; align-items: center; justify-content: center; flex: 1; color: #888;" ]
                 [ HH.text "Computing declaration structure..." ]
     ]
+
+-- =============================================================================
+-- Compare picker
+-- =============================================================================
+
+renderComparePicker :: forall m. MonadAff m => String -> Array String -> H.ComponentHTML Action () m
+renderComparePicker currentMod siblings =
+  if Array.null siblings then HH.text ""
+  else
+    let
+      -- Modules sharing a prefix with the current module (e.g. SceneCoordinator.Pure for SceneCoordinator)
+      currentPrefix = currentMod <> "."
+      parentPrefix = case String.lastIndexOf (String.Pattern ".") currentMod of
+        Just idx -> String.take (idx + 1) currentMod
+        Nothing -> ""
+      isRelated m = String.take (String.length currentPrefix) m == currentPrefix
+                 || (parentPrefix /= "" && String.take (String.length parentPrefix) m == parentPrefix)
+      sorted = Array.sortBy (\a b -> compare a b) siblings
+      related = Array.filter isRelated sorted
+      others = Array.filter (not <<< isRelated) sorted
+      optionEl m = HH.option [ HP.value m ] [ HH.text (shortModuleName m) ]
+      separator = HH.option [ HP.value "", HP.disabled true ] [ HH.text "───────────" ]
+    in
+    HH.select
+      [ HP.style "padding: 3px 8px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; color: #555; background: #fff; cursor: pointer;"
+      , HE.onValueInput PickCompareModule
+      ]
+      ( [ HH.option [ HP.value "" ] [ HH.text "Compare with\x2026" ] ]
+      <> (if Array.null related then [] else (related <#> optionEl) <> [separator])
+      <> (others <#> optionEl)
+      )
 
 -- =============================================================================
 -- View tabs
@@ -909,6 +945,9 @@ handleAction = case _ of
           Just i | i == idx -> Nothing  -- Toggle off
           _ -> Just idx
     H.modify_ _ { selectedGroup = newIdx }
+  PickCompareModule modName ->
+    when (modName /= "") do
+      H.raise (CompareWith modName)
 
 loadSubDeclarationAnalysis :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
 loadSubDeclarationAnalysis = do

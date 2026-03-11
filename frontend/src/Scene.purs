@@ -44,6 +44,8 @@ data Scene
   | ProjectAnatomy                  -- Project anatomy: workspace/direct/transitive beeswarm
   | StructuralDecomp                -- Biconnected component decomposition of module graph
   | ModuleStructure String String   -- Declaration-level decomposition (pkg, module)
+  | CompareModules String String String String  -- Before/after comparison (pkg1, mod1, pkg2, mod2)
+  | CompareSnapshots String String Int          -- Cross-snapshot comparison (pkg, module, beforeSnapshotId)
 
 derive instance eqScene :: Eq Scene
 
@@ -63,6 +65,8 @@ instance showScene :: Show Scene where
   show ProjectAnatomy = "ProjectAnatomy"
   show StructuralDecomp = "StructuralDecomp"
   show (ModuleStructure pkg mod) = "ModuleStructure(" <> pkg <> "," <> mod <> ")"
+  show (CompareModules p1 m1 p2 m2) = "CompareModules(" <> p1 <> "," <> m1 <> "," <> p2 <> "," <> m2 <> ")"
+  show (CompareSnapshots p m sid) = "CompareSnapshots(" <> p <> "," <> m <> "," <> show sid <> ")"
 
 -- | Get the parent scene for back navigation
 parentScene :: Scene -> Scene
@@ -82,6 +86,8 @@ parentScene = case _ of
   ProjectAnatomy -> ProjectAnatomy         -- Root-level, no parent
   StructuralDecomp -> GalaxyTreemap       -- Cross-cutting view returns to galaxy
   ModuleStructure pkg mod -> ModuleSignatureMap pkg mod  -- Back to module sig map
+  CompareModules _ _ _ _ -> GalaxyTreemap               -- Compare view returns to galaxy
+  CompareSnapshots p m _ -> ModuleSignatureMap p m      -- Back to the module being compared
 
 -- | A segment in the breadcrumb trail
 type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
@@ -100,6 +106,8 @@ sceneBreadcrumbs = case _ of
   AnnotationReport    -> [reg, { kind: "", label: "Report", scene: AnnotationReport }]
   StructuralDecomp    -> [reg, { kind: "", label: "Structure", scene: StructuralDecomp }]
   ModuleStructure p m -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Structure", scene: ModuleStructure p m }]
+  CompareModules p1 m1 _ m2 -> [reg, pkgSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
+  CompareSnapshots p m _ -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Compare", scene: CompareSnapshots p m 0 }]
   SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
   PkgTreemap pkg      -> [reg, pkgSeg pkg]
   PkgModuleBeeswarm p -> [reg, pkgSeg p]
@@ -131,6 +139,8 @@ sceneLabel = case _ of
   ProjectAnatomy -> "Project Anatomy"
   StructuralDecomp -> "Structural Decomposition"
   ModuleStructure _ mod -> shortModuleName mod <> " Structure"
+  CompareModules _ m1 _ m2 -> shortModuleName m1 <> " vs " <> shortModuleName m2
+  CompareSnapshots _ m _ -> shortModuleName m <> " (Compare)"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
 isGalaxyScene :: Scene -> Boolean

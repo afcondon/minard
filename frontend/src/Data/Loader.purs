@@ -100,6 +100,11 @@ module CE2.Data.Loader
     -- Structural Complexity
   , ModuleStructuralComplexity
   , fetchModuleStructuralComplexity
+    -- Snapshots
+  , V2Snapshot
+  , fetchSnapshots
+  , fetchV2ModulesForSnapshot
+  , fetchV2AllCallsForSnapshot
   ) where
 
 import Prelude
@@ -1773,3 +1778,48 @@ reloadProjects projects = traverse reloadOne projects
     , name: Just project.name
     , label: Nothing
     }
+
+-- =============================================================================
+-- Snapshots
+-- =============================================================================
+
+-- | Snapshot metadata from the API
+type V2Snapshot =
+  { id :: Int
+  , projectId :: Int
+  , gitHash :: Maybe String
+  , gitRef :: Maybe String
+  , label :: Maybe String
+  , packageCount :: Int
+  , moduleCount :: Int
+  , workspacePackageCount :: Int
+  }
+
+type V2SnapshotsResponse = { snapshots :: Array V2Snapshot, count :: Int }
+
+-- | Fetch available snapshots for the default project
+fetchSnapshots :: Aff (Either String (Array V2Snapshot))
+fetchSnapshots = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/snapshots")
+  pure $ do
+    json <- result
+    response :: V2SnapshotsResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.snapshots
+
+-- | Fetch modules scoped to a specific snapshot
+fetchV2ModulesForSnapshot :: Int -> Aff (Either String (Array V2ModuleListItem))
+fetchV2ModulesForSnapshot snapshotId = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/modules?snapshot=" <> show snapshotId)
+  pure $ do
+    json <- result
+    response :: V2ModulesResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.modules
+
+-- | Fetch all function calls scoped to a specific snapshot
+fetchV2AllCallsForSnapshot :: Int -> Aff (Either String (Array V2ModuleCalls))
+fetchV2AllCallsForSnapshot snapshotId = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/all-calls?snapshot=" <> show snapshotId)
+  pure $ do
+    json <- result
+    response :: V2AllCallsResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.calls

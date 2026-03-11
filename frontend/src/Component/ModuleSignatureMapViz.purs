@@ -78,6 +78,7 @@ data Output
       , value :: String
       , supersedes :: Int
       }
+  | CompareSnapshotsClicked                  -- User wants cross-snapshot comparison
 
 type Slot = H.Slot Query Output
 
@@ -129,6 +130,7 @@ data Action
   | UpdateReplyText String
   | SubmitReply
   | ToggleThreadCollapse Int
+  | CompareSnapshots
 
 -- =============================================================================
 -- Component
@@ -222,6 +224,7 @@ renderDiagramSection state =
       Just l -> not (Array.null l.nodes)
       Nothing -> false
     hasCalls = hasArc || hasLayer  -- module has internal call structure
+    declCount = Array.length state.lastInput.declarations
   in
     if not hasCalls then
       HH.div [] []  -- placeholder for stable child structure
@@ -246,6 +249,7 @@ renderDiagramSection state =
               HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px;" ] []
             ConcernClusterView ->
               HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px;" ] []
+        , renderCtaBar declCount
         ]
 
 renderDiagramTab :: forall m. String -> DiagramMode -> DiagramMode -> H.ComponentHTML Action () m
@@ -273,8 +277,7 @@ renderArcDiagram state = case state.arcLayout of
   Just layout
     | Array.null layout.edges -> emptyMessage "No intra-module function calls between exported declarations"
     | otherwise ->
-        let declCount = Array.length state.lastInput.declarations
-        in HH.div []
+        HH.div []
           [ svgElem "svg"
               [ sa "viewBox" ("0 0 " <> show layout.width <> " " <> show layout.height)
               , sa "width" "100%"
@@ -285,7 +288,6 @@ renderArcDiagram state = case state.arcLayout of
               <> (layout.nodes <#> renderArcNode state layout)
               <> (layout.nodes <#> renderArcLabel state layout)
               )
-          , renderCtaBar declCount
           ]
 
 -- =============================================================================
@@ -516,11 +518,18 @@ renderCtaBar declCount =
         , HE.onClick \_ -> ScrollToLanes
         ]
         [ HH.text ("\x2193 " <> show declCount <> " declarations below") ]
-    , HH.span
-        [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
-        , HE.onClick \_ -> OpenInEditor
+    , HH.div [ HP.style "display: flex; gap: 12px;" ]
+        [ HH.span
+            [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
+            , HE.onClick \_ -> CompareSnapshots
+            ]
+            [ HH.text "Compare snapshots" ]
+        , HH.span
+            [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
+            , HE.onClick \_ -> OpenInEditor
+            ]
+            [ HH.text "Open in editor" ]
         ]
-        [ HH.text "Open in editor" ]
     ]
 
 -- | Check if two nodes are connected by an edge in the arc layout.
@@ -1027,6 +1036,9 @@ handleAction = case _ of
           then Set.delete rootId state.collapsedThreads
           else Set.insert rootId state.collapsedThreads
     H.modify_ _ { collapsedThreads = newCollapsed }
+
+  CompareSnapshots ->
+    H.raise CompareSnapshotsClicked
 
 -- | Prepare cells, group into lanes, compute arc layout, then update state.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit

@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::db::{
-    cleanup_orphaned_package_versions, delete_old_snapshots, delete_package_module_data,
+    cleanup_orphaned_package_versions, delete_snapshot_for_commit, delete_package_module_data,
     get_max_ids, get_or_create_namespace, get_or_create_project,
     append_child_declarations, append_declarations, append_modules,
     append_package_dependencies, append_reexports, append_snapshot_packages,
@@ -138,16 +138,18 @@ impl LoadPipeline {
             .or_else(|| git_info.as_ref().and_then(|g| g.ref_name.clone()))
             .unwrap_or_else(|| "manual".to_string());
 
-        // Clean up old snapshots for this project BEFORE inserting the new one.
-        // This avoids UNIQUE(project_id, git_hash) conflicts when reloading at the same commit.
-        match delete_old_snapshots(conn, project_id, snapshot_id) {
-            Ok(deleted) if deleted > 0 => {
-                if self.verbose {
-                    eprintln!("  Deleted {} old snapshot(s) for project {}", deleted, project_name);
+        // Only delete the snapshot for THIS commit (if re-loading at the same commit).
+        // Snapshots from other commits are preserved for multi-snapshot comparison.
+        if let Some(ref gi) = git_info {
+            match delete_snapshot_for_commit(conn, project_id, &gi.hash) {
+                Ok(true) => {
+                    if self.verbose {
+                        eprintln!("  Replacing existing snapshot for commit {}", &gi.hash[..7]);
+                    }
                 }
+                Err(e) if self.verbose => eprintln!("Warning: Failed to clean snapshot: {}", e),
+                _ => {}
             }
-            Err(e) if self.verbose => eprintln!("Warning: Failed to clean old snapshots: {}", e),
-            _ => {}
         }
 
         let snapshot = Snapshot {
@@ -183,12 +185,26 @@ impl LoadPipeline {
 
         let mut package_versions = Vec::new();
 
+        // Short git hash for workspace package versioning (each commit gets distinct versions)
+        let git_hash_short = git_info.as_ref().map(|g| &g.hash[..7.min(g.hash.len())]);
+
         for pkg_info in &packages {
             let pkg_id = self.id_gen.next_package_id();
+            // Workspace packages get git-hash-suffixed versions so each commit's
+            // modules coexist in the DB (enables multi-snapshot comparison).
+            let version = if pkg_info.source == "workspace" {
+                if let Some(short) = git_hash_short {
+                    format!("0.0.0-{}", short)
+                } else {
+                    pkg_info.version.clone()
+                }
+            } else {
+                pkg_info.version.clone()
+            };
             package_versions.push(PackageVersion {
                 id: pkg_id,
                 name: pkg_info.name.clone(),
-                version: pkg_info.version.clone(),
+                version,
                 description: None,
                 license: None,
                 repository: None,

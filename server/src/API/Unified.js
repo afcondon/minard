@@ -846,6 +846,28 @@ export const buildModuleSourceJson = (row) => () => {
  * Returns { filePath: "/absolute/path/to/Module.purs" } or null.
  * PureScript FFI: Foreign -> Effect (Maybe String)
  */
+// =============================================================================
+// Snapshots
+// =============================================================================
+
+export const buildSnapshotsJson = (rows) => {
+  const snapshots = (rows || []).map(row => ({
+    id: Number(row.id),
+    projectId: Number(row.project_id),
+    gitHash: row.git_hash || null,
+    gitRef: row.git_ref || null,
+    label: row.label || null,
+    packageCount: Number(row.package_count) || 0,
+    moduleCount: Number(row.module_count) || 0,
+    workspacePackageCount: Number(row.workspace_package_count) || 0
+  }));
+  return JSON.stringify({ snapshots, count: snapshots.length });
+};
+
+// =============================================================================
+// Source Location (file path only, for editor integration)
+// =============================================================================
+
 export const buildSourceLocationJson = (row) => () => {
   try {
     const sourceSpan = typeof row.source_span === 'string'

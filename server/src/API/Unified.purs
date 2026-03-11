@@ -46,6 +46,8 @@ module API.Unified
   , getSourceLocation
   -- Namespace packages mapping
   , getNamespacePackages
+  -- Snapshots
+  , listSnapshots
   ) where
 
 import Prelude
@@ -95,12 +97,20 @@ foreign import buildStatsJson :: Array Foreign -> String
 -- =============================================================================
 
 -- | List all package versions with module counts, LOC, and dependencies
--- | Scoped to a project via ?project=<id>. Defaults to first project when unspecified.
-listPackages :: Database -> Maybe Int -> Aff Response
-listPackages db mProject = do
+-- | Scoped to a project via ?project=<id> and optionally to a snapshot via ?snapshot=<id>.
+-- | Defaults to first project and latest snapshot when unspecified.
+listPackages :: Database -> Maybe Int -> Maybe Int -> Aff Response
+listPackages db mProject mSnapshot = do
   rows <- queryAllParams db """
     WITH target AS (
       SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    ),
+    target_snapshot AS (
+      SELECT COALESCE(?,
+        (SELECT s.id FROM snapshots s
+         WHERE s.project_id = (SELECT project_id FROM target)
+         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+      ) as snapshot_id
     )
     SELECT
       pv.id,
@@ -118,21 +128,19 @@ listPackages db mProject = do
        FROM package_dependencies pd
        WHERE pd.dependent_id = pv.id) as depends,
       (SELECT MAX(sp.topo_layer) FROM snapshot_packages sp
-       JOIN snapshots s ON s.id = sp.snapshot_id
        WHERE sp.package_version_id = pv.id
-       AND s.project_id = (SELECT project_id FROM target)) as topo_layer
+       AND sp.snapshot_id = (SELECT snapshot_id FROM target_snapshot)) as topo_layer
     FROM package_versions pv
     LEFT JOIN modules m ON m.package_version_id = pv.id
     LEFT JOIN declarations d ON d.module_id = m.id
     WHERE EXISTS (
       SELECT 1 FROM snapshot_packages sp
-      JOIN snapshots s ON s.id = sp.snapshot_id
       WHERE sp.package_version_id = pv.id
-      AND s.project_id = (SELECT project_id FROM target)
+      AND sp.snapshot_id = (SELECT snapshot_id FROM target_snapshot)
     )
     GROUP BY pv.id, pv.name, pv.version, pv.description, pv.license, pv.repository, pv.source, pv.bundle_module
     ORDER BY pv.source DESC, pv.name, pv.version
-  """ [unsafeToForeign (toNullable mProject)]
+  """ [unsafeToForeign (toNullable mProject), unsafeToForeign (toNullable mSnapshot)]
   let json = buildPackagesJson rows
   ok' jsonHeaders json
 
@@ -235,12 +243,19 @@ foreign import buildPackageWithModulesJson :: Foreign -> Array Foreign -> String
 -- GET /api/v2/modules
 -- =============================================================================
 
--- | List modules with package info, scoped to a project
-listModules :: Database -> Maybe Int -> Aff Response
-listModules db mProject = do
+-- | List modules with package info, scoped to a project and snapshot
+listModules :: Database -> Maybe Int -> Maybe Int -> Aff Response
+listModules db mProject mSnapshot = do
   rows <- queryAllParams db """
     WITH target AS (
       SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    ),
+    target_snapshot AS (
+      SELECT COALESCE(?,
+        (SELECT s.id FROM snapshots s
+         WHERE s.project_id = (SELECT project_id FROM target)
+         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+      ) as snapshot_id
     )
     SELECT
       m.id,
@@ -259,13 +274,12 @@ listModules db mProject = do
     LEFT JOIN declarations d ON d.module_id = m.id
     WHERE EXISTS (
       SELECT 1 FROM snapshot_packages sp
-      JOIN snapshots s ON s.id = sp.snapshot_id
       WHERE sp.package_version_id = pv.id
-      AND s.project_id = (SELECT project_id FROM target)
+      AND sp.snapshot_id = (SELECT snapshot_id FROM target_snapshot)
     )
     GROUP BY m.id, m.name, m.path, m.loc, pv.id, pv.name, pv.version, pv.source, ns.path
     ORDER BY pv.source DESC, m.name
-  """ [unsafeToForeign (toNullable mProject)]
+  """ [unsafeToForeign (toNullable mProject), unsafeToForeign (toNullable mSnapshot)]
   let json = buildModulesJson rows
   ok' jsonHeaders json
 
@@ -704,15 +718,25 @@ parseSearchPrefix q =
 
 -- | Get all module imports (for building dependency graph)
 -- | Returns: { imports: [{ moduleId, moduleName, imports: [importedModuleName] }] }
-getAllImports :: Database -> Aff Response
-getAllImports db = do
+getAllImports :: Database -> Maybe Int -> Maybe Int -> Aff Response
+getAllImports db mProject mSnapshot = do
   -- Deduplicate modules: when a package exists as both local and registry,
   -- prefer the local version (it has current source). Then deduplicate by
   -- module name, keeping the entry with the most imports.
   -- Note: exclude packages with 0 modules (e.g. git-sourced stubs from
   -- alternative backends) to prevent them shadowing real registry packages.
-  rows <- queryAll db """
-    WITH active_packages AS (
+  rows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    ),
+    target_snapshot AS (
+      SELECT COALESCE(?,
+        (SELECT s.id FROM snapshots s
+         WHERE s.project_id = (SELECT project_id FROM target)
+         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+      ) as snapshot_id
+    ),
+    active_packages AS (
       SELECT pv.id, pv.name, pv.source,
              ROW_NUMBER() OVER (
                PARTITION BY pv.name
@@ -720,7 +744,9 @@ getAllImports db = do
                         pv.id DESC
              ) as rn
       FROM package_versions pv
-      WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+      WHERE EXISTS (SELECT 1 FROM snapshot_packages sp
+                    WHERE sp.package_version_id = pv.id
+                    AND sp.snapshot_id = (SELECT snapshot_id FROM target_snapshot))
         AND EXISTS (SELECT 1 FROM modules m WHERE m.package_version_id = pv.id)
     ),
     best_modules AS (
@@ -736,7 +762,7 @@ getAllImports db = do
     LEFT JOIN module_imports mi ON mi.module_id = bm.module_id
     LEFT JOIN modules m2 ON m2.id = mi.imported_module_id
     ORDER BY bm.module_name, imported_module
-  """
+  """ [unsafeToForeign (toNullable mProject), unsafeToForeign (toNullable mSnapshot)]
   let json = buildAllImportsJson rows
   ok' jsonHeaders json
 
@@ -748,12 +774,22 @@ foreign import buildAllImportsJson :: Array Foreign -> String
 
 -- | Get all function calls (for building declaration dependency graph)
 -- | Returns: { calls: [{ moduleId, moduleName, calls: [{ callerName, calleeModule, calleeName }] }] }
-getAllCalls :: Database -> Aff Response
-getAllCalls db = do
+getAllCalls :: Database -> Maybe Int -> Maybe Int -> Aff Response
+getAllCalls db mProject mSnapshot = do
   -- Deduplicate modules (same as getAllImports: prefer local over registry,
   -- exclude 0-module packages to prevent git stubs shadowing registry)
-  rows <- queryAll db """
-    WITH active_packages AS (
+  rows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    ),
+    target_snapshot AS (
+      SELECT COALESCE(?,
+        (SELECT s.id FROM snapshots s
+         WHERE s.project_id = (SELECT project_id FROM target)
+         ORDER BY (CASE WHEN s.git_ref IS NOT NULL THEN 1 ELSE 0 END) DESC, s.id DESC LIMIT 1)
+      ) as snapshot_id
+    ),
+    active_packages AS (
       SELECT pv.id, pv.name, pv.source,
              ROW_NUMBER() OVER (
                PARTITION BY pv.name
@@ -761,7 +797,9 @@ getAllCalls db = do
                         pv.id DESC
              ) as rn
       FROM package_versions pv
-      WHERE EXISTS (SELECT 1 FROM snapshot_packages sp WHERE sp.package_version_id = pv.id)
+      WHERE EXISTS (SELECT 1 FROM snapshot_packages sp
+                    WHERE sp.package_version_id = pv.id
+                    AND sp.snapshot_id = (SELECT snapshot_id FROM target_snapshot))
         AND EXISTS (SELECT 1 FROM modules m WHERE m.package_version_id = pv.id)
     ),
     best_modules AS (
@@ -776,7 +814,7 @@ getAllCalls db = do
     FROM best_modules bm
     LEFT JOIN function_calls fc ON fc.caller_module_id = bm.module_id
     ORDER BY bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name
-  """
+  """ [unsafeToForeign (toNullable mProject), unsafeToForeign (toNullable mSnapshot)]
   let json = buildAllCallsJson rows
   ok' jsonHeaders json
 
@@ -1146,3 +1184,38 @@ getNamespacePackages db = do
   ok' jsonHeaders json
 
 foreign import buildNamespacePackagesJson :: Array Foreign -> String
+
+-- =============================================================================
+-- GET /api/v2/snapshots?project=N
+-- =============================================================================
+
+-- | List snapshots for a project with stats (package count, module count)
+listSnapshots :: Database -> Maybe Int -> Aff Response
+listSnapshots db mProject = do
+  rows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    )
+    SELECT
+      s.id,
+      s.project_id,
+      s.git_hash,
+      s.git_ref,
+      s.label,
+      (SELECT COUNT(DISTINCT sp.package_version_id) FROM snapshot_packages sp WHERE sp.snapshot_id = s.id) as package_count,
+      (SELECT COUNT(DISTINCT m.id)
+       FROM snapshot_packages sp
+       JOIN modules m ON m.package_version_id = sp.package_version_id
+       WHERE sp.snapshot_id = s.id) as module_count,
+      (SELECT COUNT(DISTINCT sp2.package_version_id)
+       FROM snapshot_packages sp2
+       JOIN package_versions pv2 ON sp2.package_version_id = pv2.id
+       WHERE sp2.snapshot_id = s.id AND pv2.source = 'workspace') as workspace_package_count
+    FROM snapshots s
+    WHERE s.project_id = (SELECT project_id FROM target)
+    ORDER BY s.id DESC
+  """ [unsafeToForeign (toNullable mProject)]
+  let json = buildSnapshotsJson rows
+  ok' jsonHeaders json
+
+foreign import buildSnapshotsJson :: Array Foreign -> String

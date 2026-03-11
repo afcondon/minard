@@ -71,6 +71,8 @@ data Route
   | V2ValidatePath       -- POST /api/v2/projects/validate
   | V2LoadProject        -- POST /api/v2/projects/load
   | V2DeleteProject Int  -- DELETE /api/v2/projects/:id
+  -- Snapshots
+  | V2ListSnapshots   -- GET /api/v2/snapshots?project=N
   -- Health
   | Health
 
@@ -111,6 +113,7 @@ route = root $ sum
   , "V2ValidatePath": path "api/v2/projects/validate" noArgs
   , "V2LoadProject": path "api/v2/projects/load" noArgs
   , "V2DeleteProject": path "api/v2/projects" (int segment)
+  , "V2ListSnapshots": path "api/v2/snapshots" noArgs
   , "Health": path "health" noArgs
   }
 
@@ -183,6 +186,7 @@ main = launchAff_ do
     log "  GET/POST /api/v2/annotations             - List/create annotations"
     log "  GET/PATCH /api/v2/annotations/:id        - Get/update annotation"
     log "  GET /api/v2/report                       - Markdown codebase report"
+    log "  GET /api/v2/snapshots[?project=N]          - List snapshots for project"
     log "  GET /api/v2/projects                     - List loaded projects"
     log "  POST /api/v2/projects/validate           - Validate project path"
     log "  POST /api/v2/projects/load               - Load project via loader"
@@ -193,19 +197,20 @@ main = launchAff_ do
   mkRouter dbRef { route: r, query, method, body } = do
     db <- liftEffect $ Ref.read dbRef
     let mProject = Object.lookup "project" query >>= Int.fromString
+    let mSnapshot = Object.lookup "snapshot" query >>= Int.fromString
     case r of
       V2Stats -> Unified.getStats db
-      V2ListPackages -> Unified.listPackages db mProject
+      V2ListPackages -> Unified.listPackages db mProject mSnapshot
       V2UnusedPackages -> Unified.listUnusedPackages db mProject
       V2GetPackage pkgId -> Unified.getPackage db pkgId
-      V2ListModules -> Unified.listModules db mProject
+      V2ListModules -> Unified.listModules db mProject mSnapshot
       V2GetModule modId -> Unified.getModule db modId
       V2GetModuleDeclarations modId -> Unified.getModuleDeclarations db modId
       V2GetModuleImports modId -> Unified.getModuleImports db modId
       V2GetModuleCalls modId -> Unified.getModuleCalls db modId
       V2GetModuleReexports modId -> Unified.getModuleReexports db modId
-      V2GetAllImports -> Unified.getAllImports db
-      V2GetAllCalls -> Unified.getAllCalls db
+      V2GetAllImports -> Unified.getAllImports db mProject mSnapshot
+      V2GetAllCalls -> Unified.getAllCalls db mProject mSnapshot
       V2GetModuleDeclarationStats -> Unified.getModuleDeclarationStats db
       V2GetModuleStructuralComplexity -> Unified.getModuleStructuralComplexity db
       V2ListNamespaces -> Unified.listNamespaces db
@@ -263,4 +268,5 @@ main = launchAff_ do
         Delete -> Projects.deleteProject db projectId
         Options -> ok' corsHeaders ""
         _ -> ok "{ \"error\": \"Method not allowed\" }"
+      V2ListSnapshots -> Unified.listSnapshots db mProject
       Health -> ok "OK"

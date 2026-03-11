@@ -22,11 +22,9 @@ import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.Foldable (foldl)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Set (Set)
+import Data.Maybe (Maybe(..), fromMaybe, isNothing)
 import Data.Set as Set
 import Data.String as String
 import Data.Tuple (Tuple(..))
@@ -70,6 +68,7 @@ import CE2.Component.ProjectAnatomyViz as ProjectAnatomyViz
 import CE2.Component.NamespaceTreeViz as NamespaceTreeViz
 import CE2.Component.StructuralDecompViz as StructuralDecompViz
 import CE2.Component.ModuleStructureViz as ModuleStructureViz
+import CE2.Component.CompareModuleViz as CompareModuleViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
@@ -151,6 +150,7 @@ type Slots =
   , namespaceTreeViz :: NamespaceTreeViz.Slot Unit
   , structuralDecompViz :: StructuralDecompViz.Slot Unit
   , moduleStructureViz :: ModuleStructureViz.Slot Unit
+  , compareModuleViz :: CompareModuleViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -206,6 +206,9 @@ _structuralDecompViz = Proxy
 
 _moduleStructureViz :: Proxy "moduleStructureViz"
 _moduleStructureViz = Proxy
+
+_compareModuleViz :: Proxy "compareModuleViz"
+_compareModuleViz = Proxy
 
 -- | Refresh phase for Sync button lifecycle
 data RefreshPhase
@@ -1209,6 +1212,8 @@ renderScene state =
               crossCalls = Array.filter _.isCrossModule moduleCalls
               declInfos = decls <#> \d -> { name: d.name, kind: d.kind }
               moduleSourceMap = Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.package.source
+              siblingMods = Array.filter (\m -> m.package.name == pkgName && m.name /= modName) v2.modules
+                              <#> _.name
             in HH.slot _moduleStructureViz unit ModuleStructureViz.component
               { packageName: pkgName
               , moduleName: modName
@@ -1216,6 +1221,7 @@ renderScene state =
               , functionCalls: internalCalls
               , crossModuleCalls: crossCalls
               , moduleSourceMap
+              , siblingModules: siblingMods
               }
               HandleModuleStructureOutput
           Nothing ->
@@ -1224,6 +1230,46 @@ renderScene state =
       Nothing ->
         HH.div [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading module data..." ]
+
+  CompareModules pkg1 mod1 pkg2 mod2 ->
+    case state.v2Data of
+      Just _v2 ->
+        HH.slot _compareModuleViz unit CompareModuleViz.component
+          { leftPackage: pkg1
+          , leftModule: mod1
+          , rightPackage: pkg2
+          , rightModule: mod2
+          , declarations: state.packageDeclarations
+          , functionCalls: state.packageCalls
+          , allModules: case state.v2Data of
+              Just v2 -> v2.modules
+              Nothing -> []
+          , beforeSnapshotId: Nothing
+          }
+          (\_ -> NavigateTo GalaxyTreemap)
+      Nothing ->
+        HH.div [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading module data..." ]
+
+  CompareSnapshots pkg mod beforeSnapshotId ->
+    case state.v2Data of
+      Just _v2 ->
+        HH.slot _compareModuleViz unit CompareModuleViz.component
+          { leftPackage: pkg
+          , leftModule: mod
+          , rightPackage: pkg
+          , rightModule: mod
+          , declarations: state.packageDeclarations
+          , functionCalls: state.packageCalls
+          , allModules: case state.v2Data of
+              Just v2 -> v2.modules
+              Nothing -> []
+          , beforeSnapshotId: Just beforeSnapshotId
+          }
+          (\_ -> NavigateTo (ModuleSignatureMap pkg mod))
+      Nothing ->
+        HH.div [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading snapshot data..." ]
 
   ProjectManagement ->
     HH.slot _projectManagementViz unit ProjectManagementViz.component
@@ -1551,6 +1597,29 @@ handleAction = case _ of
         Left err ->
           log $ "[SceneCoordinator] Failed to create reply: " <> err
 
+    ModuleSignatureMapViz.CompareSnapshotsClicked -> do
+      log "[SceneCoordinator] Compare snapshots requested"
+      state <- H.get
+      case state.scene of
+        ModuleSignatureMap pkg mod -> do
+          snapshotsResult <- liftAff Loader.fetchSnapshots
+          case snapshotsResult of
+            Right snapshots | Array.length snapshots > 1 -> do
+              -- Prefer a snapshot without git_ref (historical/archived), else fall back to oldest
+              let mBefore = case Array.find (\s -> isNothing s.gitRef) snapshots of
+                    Just x -> Just x
+                    Nothing -> Array.last snapshots
+              case mBefore of
+                Just before -> do
+                  log $ "[SceneCoordinator] Comparing with snapshot " <> show before.id <> " (" <> fromMaybe "?" before.label <> ")"
+                  handleAction (NavigateTo (CompareSnapshots pkg mod before.id))
+                Nothing -> pure unit
+            Right _ ->
+              log "[SceneCoordinator] Only one snapshot available — load a second snapshot to compare"
+            Left err ->
+              log $ "[SceneCoordinator] Failed to fetch snapshots: " <> err
+        _ -> pure unit
+
   HandleAnnotationReportOutput output -> case output of
     AnnotationReportViz.NavigateToModule pkgName modName -> do
       log $ "[SceneCoordinator] Report navigation to: " <> pkgName <> "/" <> modName
@@ -1591,6 +1660,12 @@ handleAction = case _ of
       case state.scene of
         ModuleStructure pkg mod ->
           handleAction (NavigateTo (DeclarationDetail pkg mod declName))
+        _ -> pure unit
+    ModuleStructureViz.CompareWith targetMod -> do
+      state <- H.get
+      case state.scene of
+        ModuleStructure pkg mod ->
+          handleAction (NavigateTo (CompareModules pkg mod pkg targetMod))
         _ -> pure unit
 
   HandleDeclarationDetailOutput output -> case output of
@@ -2204,6 +2279,68 @@ prepareSceneData state = case state.scene of
                   log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
           Nothing ->
             log $ "[SceneCoordinator] Module not found: " <> modName
+      Nothing -> pure unit
+
+  CompareModules pkg1 mod1 pkg2 mod2 -> do
+    log $ "[SceneCoordinator] CompareModules: " <> mod1 <> " vs " <> mod2
+    st <- H.get
+    case st.v2Data of
+      Just v2 -> do
+        -- Ensure declarations loaded for both modules
+        let mods = Array.filter (\m ->
+              (m.name == mod1 && m.package.name == pkg1) ||
+              (m.name == mod2 && m.package.name == pkg2)) v2.modules
+            missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) mods
+        when (Array.length missingDeclModules > 0) do
+          log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " compared modules"
+          newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
+          st2 <- H.get
+          H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
+        -- Ensure function calls loaded
+        when (not st.allCallsLoaded) do
+          log "[SceneCoordinator] Fetching all function calls for compare view"
+          result <- liftAff Loader.fetchV2AllCalls
+          case result of
+            Right allCalls -> do
+              let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
+                    Tuple mc.moduleId (mc.calls <#> \c -> { callerName: c.callerName
+                      , calleeModule: c.calleeModule
+                      , calleeName: c.calleeName
+                      , isCrossModule: c.isCrossModule
+                      , callCount: c.callCount
+                      })
+              H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
+            Left err ->
+              log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
+      Nothing -> pure unit
+
+  CompareSnapshots pkg mod _beforeSnapshotId -> do
+    -- Data loading for CompareSnapshots is handled in CompareModuleViz itself
+    -- (it fetches from the snapshot-scoped API). We just need current-snapshot data.
+    log $ "[SceneCoordinator] CompareSnapshots: " <> mod
+    st <- H.get
+    case st.v2Data of
+      Just v2 -> do
+        let mods = Array.filter (\m -> m.name == mod && m.package.name == pkg) v2.modules
+            missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) mods
+        when (Array.length missingDeclModules > 0) do
+          newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
+          st2 <- H.get
+          H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
+        when (not st.allCallsLoaded) do
+          result <- liftAff Loader.fetchV2AllCalls
+          case result of
+            Right allCalls -> do
+              let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
+                    Tuple mc.moduleId (mc.calls <#> \c -> { callerName: c.callerName
+                      , calleeModule: c.calleeModule
+                      , calleeName: c.calleeName
+                      , isCrossModule: c.isCrossModule
+                      , callCount: c.callCount
+                      })
+              H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
+            Left err ->
+              log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
       Nothing -> pure unit
 
   ProjectAnatomy -> do
