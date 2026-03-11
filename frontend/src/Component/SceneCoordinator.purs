@@ -29,6 +29,7 @@ import Data.Set as Set
 import Data.String as String
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
+import Effect.Uncurried (EffectFn2, runEffectFn2)
 import Effect.Aff (Milliseconds(..))
 import Effect.Aff as Aff
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -83,8 +84,8 @@ import CE2.Component.SceneCoordinator.Pure (ViewMode(..), viewModeToString, view
 import CE2.Component.SceneCoordinator.Pure as Pure
 
 -- FFI declarations for browser history integration
-foreign import pushHistoryState :: String -> String -> Effect Unit
-foreign import replaceHistoryState :: String -> String -> Effect Unit
+foreign import pushHistoryState :: EffectFn2 String String Unit
+foreign import replaceHistoryState :: EffectFn2 String String Unit
 foreign import setupPopstateListener :: (String -> String -> Effect Unit) -> Effect (Effect Unit)
 
 -- =============================================================================
@@ -1302,7 +1303,7 @@ handleAction = case _ of
     state <- H.get
 
     -- Replace current history state with initial scene (so back works from start)
-    liftEffect $ replaceHistoryState (sceneToString state.scene) (viewModeToString state.viewMode)
+    liftEffect $ runEffectFn2 replaceHistoryState (sceneToString state.scene) (viewModeToString state.viewMode)
 
     -- Set up popstate listener for back/forward navigation
     { emitter: historyEmitter, listener: historyListener } <- liftEffect HS.create
@@ -1441,7 +1442,7 @@ handleAction = case _ of
 
     -- Push to browser history (enables back/forward buttons)
     -- ViewMode resets to PrimaryView on scene change
-    liftEffect $ pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
+    liftEffect $ runEffectFn2 pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
 
     -- If reachability mode is active, recompute for the target scene
     when (state.colorMode == Reachability) $ case targetScene of
@@ -1707,7 +1708,7 @@ handleAction = case _ of
     log $ "[SceneCoordinator] Setting view mode: " <> show targetMode
     H.modify_ _ { viewMode = targetMode }
     -- Push view mode change to browser history
-    liftEffect $ pushHistoryState (sceneToString state.scene) (viewModeToString targetMode)
+    liftEffect $ runEffectFn2 pushHistoryState (sceneToString state.scene) (viewModeToString targetMode)
     -- Re-render the visualization with new mode
     newState <- H.get
     prepareSceneData newState

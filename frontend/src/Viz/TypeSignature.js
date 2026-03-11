@@ -20,7 +20,7 @@ export const showFallbackText = (containerId) => (text) => () => {
 };
 
 // Insert SVG into cell div
-export const insertSVGIntoCell = (cellId) => (svgEl) => (_cellWidth) => (_cellPad) => () => {
+export const insertSVGIntoCell = (cellId, svgEl, _cellWidth, _cellPad) => {
   const div = document.getElementById(cellId);
   if (!div) return;
   svgEl.style.display = 'block';
@@ -46,7 +46,7 @@ export const createSparklineGroup = () => {
   return g;
 };
 
-export const setSvgAttr = (el) => (key) => (value) => () => {
+export const setSvgAttr = (el, key, value) => {
   el.setAttribute(key, value);
 };
 
@@ -69,7 +69,7 @@ export const clearElement = (selector) => () => {
 
 // --- Siglet tooltip ---
 
-export const showSigletTooltip = (tooltipId) => (sourceId) => (cellId) => () => {
+export const showSigletTooltip = (tooltipId, sourceId, cellId) => {
   const tooltip = document.getElementById(tooltipId);
   const source = document.getElementById(sourceId);
   const cell = document.getElementById(cellId);

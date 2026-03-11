@@ -3,14 +3,14 @@
 
 // Push a scene + viewMode to browser history
 // pushHistoryState :: String -> String -> Effect Unit
-export const pushHistoryState = (sceneJson) => (viewModeStr) => () => {
+export const pushHistoryState = (sceneJson, viewModeStr) => {
   const state = { scene: sceneJson, viewMode: viewModeStr };
   window.history.pushState(state, '', null);
 };
 
 // Replace the current history state (for initial setup)
 // replaceHistoryState :: String -> String -> Effect Unit
-export const replaceHistoryState = (sceneJson) => (viewModeStr) => () => {
+export const replaceHistoryState = (sceneJson, viewModeStr) => {
   const state = { scene: sceneJson, viewMode: viewModeStr };
   window.history.replaceState(state, '', null);
 };

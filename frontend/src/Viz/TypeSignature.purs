@@ -28,6 +28,7 @@ import Data.Maybe (Maybe(..))
 import Data.Nullable (Nullable, toMaybe)
 import Data.Set as Set
 import Effect (Effect)
+import Effect.Uncurried (EffectFn3, EffectFn4, runEffectFn3)
 import Web.DOM (Element)
 
 import Sigil (layoutSignature, layoutADT, layoutClassDef, layoutSparkline, layoutSiglet, emit, emitNode)
@@ -55,21 +56,21 @@ type SparklineCell =
 
 foreign import replaceContainerContent :: String -> Element -> Effect Unit
 foreign import showFallbackText :: String -> String -> Effect Unit
-foreign import insertSVGIntoCell :: String -> Element -> Number -> Number -> Effect Unit
+foreign import insertSVGIntoCell :: EffectFn4 String Element Number Number Unit
 
 -- Element measurement and clearing
 foreign import measureElementHeight :: String -> Effect Number
 foreign import clearElement :: String -> Effect Unit
 
 -- Siglet tooltip
-foreign import showSigletTooltip :: String -> String -> String -> Effect Unit
+foreign import showSigletTooltip :: EffectFn3 String String String Unit
 foreign import hideSigletTooltip :: String -> Effect Unit
 
 -- Sparkline DOM helpers
 foreign import querySvgInContainer :: String -> Effect (Nullable Element)
 foreign import removeOldSparklines :: Element -> Effect Unit
 foreign import createSparklineGroup :: Effect Element
-foreign import setSvgAttr :: Element -> String -> String -> Effect Unit
+foreign import setSvgAttr :: EffectFn3 Element String String Unit
 foreign import appendSvgChild :: Element -> Element -> Effect Unit
 
 -- =============================================================================
@@ -197,5 +198,5 @@ renderSparklineCell group cell = case cell.ast of
           sparkEl <- emitNode result.layout
           let offsetX = cell.x + pad + (availW - result.scaledWidth) / 2.0
               offsetY = cell.y + stripH + pad + (availH - result.scaledHeight) / 2.0
-          setSvgAttr sparkEl "transform" ("translate(" <> show offsetX <> "," <> show offsetY <> ")")
+          runEffectFn3 setSvgAttr sparkEl "transform" ("translate(" <> show offsetX <> "," <> show offsetY <> ")")
           appendSvgChild group sparkEl

@@ -14,7 +14,6 @@ module CE2.Viz.PackageSetTreemap
   , updateColors
   , cleanup
   , computeCellPositions  -- Compute circle positions for transitions (pure)
-  , getCellPositions      -- DEPRECATED: use computeCellPositions instead
   ) where
 
 import Prelude
@@ -838,10 +837,3 @@ computeCellPositions config packages =
       kloc = toNumber pp.pkg.totalLoc / 1000.0
       circleR = min maxR (7.0 + sqrt kloc * 5.0)
     in { name: pp.pkg.name, x: cx, y: cy, r: circleR }
-
--- | DEPRECATED: Use computeCellPositions instead
--- | This function is kept for backwards compatibility but throws an error
-getCellPositions :: String -> Effect (Array { name :: String, x :: Number, y :: Number, r :: Number })
-getCellPositions _selector = do
-  -- Log deprecation warning and return empty - callers should use computeCellPositions
-  pure []

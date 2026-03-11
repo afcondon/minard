@@ -65,6 +65,7 @@ import Database.DuckDB (Database, queryAll, queryAllParams, firstRow)
 import Effect (Effect)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
+import Data.Function.Uncurried (Fn2, Fn3, runFn2, runFn3)
 import Foreign (Foreign, unsafeToForeign)
 import HTTPurple (Response, ok', notFound)
 import HTTPurple.Headers (ResponseHeaders, headers)
@@ -239,10 +240,10 @@ getPackage db packageId = do
         ORDER BY m.name
       """ [unsafeToForeign packageId]
 
-      let json = buildPackageWithModulesJson pkg modules
+      let json = runFn2 buildPackageWithModulesJson pkg modules
       ok' jsonHeaders json
 
-foreign import buildPackageWithModulesJson :: Foreign -> Array Foreign -> String
+foreign import buildPackageWithModulesJson :: Fn2 Foreign (Array Foreign) String
 
 -- =============================================================================
 -- GET /api/v2/modules
@@ -390,10 +391,10 @@ getModuleDeclarations db moduleId = do
     ORDER BY sc_name.sc_class_name, cd.name
   """ [unsafeToForeign moduleId]
 
-  let json = buildDeclarationsJson rows children superMethods
+  let json = runFn3 buildDeclarationsJson rows children superMethods
   ok' jsonHeaders json
 
-foreign import buildDeclarationsJson :: Array Foreign -> Array Foreign -> Array Foreign -> String
+foreign import buildDeclarationsJson :: Fn3 (Array Foreign) (Array Foreign) (Array Foreign) String
 
 -- =============================================================================
 -- GET /api/v2/modules/:id/imports
@@ -568,10 +569,10 @@ getNamespace db nsPath = do
         ORDER BY m.name
       """ [unsafeToForeign nsPath]
 
-      let json = buildNamespaceWithChildrenJson ns children modules
+      let json = runFn3 buildNamespaceWithChildrenJson ns children modules
       ok' jsonHeaders json
 
-foreign import buildNamespaceWithChildrenJson :: Foreign -> Array Foreign -> Array Foreign -> String
+foreign import buildNamespaceWithChildrenJson :: Fn3 Foreign (Array Foreign) (Array Foreign) String
 
 -- =============================================================================
 -- GET /api/v2/declarations/search?q=...
@@ -982,10 +983,10 @@ getPolyglotSummary db = do
     ORDER BY p.id, pv.name
   """
 
-  let json = buildPolyglotSummaryJson projects packages
+  let json = runFn2 buildPolyglotSummaryJson projects packages
   ok' jsonHeaders json
 
-foreign import buildPolyglotSummaryJson :: Array Foreign -> Array Foreign -> String
+foreign import buildPolyglotSummaryJson :: Fn2 (Array Foreign) (Array Foreign) String
 
 -- =============================================================================
 -- GET /api/v2/type-class-stats
@@ -1087,10 +1088,10 @@ getDeclarationUsage db moduleName declName = do
     FROM callers GROUP BY module_name, decl_name
   """ [unsafeToForeign moduleName, unsafeToForeign declName]
 
-  let json = buildDeclarationUsageJson callers callees
+  let json = runFn2 buildDeclarationUsageJson callers callees
   ok' jsonHeaders json
 
-foreign import buildDeclarationUsageJson :: Array Foreign -> Array Foreign -> String
+foreign import buildDeclarationUsageJson :: Fn2 (Array Foreign) (Array Foreign) String
 
 -- =============================================================================
 -- GET /api/v2/git/status

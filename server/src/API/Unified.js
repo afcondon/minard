@@ -50,7 +50,7 @@ export const buildPackagesJson = (rows) => {
   return JSON.stringify({ packages, count: packages.length });
 };
 
-export const buildPackageWithModulesJson = (pkg) => (modules) => {
+export const buildPackageWithModulesJson = (pkg, modules) => {
   return JSON.stringify({
     id: Number(pkg.id),
     name: pkg.name,
@@ -117,7 +117,7 @@ export const buildModuleJson = (mod) => {
 // Declarations
 // =============================================================================
 
-export const buildDeclarationsJson = (declarations) => (children) => (superMethods) => {
+export const buildDeclarationsJson = (declarations, children, superMethods) => {
   // Group children by declaration_id
   const childrenByDecl = {};
   for (const child of (children || [])) {
@@ -288,7 +288,7 @@ export const buildNamespaceTreeJson = (rows) => {
   return JSON.stringify({ nodes, count: nodes.length });
 };
 
-export const buildNamespaceWithChildrenJson = (ns) => (children) => (modules) => {
+export const buildNamespaceWithChildrenJson = (ns, children, modules) => {
   return JSON.stringify({
     id: Number(ns.id),
     path: ns.path,
@@ -468,7 +468,7 @@ export const buildAllCallsJson = (rows) => {
 // Polyglot Summary (for sunburst visualization)
 // =============================================================================
 
-export const buildPolyglotSummaryJson = (projectRows) => (packageRows) => {
+export const buildPolyglotSummaryJson = (projectRows, packageRows) => {
   // Build hierarchical structure: backend -> project -> packages
   const backends = new Map();
 
@@ -619,7 +619,7 @@ export const buildTypeClassStatsJson = (rows) => {
 // Declaration Usage (cross-module call graph)
 // =============================================================================
 
-export const buildDeclarationUsageJson = (callerRows) => (calleeRows) => {
+export const buildDeclarationUsageJson = (callerRows, calleeRows) => {
   const callers = (callerRows || []).map(row => ({
     moduleName: row.module_name,
     declName: row.decl_name,

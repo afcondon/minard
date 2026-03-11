@@ -33,6 +33,7 @@ import Control.Promise (Promise, toAffE)
 import Data.Maybe (Maybe(..))
 import Data.Nullable (Nullable, toMaybe)
 import Effect (Effect)
+import Effect.Uncurried (EffectFn3, runEffectFn3)
 import Effect.Aff (Aff)
 import Foreign (Foreign)
 
@@ -65,9 +66,9 @@ foreign import closeDB_ :: Database -> Effect (Promise Unit)
 -- =============================================================================
 
 foreign import queryAll_ :: Database -> String -> Effect (Promise Rows)
-foreign import queryAllParams_ :: Database -> String -> Array Foreign -> Effect (Promise Rows)
+foreign import queryAllParams_ :: EffectFn3 Database String (Array Foreign) (Promise Rows)
 foreign import exec_ :: Database -> String -> Effect (Promise Unit)
-foreign import run_ :: Database -> String -> Array Foreign -> Effect (Promise Unit)
+foreign import run_ :: EffectFn3 Database String (Array Foreign) (Promise Unit)
 
 -- =============================================================================
 -- FFI Imports - Batch
@@ -112,7 +113,7 @@ queryAll db sql = toAffE (queryAll_ db sql)
 
 -- | Execute a parameterized query and return all rows
 queryAllParams :: Database -> String -> Array Foreign -> Aff Rows
-queryAllParams db sql params = toAffE (queryAllParams_ db sql params)
+queryAllParams db sql params = toAffE (runEffectFn3 queryAllParams_ db sql params)
 
 -- | Execute a statement (DDL, INSERT, UPDATE, DELETE)
 exec :: Database -> String -> Aff Unit
@@ -120,7 +121,7 @@ exec db sql = toAffE (exec_ db sql)
 
 -- | Execute a parameterized statement
 run :: Database -> String -> Array Foreign -> Aff Unit
-run db sql params = toAffE (run_ db sql params)
+run db sql params = toAffE (runEffectFn3 run_ db sql params)
 
 -- =============================================================================
 -- Public API - Batch

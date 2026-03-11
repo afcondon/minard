@@ -65,20 +65,14 @@ export function queryAll_(db) {
 }
 
 // Execute a query with parameters and return all rows
-export function queryAllParams_(db) {
-  return function(sql) {
-    return function(params) {
-      return function() {
-        return new Promise((resolve, reject) => {
-          db.all(sql, ...params, (err, rows) => {
-            if (err) reject(err);
-            else resolve(rows || []);
-          });
-        });
-      };
-    };
-  };
-}
+export const queryAllParams_ = (db, sql, params) => {
+  return new Promise((resolve, reject) => {
+    db.all(sql, ...params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows || []);
+    });
+  });
+};
 
 // Execute a statement (INSERT, UPDATE, DELETE) - returns nothing
 export function exec_(db) {
@@ -95,20 +89,14 @@ export function exec_(db) {
 }
 
 // Execute a prepared statement with parameters
-export function run_(db) {
-  return function(sql) {
-    return function(params) {
-      return function() {
-        return new Promise((resolve, reject) => {
-          db.run(sql, ...params, (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
-        });
-      };
-    };
-  };
-}
+export const run_ = (db, sql, params) => {
+  return new Promise((resolve, reject) => {
+    db.run(sql, ...params, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+};
 
 // =============================================================================
 // Batch Operations

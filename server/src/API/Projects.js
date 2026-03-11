@@ -99,7 +99,7 @@ export const validatePathJson = (pathStr) => () => {
 
 // Run the Rust loader synchronously. Blocks the Node event loop (by design —
 // prevents concurrent DuckDB access). Returns Effect String (thunk).
-export const runLoaderSync = (projectPath) => (dbPath) => (projectName) => (snapshotLabel) => () => {
+export const runLoaderSync = (projectPath, dbPath, projectName, snapshotLabel) => {
   const loaderPath = resolveLoaderPath();
   const start = Date.now();
 

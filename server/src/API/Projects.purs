@@ -21,6 +21,7 @@ import Database.DuckDB (Database, queryAll, exec, closeDB, openDB)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
 import Effect (Effect)
+import Effect.Uncurried (EffectFn4, runEffectFn4)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
 import Foreign (Foreign)
@@ -42,7 +43,7 @@ jsonHeaders = headers
 
 foreign import listProjectsJson :: Array Foreign -> String
 foreign import validatePathJson :: String -> Effect String
-foreign import runLoaderSync :: String -> String -> Nullable String -> Nullable String -> Effect String
+foreign import runLoaderSync :: EffectFn4 String String (Nullable String) (Nullable String) String
 foreign import deleteProjectSql :: Int -> Array String
 foreign import parseProjectBody :: String -> Nullable Foreign
 foreign import validateLoadFields :: Foreign -> Nullable
@@ -118,7 +119,7 @@ loadProject dbRef bodyStr dbPath =
           db <- liftEffect $ Ref.read dbRef
           closeDB db
           -- Run loader (blocks event loop — no concurrent requests possible)
-          result <- liftEffect (runLoaderSync v.path dbPath (toNullable (toMaybe v.name)) (toNullable (toMaybe v.label)))
+          result <- liftEffect (runEffectFn4 runLoaderSync v.path dbPath (toNullable (toMaybe v.name)) (toNullable (toMaybe v.label)))
           -- Reopen DB and update shared ref
           newDb <- openDB dbPath
           liftEffect $ Ref.write newDb dbRef
