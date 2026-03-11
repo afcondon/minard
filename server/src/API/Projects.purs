@@ -10,6 +10,7 @@ module API.Projects
   , validatePath
   , loadProject
   , deleteProject
+  , runLoaderSync
   ) where
 
 import Prelude

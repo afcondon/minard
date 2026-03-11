@@ -2744,3 +2744,374 @@ a.ps-clickable:hover {
   margin-right: 4px;
   vertical-align: middle;
 }
+
+/* =============================================================================
+   Snapshot Management
+   ============================================================================= */
+
+.snapshot-management {
+  padding: 32px;
+  max-width: 900px;
+  margin: 0 auto;
+  font-family: var(--font-mono);
+  color: var(--color-text-dark);
+}
+
+.snapshot-management-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.snapshot-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+}
+
+.snapshot-subtitle {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.snapshot-create-section h3,
+.snapshot-existing-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Commit Log */
+.commit-log {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: #fafafa;
+}
+
+.commit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #eee;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.commit-row:hover {
+  background: #f0f0f0;
+}
+
+.commit-row.selected {
+  background: #e8f0ff;
+}
+
+.commit-row.loaded {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.commit-radio {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.radio-empty { color: #ccc; }
+.radio-selected { color: #0E4C8A; }
+.commit-loaded-indicator { color: #5a8a5a; }
+
+.commit-hash {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #0E4C8A;
+  width: 60px;
+}
+
+.commit-message {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commit-refs {
+  margin-left: 6px;
+}
+
+.commit-ref-badge {
+  display: inline-block;
+  background: #0E4C8A;
+  color: white;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+.commit-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #999;
+  width: 80px;
+  text-align: right;
+}
+
+.commit-show-more {
+  padding: 8px 12px;
+  text-align: center;
+  color: #0E4C8A;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.commit-show-more:hover {
+  background: #f0f0f0;
+}
+
+.commit-loading {
+  padding: 8px 12px;
+  text-align: center;
+  color: #999;
+  font-size: 13px;
+}
+
+/* Create Controls */
+.create-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.create-controls label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.label-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.btn-create {
+  padding: 6px 16px;
+  background: #0E4C8A;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-create:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-create:hover:not(:disabled) {
+  background: #0a3a6a;
+}
+
+/* Create Status */
+.create-status {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.create-status.creating {
+  background: #f0f4ff;
+  color: #0E4C8A;
+}
+
+.create-status.success {
+  background: #f0fff0;
+  color: #2a6a2a;
+}
+
+.create-status.error {
+  background: #fff0f0;
+  color: #8a2a2a;
+}
+
+/* Existing Snapshots */
+.existing-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.delete-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-select, .btn-dismiss {
+  padding: 4px 10px;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-select:hover, .btn-dismiss:hover {
+  background: #e0e0e0;
+}
+
+.btn-delete {
+  padding: 4px 10px;
+  background: #fff0f0;
+  color: #8a2a2a;
+  border: 1px solid #dcc;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-delete:hover:not(:disabled) {
+  background: #ffe0e0;
+}
+
+/* Snapshot List */
+.snapshot-list {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.snapshot-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+  font-size: 13px;
+}
+
+.snapshot-row:last-child {
+  border-bottom: none;
+}
+
+.snapshot-row.current {
+  background: #f8f8ff;
+}
+
+.snapshot-row.selected-for-delete {
+  background: #fff5f5;
+}
+
+.snapshot-checkbox {
+  flex-shrink: 0;
+  width: 20px;
+}
+
+.snapshot-info {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex: 1;
+}
+
+.snapshot-id {
+  color: #999;
+  font-size: 12px;
+  width: 40px;
+}
+
+.snapshot-label {
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.snapshot-hash {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #0E4C8A;
+  width: 60px;
+}
+
+.snapshot-modules {
+  color: #666;
+  font-size: 12px;
+  width: 90px;
+  text-align: right;
+}
+
+.current-badge {
+  font-size: 10px;
+  background: #0E4C8A;
+  color: white;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+/* Delete Confirmation */
+.delete-confirm {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  background: #fff5f0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-confirm-delete {
+  padding: 4px 12px;
+  background: #E63946;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-cancel {
+  padding: 4px 12px;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.delete-confirm.done {
+  background: #f0fff0;
+  color: #2a6a2a;
+}

@@ -106,6 +106,13 @@ module CE2.Data.Loader
   , fetchSnapshots
   , fetchV2ModulesForSnapshot
   , fetchV2AllCallsForSnapshot
+    -- Snapshot Management
+  , GitCommit
+  , SnapshotDetail
+  , fetchGitLog
+  , fetchSnapshotDetails
+  , createSnapshotFromRef
+  , deleteSnapshotsByIds
   ) where
 
 import Prelude
@@ -1831,3 +1838,86 @@ fetchV2AllCallsForSnapshot snapshotId = do
     json <- result
     response :: V2AllCallsResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right response.calls
+
+-- =============================================================================
+-- Snapshot Management
+-- =============================================================================
+
+-- | A git commit from the log endpoint
+type GitCommit =
+  { hash :: String
+  , shortHash :: String
+  , message :: String
+  , author :: String
+  , date :: String
+  , relativeDate :: String
+  , refs :: Array String
+  , hasSnapshot :: Boolean
+  }
+
+-- | Enhanced snapshot detail with worktree info
+type SnapshotDetail =
+  { id :: Int
+  , projectId :: Int
+  , gitHash :: Maybe String
+  , gitRef :: Maybe String
+  , label :: Maybe String
+  , repoPath :: String
+  , projectName :: Maybe String
+  , packageCount :: Int
+  , moduleCount :: Int
+  , workspacePackageCount :: Int
+  , isCurrentCheckout :: Boolean
+  , canDelete :: Boolean
+  }
+
+type GitLogResponse = { commits :: Array GitCommit, hasMore :: Boolean }
+type SnapshotDetailsResponse = { snapshots :: Array SnapshotDetail, count :: Int }
+type DeleteResult = { snapshotId :: Int, deleted :: Boolean, warning :: Maybe String, error :: Maybe String }
+type DeleteResultsResponse = { results :: Array DeleteResult }
+
+-- | Fetch git commit log with pagination
+fetchGitLog :: Int -> Int -> Aff (Either String { commits :: Array GitCommit, hasMore :: Boolean })
+fetchGitLog count offset = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/git/log?count=" <> show count <> "&offset=" <> show offset)
+  pure $ do
+    json <- result
+    response :: GitLogResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right { commits: response.commits, hasMore: response.hasMore }
+
+-- | Fetch enhanced snapshot listing with worktree info
+fetchSnapshotDetails :: Aff (Either String (Array SnapshotDetail))
+fetchSnapshotDetails = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/snapshots/details")
+  pure $ do
+    json <- result
+    response :: SnapshotDetailsResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.snapshots
+
+-- | Create a snapshot from a git ref (commit hash, branch, or tag)
+createSnapshotFromRef :: String -> Maybe String -> Aff (Either String LoadResult)
+createSnapshotFromRef ref mLabel = do
+  let labelStr = case mLabel of
+        Just l -> ", \"label\": " <> escapeJsonStr l
+        Nothing -> ""
+      jsonBody = "{\"ref\": " <> escapeJsonStr ref <> labelStr <> "}"
+      url = apiBaseUrl <> "/api/v2/snapshots/create"
+      body = RequestBody.string jsonBody
+  result <- AW.post ResponseFormat.json url (Just body)
+  pure $ case result of
+    Left err -> Left $ "POST error: " <> AW.printError err
+    Right response -> decodeJson response.body # mapLeft printJsonDecodeError
+
+-- | Delete snapshots by IDs (removes worktrees + cascade deletes from DB)
+deleteSnapshotsByIds :: Array Int -> Aff (Either String (Array DeleteResult))
+deleteSnapshotsByIds ids = do
+  let idsStr = joinWith ", " (map show ids)
+      jsonBody = "{\"snapshotIds\": [" <> idsStr <> "]}"
+      url = apiBaseUrl <> "/api/v2/snapshots/delete"
+      body = RequestBody.string jsonBody
+  result <- AW.post ResponseFormat.json url (Just body)
+  pure $ case result of
+    Left err -> Left $ "POST error: " <> AW.printError err
+    Right response -> do
+      r :: DeleteResultsResponse <- decodeJson response.body # mapLeft printJsonDecodeError
+      Right r.results

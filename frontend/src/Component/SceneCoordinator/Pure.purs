@@ -68,6 +68,7 @@ themeForScene = case _ of
   ModuleStructure _ _ -> DaylightTheme
   CompareModules _ _ _ _ -> DaylightTheme
   CompareSnapshots _ _ _ -> DaylightTheme
+  SnapshotManagement -> DaylightTheme
 
 -- =============================================================================
 -- State Code
@@ -108,6 +109,7 @@ canonicalStateCode state = case state.scene of
   ModuleStructure pkg mod -> "X(" <> pkg <> "," <> mod <> ")"
   CompareModules p1 m1 p2 m2 -> "V(" <> p1 <> "," <> m1 <> "," <> p2 <> "," <> m2 <> ")"
   CompareSnapshots p m sid -> "Z(" <> p <> "," <> m <> "," <> show sid <> ")"
+  SnapshotManagement -> "SM"
 
   where
   scopeDigit :: BeeswarmScope -> String

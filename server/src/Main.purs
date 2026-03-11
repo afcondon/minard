@@ -18,6 +18,7 @@ import Routing.Duplex (RouteDuplex', root, path, int, segment)
 import Routing.Duplex.Generic (noArgs, sum)
 import API.Annotations as Annotations
 import API.Projects as Projects
+import API.Snapshots as Snapshots
 import API.Unified as Unified
 
 -- =============================================================================
@@ -72,7 +73,11 @@ data Route
   | V2LoadProject        -- POST /api/v2/projects/load
   | V2DeleteProject Int  -- DELETE /api/v2/projects/:id
   -- Snapshots
-  | V2ListSnapshots   -- GET /api/v2/snapshots?project=N
+  | V2ListSnapshots       -- GET /api/v2/snapshots?project=N
+  | V2GitLog              -- GET /api/v2/git/log?count=30&offset=0
+  | V2SnapshotDetails     -- GET /api/v2/snapshots/details
+  | V2CreateSnapshot      -- POST /api/v2/snapshots/create
+  | V2DeleteSnapshots     -- POST /api/v2/snapshots/delete
   -- Health
   | Health
 
@@ -114,6 +119,10 @@ route = root $ sum
   , "V2LoadProject": path "api/v2/projects/load" noArgs
   , "V2DeleteProject": path "api/v2/projects" (int segment)
   , "V2ListSnapshots": path "api/v2/snapshots" noArgs
+  , "V2GitLog": path "api/v2/git/log" noArgs
+  , "V2SnapshotDetails": path "api/v2/snapshots/details" noArgs
+  , "V2CreateSnapshot": path "api/v2/snapshots/create" noArgs
+  , "V2DeleteSnapshots": path "api/v2/snapshots/delete" noArgs
   , "Health": path "health" noArgs
   }
 
@@ -200,6 +209,10 @@ main = launchAff_ do
     log "  GET/PATCH /api/v2/annotations/:id        - Get/update annotation"
     log "  GET /api/v2/report                       - Markdown codebase report"
     log "  GET /api/v2/snapshots[?project=N]          - List snapshots for project"
+    log "  GET /api/v2/snapshots/details              - Enhanced snapshot listing"
+    log "  GET /api/v2/git/log?count=30&offset=0      - Git commit log"
+    log "  POST /api/v2/snapshots/create              - Create snapshot from ref"
+    log "  POST /api/v2/snapshots/delete              - Delete snapshots + worktrees"
     log "  GET /api/v2/projects                     - List loaded projects"
     log "  POST /api/v2/projects/validate           - Validate project path"
     log "  POST /api/v2/projects/load               - Load project via loader"
@@ -287,4 +300,21 @@ main = launchAff_ do
         Options -> ok' corsHeaders ""
         _ -> ok "{ \"error\": \"Method not allowed\" }"
       V2ListSnapshots -> Unified.listSnapshots db mProject
+      V2GitLog ->
+        let count = fromMaybe 30 (Object.lookup "count" query >>= Int.fromString)
+            offset = fromMaybe 0 (Object.lookup "offset" query >>= Int.fromString)
+        in Snapshots.getGitLog db count offset
+      V2SnapshotDetails -> Snapshots.listSnapshotDetails db
+      V2CreateSnapshot -> case method of
+        Post -> do
+          bodyStr <- toString body
+          Snapshots.createSnapshot dbRef bodyStr dbPath
+        Options -> ok' corsHeaders ""
+        _ -> ok "{ \"error\": \"Method not allowed\" }"
+      V2DeleteSnapshots -> case method of
+        Post -> do
+          bodyStr <- toString body
+          Snapshots.deleteSnapshots dbRef bodyStr dbPath
+        Options -> ok' corsHeaders ""
+        _ -> ok "{ \"error\": \"Method not allowed\" }"
       Health -> ok "OK"

@@ -65,6 +65,7 @@ import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.ProjectManagementViz as ProjectManagementViz
+import CE2.Component.SnapshotManagementViz as SnapshotManagementViz
 import CE2.Component.ProjectAnatomyViz as ProjectAnatomyViz
 import CE2.Component.NamespaceTreeViz as NamespaceTreeViz
 import CE2.Component.StructuralDecompViz as StructuralDecompViz
@@ -152,6 +153,7 @@ type Slots =
   , structuralDecompViz :: StructuralDecompViz.Slot Unit
   , moduleStructureViz :: ModuleStructureViz.Slot Unit
   , compareModuleViz :: CompareModuleViz.Slot Unit
+  , snapshotManagementViz :: SnapshotManagementViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -210,6 +212,9 @@ _moduleStructureViz = Proxy
 
 _compareModuleViz :: Proxy "compareModuleViz"
 _compareModuleViz = Proxy
+
+_snapshotManagementViz :: Proxy "snapshotManagementViz"
+_snapshotManagementViz = Proxy
 
 -- | Refresh phase for Sync button lifecycle
 data RefreshPhase
@@ -347,6 +352,7 @@ data Action
   | HandleAnnotationReportOutput AnnotationReportViz.Output
   | HandleProjectManagementOutput ProjectManagementViz.Output
   | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
+  | HandleSnapshotManagementOutput SnapshotManagementViz.Output
   | HandleModuleStructureOutput ModuleStructureViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
@@ -589,6 +595,11 @@ renderHeaderBar state =
             , HP.style $ toggleButtonStyle (state.scene == ProjectManagement) textColor
             ]
             [ HH.text "Projects" ]
+        , HH.button
+            [ HE.onClick \_ -> NavigateTo SnapshotManagement
+            , HP.style $ toggleButtonStyle (state.scene == SnapshotManagement) textColor
+            ]
+            [ HH.text "Snapshots" ]
         , HH.button
             [ HE.onClick \_ -> NavigateTo ProjectAnatomy
             , HP.style $ toggleButtonStyle (state.scene == ProjectAnatomy) textColor
@@ -1279,6 +1290,11 @@ renderScene state =
       }
       HandleProjectManagementOutput
 
+  SnapshotManagement ->
+    HH.slot _snapshotManagementViz unit SnapshotManagementViz.component
+      { dataReady: state.packageSetData /= Nothing }
+      HandleSnapshotManagementOutput
+
   ProjectAnatomy ->
     case state.packageSetData of
       Just psData ->
@@ -1647,6 +1663,23 @@ handleAction = case _ of
     ProjectManagementViz.ProjectDeleted _projectId -> do
       log "[SceneCoordinator] Project deleted"
       -- Re-fetch projects list
+      result <- liftAff Loader.fetchV2Projects
+      case result of
+        Right projects -> H.modify_ _ { loadedProjects = projects }
+        Left _ -> pure unit
+
+  HandleSnapshotManagementOutput output -> case output of
+    SnapshotManagementViz.NavigateToScene scene -> do
+      handleAction (NavigateTo scene)
+    SnapshotManagementViz.SnapshotCreated -> do
+      log "[SceneCoordinator] Snapshot created, refreshing data"
+      -- Reload projects list since new worktree project was added
+      result <- liftAff Loader.fetchV2Projects
+      case result of
+        Right projects -> H.modify_ _ { loadedProjects = projects }
+        Left _ -> pure unit
+    SnapshotManagementViz.SnapshotsDeleted -> do
+      log "[SceneCoordinator] Snapshots deleted, refreshing data"
       result <- liftAff Loader.fetchV2Projects
       case result of
         Right projects -> H.modify_ _ { loadedProjects = projects }
@@ -2250,6 +2283,10 @@ prepareSceneData state = case state.scene of
         H.modify_ _ { loadedProjects = projects }
       Left err ->
         log $ "[SceneCoordinator] Failed to load projects: " <> err
+
+  SnapshotManagement -> do
+    log "[SceneCoordinator] SnapshotManagement"
+    -- Component handles its own data loading
 
   StructuralDecomp -> do
     -- Data is already available in v2Data (imports loaded upfront)
