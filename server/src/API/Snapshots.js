@@ -300,11 +300,11 @@ export const getCommitFilesImpl = (count, offset, knownModuleNames) => {
   }
 
   try {
-    // --name-only lists changed files after each commit header
+    // --name-status lists changed files with status letter (A/M/D/R/C)
     // NUL-delimited header: hash, subject, relative date
     const format = '%H%x00%s%x00%ar';
     const output = execSync(
-      `git log --name-only --format='${format}' -${count} --skip=${offset}`,
+      `git log --name-status --format='${format}' -${count} --skip=${offset}`,
       { encoding: 'utf8', timeout: 10000 }
     );
 
@@ -327,14 +327,21 @@ export const getCommitFilesImpl = (count, offset, knownModuleNames) => {
           shortHash: hash.substring(0, 7),
           message,
           relativeDate,
-          modules: []
+          modules: [],
+          moduleStatuses: {}
         };
       } else if (currentCommit) {
-        // This is a file path line — look up against known module paths
-        const mod = filePathToModule.get(line);
-        if (mod) {
-          currentCommit.modules.push(mod);
-          allModulesSet.add(mod);
+        // --name-status format: "M\tpath/to/file" or "R100\told\tnew"
+        const parts = line.split('\t');
+        if (parts.length >= 2) {
+          const statusLetter = parts[0].charAt(0); // A, M, D, R, C
+          const filePath = parts.length >= 3 ? parts[2] : parts[1]; // For renames, use new path
+          const mod = filePathToModule.get(filePath);
+          if (mod) {
+            currentCommit.modules.push(mod);
+            currentCommit.moduleStatuses[mod] = statusLetter;
+            allModulesSet.add(mod);
+          }
         }
       }
     }

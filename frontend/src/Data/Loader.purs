@@ -1936,6 +1936,7 @@ type CommitFileEntry =
   , message :: String
   , relativeDate :: String
   , modules :: Array String
+  , moduleStatuses :: Object String  -- module name -> "A"/"M"/"D"/"R"
   }
 
 type CommitFilesResponse =

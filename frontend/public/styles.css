@@ -3312,6 +3312,29 @@ a.ps-clickable:hover {
   box-shadow: 0 0 3px rgba(14, 76, 138, 0.4);
 }
 
+/* Operation status colors (A/M/D) */
+.cmg-dot-fill.status-add {
+  background: none;
+  border: 1.5px solid #0E4C8A;
+}
+
+.cmg-dot-fill.status-delete {
+  background: #c0392b;
+}
+
+.cmg-dot.active.row-hovered .cmg-dot-fill.status-add,
+.cmg-dot.active.col-hovered .cmg-dot-fill.status-add {
+  border-color: #1a6bc4;
+  box-shadow: 0 0 3px rgba(14, 76, 138, 0.4);
+  background: none;
+}
+
+.cmg-dot.active.row-hovered .cmg-dot-fill.status-delete,
+.cmg-dot.active.col-hovered .cmg-dot-fill.status-delete {
+  background: #e74c3c;
+  box-shadow: 0 0 3px rgba(231, 76, 60, 0.4);
+}
+
 .cmg-load-more {
   margin-top: 16px;
   text-align: center;

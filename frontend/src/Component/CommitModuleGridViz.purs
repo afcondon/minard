@@ -20,6 +20,7 @@ import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Map as Map
 import Data.Set (Set)
 import Data.Set as Set
+import Foreign.Object as Object
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class.Console (log)
 import Halogen as H
@@ -57,6 +58,7 @@ type State =
   , commitCount :: Int
   , orderMode :: CoChange.OrderMode
   , showBars :: Boolean
+  , colorByOp :: Boolean  -- color dots by add/modify/delete
   }
 
 -- =============================================================================
@@ -71,6 +73,7 @@ data Action
   | LoadMore
   | SetOrderMode CoChange.OrderMode
   | ToggleBars
+  | ToggleColorByOp
 
 -- =============================================================================
 -- Component
@@ -98,6 +101,7 @@ initialState input =
   , commitCount: 80
   , orderMode: CoChange.ByCosimilarity
   , showBars: true
+  , colorByOp: true
   }
 
 -- =============================================================================
@@ -145,6 +149,11 @@ renderControls state =
         , HE.onClick \_ -> ToggleBars
         ]
         [ HH.text "Bars" ]
+    , HH.button
+        [ HP.class_ (HH.ClassName $ "cmg-control-btn" <> if state.colorByOp then " active" else "")
+        , HE.onClick \_ -> ToggleColorByOp
+        ]
+        [ HH.text "A/M/D" ]
     ]
   where
   orderButton mode label current =
@@ -250,7 +259,7 @@ renderCommitRow state modules commit =
       ]
       [ HH.text commit.relativeDate ]
   ]
-  <> map (renderDot state commit changedSet) modules
+  <> map (renderDot state commit changedSet commit.moduleStatuses) modules
   <> [ -- Breadth cell
        HH.div
          [ HP.class_ (HH.ClassName $ rowCls " cmg-breadth")
@@ -260,26 +269,40 @@ renderCommitRow state modules commit =
          [ HH.text (show breadth) ]
      ]
 
-renderDot :: forall m. State -> Loader.CommitFileEntry -> Set String -> String -> H.ComponentHTML Action () m
-renderDot state commit changedSet modName =
+renderDot :: forall m. State -> Loader.CommitFileEntry -> Set String -> Object.Object String -> String -> H.ComponentHTML Action () m
+renderDot state commit changedSet statuses modName =
   let
     isActive = Set.member modName changedSet
     isColHovered = state.hoveredModule == Just modName
     isRowHovered = state.hoveredCommit == Just commit.hash
+    status = Object.lookup modName statuses
+    statusCls = if state.colorByOp
+      then case status of
+        Just "A" -> " status-add"
+        Just "D" -> " status-delete"
+        Just "R" -> " status-add"
+        _ -> ""
+      else ""
     cls = "cmg-dot"
       <> (if isActive then " active" else "")
       <> (if isColHovered then " col-hovered" else "")
       <> (if isRowHovered then " row-hovered" else "")
+    statusLabel = case status of
+      Just "A" -> " (added)"
+      Just "D" -> " (deleted)"
+      Just "R" -> " (renamed)"
+      Just "M" -> " (modified)"
+      _ -> ""
   in HH.div
     [ HP.class_ (HH.ClassName cls)
     , HE.onMouseEnter \_ -> HoverCommit (Just commit.hash)
     , HE.onMouseLeave \_ -> HoverCommit Nothing
     , HP.title $ if isActive
-        then modName <> " changed in " <> commit.shortHash <> ": " <> commit.message
+        then modName <> statusLabel <> " in " <> commit.shortHash <> ": " <> commit.message
         else ""
     ]
     [ if isActive
-        then HH.div [ HP.class_ (HH.ClassName "cmg-dot-fill") ] []
+        then HH.div [ HP.class_ (HH.ClassName $ "cmg-dot-fill" <> statusCls) ] []
         else HH.text ""
     ]
 
@@ -322,6 +345,9 @@ handleAction = case _ of
 
   ToggleBars ->
     H.modify_ \s -> s { showBars = not s.showBars }
+
+  ToggleColorByOp ->
+    H.modify_ \s -> s { colorByOp = not s.colorByOp }
 
 -- =============================================================================
 -- Data Loading
