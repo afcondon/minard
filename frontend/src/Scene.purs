@@ -47,6 +47,7 @@ data Scene
   | CompareModules String String String String  -- Before/after comparison (pkg1, mod1, pkg2, mod2)
   | CompareSnapshots String String Int          -- Cross-snapshot comparison (pkg, module, beforeSnapshotId)
   | SnapshotManagement                         -- Snapshot creation + cleanup
+  | CommitModuleGrid String                    -- Commit-module change grid (package)
 
 derive instance eqScene :: Eq Scene
 
@@ -69,6 +70,7 @@ instance showScene :: Show Scene where
   show (CompareModules p1 m1 p2 m2) = "CompareModules(" <> p1 <> "," <> m1 <> "," <> p2 <> "," <> m2 <> ")"
   show (CompareSnapshots p m sid) = "CompareSnapshots(" <> p <> "," <> m <> "," <> show sid <> ")"
   show SnapshotManagement = "SnapshotManagement"
+  show (CommitModuleGrid pkg) = "CommitModuleGrid(" <> pkg <> ")"
 
 -- | Get the parent scene for back navigation
 parentScene :: Scene -> Scene
@@ -91,6 +93,7 @@ parentScene = case _ of
   CompareModules _ _ _ _ -> GalaxyTreemap               -- Compare view returns to galaxy
   CompareSnapshots p m _ -> ModuleSignatureMap p m      -- Back to the module being compared
   SnapshotManagement -> ProjectManagement              -- Back to project management
+  CommitModuleGrid pkg -> PkgTreemap pkg              -- Back to package treemap
 
 -- | A segment in the breadcrumb trail
 type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
@@ -112,6 +115,7 @@ sceneBreadcrumbs = case _ of
   CompareModules p1 m1 _ m2 -> [reg, pkgSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
   CompareSnapshots p m _ -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Compare", scene: CompareSnapshots p m 0 }]
   SnapshotManagement     -> [{ kind: "", label: "Projects", scene: ProjectManagement }, { kind: "", label: "Snapshots", scene: SnapshotManagement }]
+  CommitModuleGrid pkg   -> [reg, pkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }]
   SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
   PkgTreemap pkg      -> [reg, pkgSeg pkg]
   PkgModuleBeeswarm p -> [reg, pkgSeg p]
@@ -146,6 +150,7 @@ sceneLabel = case _ of
   CompareModules _ m1 _ m2 -> shortModuleName m1 <> " vs " <> shortModuleName m2
   CompareSnapshots _ m _ -> shortModuleName m <> " (Compare)"
   SnapshotManagement -> "Snapshots"
+  CommitModuleGrid pkg -> pkg <> " Commits"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
 isGalaxyScene :: Scene -> Boolean
@@ -199,6 +204,10 @@ sceneFromString str
                 mod = String.drop (idx + 1) content
             in Just (ModuleStructure pkg mod)
           Nothing -> Nothing
+  | String.take 17 str == "CommitModuleGrid(" =
+      let inner = String.drop 17 str
+          pkg = String.take (String.length inner - 1) inner
+      in Just (CommitModuleGrid pkg)
   | String.take 11 str == "PkgTreemap(" =
       let inner = String.drop 11 str
           pkg = String.take (String.length inner - 1) inner  -- Remove trailing ")"

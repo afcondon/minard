@@ -271,6 +271,85 @@ export const getJsonField = (jsonStr, field) => {
 };
 
 // =============================================================================
+// Commit-Module Grid (git log --name-only per commit)
+// =============================================================================
+
+// getCommitFilesImpl :: EffectFn3 Int Int (Array String) String
+export const getCommitFilesImpl = (count, offset, knownModuleNames) => {
+  // Build reverse lookup: for each known module name, compute all plausible
+  // file paths that git might report. Module names don't always match file
+  // paths (e.g. CE2.Main lives at frontend/src/Main.purs), so we try
+  // stripping common prefixes from the module name.
+  const filePathToModule = new Map();
+  for (const modName of knownModuleNames) {
+    const modPath = modName.replace(/\./g, '/') + '.purs';
+    // Try common source directory prefixes
+    const srcPrefixes = ['frontend/src/', 'server/src/', 'src/', 'test/', 'database/src/', ''];
+    for (const prefix of srcPrefixes) {
+      filePathToModule.set(prefix + modPath, modName);
+    }
+    // Also try stripping the first segment of the module name as a namespace prefix
+    // e.g. CE2.Component.Foo -> Component/Foo.purs (with prefixes)
+    const dotIdx = modName.indexOf('.');
+    if (dotIdx > 0) {
+      const stripped = modName.substring(dotIdx + 1).replace(/\./g, '/') + '.purs';
+      for (const prefix of srcPrefixes) {
+        filePathToModule.set(prefix + stripped, modName);
+      }
+    }
+  }
+
+  try {
+    // --name-only lists changed files after each commit header
+    // NUL-delimited header: hash, subject, relative date
+    const format = '%H%x00%s%x00%ar';
+    const output = execSync(
+      `git log --name-only --format='${format}' -${count} --skip=${offset}`,
+      { encoding: 'utf8', timeout: 10000 }
+    );
+
+    const allModulesSet = new Set();
+    const commits = [];
+    let currentCommit = null;
+
+    for (const line of output.split('\n')) {
+      if (line === '') {
+        // Blank line separates header from file list, or between commits
+        continue;
+      }
+
+      if (line.includes('\0')) {
+        // This is a commit header line
+        if (currentCommit) commits.push(currentCommit);
+        const [hash, message, relativeDate] = line.split('\0');
+        currentCommit = {
+          hash,
+          shortHash: hash.substring(0, 7),
+          message,
+          relativeDate,
+          modules: []
+        };
+      } else if (currentCommit) {
+        // This is a file path line — look up against known module paths
+        const mod = filePathToModule.get(line);
+        if (mod) {
+          currentCommit.modules.push(mod);
+          allModulesSet.add(mod);
+        }
+      }
+    }
+    if (currentCommit) commits.push(currentCommit);
+
+    // Sort allModules alphabetically for stable column ordering
+    const allModules = Array.from(allModulesSet).sort();
+
+    return JSON.stringify({ commits, allModules, count: commits.length });
+  } catch (error) {
+    return JSON.stringify({ commits: [], allModules: [], count: 0, error: error.message });
+  }
+};
+
+// =============================================================================
 // Row Field Access (DuckDB query result objects)
 // =============================================================================
 

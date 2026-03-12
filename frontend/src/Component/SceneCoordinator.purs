@@ -66,6 +66,7 @@ import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.ProjectManagementViz as ProjectManagementViz
 import CE2.Component.SnapshotManagementViz as SnapshotManagementViz
+import CE2.Component.CommitModuleGridViz as CommitModuleGridViz
 import CE2.Component.ProjectAnatomyViz as ProjectAnatomyViz
 import CE2.Component.NamespaceTreeViz as NamespaceTreeViz
 import CE2.Component.StructuralDecompViz as StructuralDecompViz
@@ -154,6 +155,7 @@ type Slots =
   , moduleStructureViz :: ModuleStructureViz.Slot Unit
   , compareModuleViz :: CompareModuleViz.Slot Unit
   , snapshotManagementViz :: SnapshotManagementViz.Slot Unit
+  , commitModuleGridViz :: CommitModuleGridViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -215,6 +217,9 @@ _compareModuleViz = Proxy
 
 _snapshotManagementViz :: Proxy "snapshotManagementViz"
 _snapshotManagementViz = Proxy
+
+_commitModuleGridViz :: Proxy "commitModuleGridViz"
+_commitModuleGridViz = Proxy
 
 -- | Refresh phase for Sync button lifecycle
 data RefreshPhase
@@ -353,6 +358,7 @@ data Action
   | HandleProjectManagementOutput ProjectManagementViz.Output
   | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
   | HandleSnapshotManagementOutput SnapshotManagementViz.Output
+  | HandleCommitModuleGridOutput CommitModuleGridViz.Output
   | HandleModuleStructureOutput ModuleStructureViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
@@ -635,6 +641,26 @@ renderHeaderBar state =
             , HP.style $ toggleButtonStyle isStructure textColor
             ]
             [ HH.text "Structure" ]
+        , let mCommitsTarget = case state.scene of
+                PkgTreemap pkg -> Just (CommitModuleGrid pkg)
+                PkgModuleBeeswarm pkg -> Just (CommitModuleGrid pkg)
+                ModuleSignatureMap pkg _ -> Just (CommitModuleGrid pkg)
+                ModuleOverview pkg _ -> Just (CommitModuleGrid pkg)
+                DeclarationDetail pkg _ _ -> Just (CommitModuleGrid pkg)
+                ModuleStructure pkg _ -> Just (CommitModuleGrid pkg)
+                CommitModuleGrid _ -> Just state.scene
+                _ -> Nothing
+              isCommits = case state.scene of
+                CommitModuleGrid _ -> true
+                _ -> false
+          in case mCommitsTarget of
+            Just target -> HH.button
+              [ HE.onClick \_ -> NavigateTo target
+              , HP.style $ toggleButtonStyle isCommits textColor
+              , HP.title "Commit-module change grid for this package"
+              ]
+              [ HH.text "Commits" ]
+            Nothing -> HH.text ""
         , HH.button
             [ HE.onClick \_ -> ToggleGitMode
             , HP.style $ toggleButtonStyle (state.colorMode == GitStatus) textColor
@@ -1295,6 +1321,11 @@ renderScene state =
       { dataReady: state.packageSetData /= Nothing }
       HandleSnapshotManagementOutput
 
+  CommitModuleGrid pkg ->
+    HH.slot _commitModuleGridViz unit CommitModuleGridViz.component
+      { packageName: pkg }
+      HandleCommitModuleGridOutput
+
   ProjectAnatomy ->
     case state.packageSetData of
       Just psData ->
@@ -1684,6 +1715,10 @@ handleAction = case _ of
       case result of
         Right projects -> H.modify_ _ { loadedProjects = projects }
         Left _ -> pure unit
+
+  HandleCommitModuleGridOutput output -> case output of
+    CommitModuleGridViz.NavigateToScene scene ->
+      handleAction (NavigateTo scene)
 
   HandleProjectAnatomyOutput output -> case output of
     ProjectAnatomyViz.PackageClicked pkgName -> do
@@ -2286,6 +2321,10 @@ prepareSceneData state = case state.scene of
 
   SnapshotManagement -> do
     log "[SceneCoordinator] SnapshotManagement"
+    -- Component handles its own data loading
+
+  CommitModuleGrid pkg -> do
+    log $ "[SceneCoordinator] CommitModuleGrid: " <> pkg
     -- Component handles its own data loading
 
   StructuralDecomp -> do

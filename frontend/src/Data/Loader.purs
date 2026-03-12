@@ -113,6 +113,9 @@ module CE2.Data.Loader
   , fetchSnapshotDetails
   , createSnapshotFromRef
   , deleteSnapshotsByIds
+    -- Commit-Module Grid
+  , CommitFileEntry
+  , fetchCommitFiles
   ) where
 
 import Prelude
@@ -1921,3 +1924,31 @@ deleteSnapshotsByIds ids = do
     Right response -> do
       r :: DeleteResultsResponse <- decodeJson response.body # mapLeft printJsonDecodeError
       Right r.results
+
+-- =============================================================================
+-- Commit-Module Grid (which modules changed in each commit)
+-- =============================================================================
+
+-- | A commit with the list of modules it touched within a package
+type CommitFileEntry =
+  { hash :: String
+  , shortHash :: String
+  , message :: String
+  , relativeDate :: String
+  , modules :: Array String
+  }
+
+type CommitFilesResponse =
+  { commits :: Array CommitFileEntry
+  , allModules :: Array String
+  , count :: Int
+  }
+
+-- | Fetch commit-module data for a package
+fetchCommitFiles :: Int -> String -> Aff (Either String { commits :: Array CommitFileEntry, allModules :: Array String })
+fetchCommitFiles count pkg = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/git/commit-files?count=" <> show count <> "&package=" <> pkg)
+  pure $ do
+    json <- result
+    response :: CommitFilesResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right { commits: response.commits, allModules: response.allModules }

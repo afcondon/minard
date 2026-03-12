@@ -75,6 +75,7 @@ data Route
   -- Snapshots
   | V2ListSnapshots       -- GET /api/v2/snapshots?project=N
   | V2GitLog              -- GET /api/v2/git/log?count=30&offset=0
+  | V2CommitFiles         -- GET /api/v2/git/commit-files?count=50&package=name
   | V2SnapshotDetails     -- GET /api/v2/snapshots/details
   | V2CreateSnapshot      -- POST /api/v2/snapshots/create
   | V2DeleteSnapshots     -- POST /api/v2/snapshots/delete
@@ -120,6 +121,7 @@ route = root $ sum
   , "V2DeleteProject": path "api/v2/projects" (int segment)
   , "V2ListSnapshots": path "api/v2/snapshots" noArgs
   , "V2GitLog": path "api/v2/git/log" noArgs
+  , "V2CommitFiles": path "api/v2/git/commit-files" noArgs
   , "V2SnapshotDetails": path "api/v2/snapshots/details" noArgs
   , "V2CreateSnapshot": path "api/v2/snapshots/create" noArgs
   , "V2DeleteSnapshots": path "api/v2/snapshots/delete" noArgs
@@ -211,6 +213,7 @@ main = launchAff_ do
     log "  GET /api/v2/snapshots[?project=N]          - List snapshots for project"
     log "  GET /api/v2/snapshots/details              - Enhanced snapshot listing"
     log "  GET /api/v2/git/log?count=30&offset=0      - Git commit log"
+    log "  GET /api/v2/git/commit-files?count=50&package= - Commit-module grid data"
     log "  POST /api/v2/snapshots/create              - Create snapshot from ref"
     log "  POST /api/v2/snapshots/delete              - Delete snapshots + worktrees"
     log "  GET /api/v2/projects                     - List loaded projects"
@@ -304,6 +307,11 @@ main = launchAff_ do
         let count = fromMaybe 30 (Object.lookup "count" query >>= Int.fromString)
             offset = fromMaybe 0 (Object.lookup "offset" query >>= Int.fromString)
         in Snapshots.getGitLog db count offset
+      V2CommitFiles ->
+        let count = fromMaybe 50 (Object.lookup "count" query >>= Int.fromString)
+            offset = fromMaybe 0 (Object.lookup "offset" query >>= Int.fromString)
+            pkg = fromMaybe "" (Object.lookup "package" query)
+        in Snapshots.getCommitFiles db count offset pkg
       V2SnapshotDetails -> Snapshots.listSnapshotDetails db
       V2CreateSnapshot -> case method of
         Post -> do
