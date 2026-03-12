@@ -326,6 +326,9 @@ type State =
     -- Change frequency data (lazy loaded from git commit history)
   , changeFrequencyData :: Maybe (Map.Map String Number)
 
+    -- Co-change cluster data (lazy computed from git commit history)
+  , coChangeClusterData :: Maybe (Map.Map String Int)
+
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
@@ -383,6 +386,7 @@ data Action
   | ComplexityPeekOn                      -- C key pressed - show coupling score overlay
   | ComplexityPeekOff                     -- C key released - hide coupling score overlay
   | ToggleChangeFrequencyMode             -- Toggle change frequency heat map coloring
+  | ToggleCoChangeClusterMode             -- Toggle co-change community coloring
   -- Incremental refresh
   | RequestRefresh                        -- User clicks Sync button
   | ClearRefreshDone                      -- Timer fires 1.5s after sync completion
@@ -445,6 +449,7 @@ initialState input =
   , complexityData: Nothing
   , complexityPeek: false
   , changeFrequencyData: Nothing
+  , coChangeClusterData: Nothing
   , hideInfraLinks: false
   , loadedProjects: []
   , historyCleanup: Nothing
@@ -690,6 +695,12 @@ renderHeaderBar state =
             , HP.title "Changes: heat map by git change frequency (blue=cold, red=hot)"
             ]
             [ HH.text "Changes" ]
+        , HH.button
+            [ HE.onClick \_ -> ToggleCoChangeClusterMode
+            , HP.style $ toggleButtonStyle (state.colorMode == CoChangeCluster) textColor
+            , HP.title "Co-change: modules colored by co-change community (frequently changed together)"
+            ]
+            [ HH.text "Co-chg" ]
         , renderSyncButton state textColor
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
@@ -1084,6 +1095,7 @@ renderScene state =
                   , complexityData: state.complexityData
                   , complexityPeek: state.complexityPeek
                   , changeFrequencyData: state.changeFrequencyData
+                  , coChangeClusterData: state.coChangeClusterData
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1467,6 +1479,7 @@ handleAction = case _ of
         , clusterData = Nothing
         , purityData = Nothing
         , changeFrequencyData = Nothing
+        , coChangeClusterData = Nothing
         }
       newState <- H.get
       prepareSceneData newState
@@ -1501,6 +1514,7 @@ handleAction = case _ of
       , clusterData = Nothing       -- Clear stale cluster data (package-specific)
       , purityData = Nothing        -- Clear stale purity data (package-specific)
       , changeFrequencyData = Nothing  -- Clear stale change frequency (package-specific)
+      , coChangeClusterData = Nothing  -- Clear stale co-change clusters (package-specific)
       }
 
     -- Push to browser history (enables back/forward buttons)
@@ -1524,6 +1538,12 @@ handleAction = case _ of
     when (state.colorMode == ChangeFrequency) $ case targetScene of
       PkgTreemap pkg -> loadChangeFrequencyData pkg
       PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+      _ -> pure unit
+
+    -- If co-change cluster mode is active, reload for the new package
+    when (state.colorMode == CoChangeCluster) $ case targetScene of
+      PkgTreemap pkg -> loadCoChangeClusterData pkg
+      PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
       _ -> pure unit
 
     H.raise (SceneChanged targetScene)
@@ -1557,6 +1577,7 @@ handleAction = case _ of
         , clusterData = Nothing       -- Clear stale cluster data (package-specific)
         , purityData = Nothing        -- Clear stale purity data (package-specific)
         , changeFrequencyData = Nothing  -- Clear stale change frequency (package-specific)
+        , coChangeClusterData = Nothing  -- Clear stale co-change clusters (package-specific)
         }
 
       -- If reachability mode is active, recompute for the target scene
@@ -1570,6 +1591,12 @@ handleAction = case _ of
       when (state.colorMode == ChangeFrequency) $ case targetScene of
         PkgTreemap pkg -> loadChangeFrequencyData pkg
         PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+        _ -> pure unit
+
+      -- If co-change cluster mode is active, reload for the new package
+      when (state.colorMode == CoChangeCluster) $ case targetScene of
+        PkgTreemap pkg -> loadCoChangeClusterData pkg
+        PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
         _ -> pure unit
 
       H.raise (SceneChanged targetScene)
@@ -1963,6 +1990,21 @@ handleAction = case _ of
           case state.scene of
             PkgTreemap pkg -> loadChangeFrequencyData pkg
             PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+            _ -> pure unit
+
+  ToggleCoChangeClusterMode -> do
+    state <- H.get
+    if state.colorMode == CoChangeCluster
+      then do
+        log "[SceneCoordinator] Co-change cluster mode OFF"
+        H.modify_ _ { colorMode = FullRegistryTopo }
+      else do
+        log "[SceneCoordinator] Co-change cluster mode ON"
+        H.modify_ _ { colorMode = CoChangeCluster }
+        when (state.coChangeClusterData == Nothing) do
+          case state.scene of
+            PkgTreemap pkg -> loadCoChangeClusterData pkg
+            PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
             _ -> pure unit
 
   -- =========================================================================
@@ -2654,3 +2696,18 @@ loadChangeFrequencyData pkg = do
       H.modify_ _ { changeFrequencyData = Just normalized }
     Left err ->
       log $ "[SceneCoordinator] Failed to load change frequency: " <> err
+
+-- | Load co-change cluster data from git commit history for a package
+loadCoChangeClusterData :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
+loadCoChangeClusterData pkg = do
+  log $ "[SceneCoordinator] Computing co-change clusters for " <> pkg
+  result <- liftAff $ Loader.fetchCommitFiles 200 pkg
+  case result of
+    Right r -> do
+      let { communities, clusters } = CoChange.coChangeCommunities r.commits r.allModules
+      log $ "[SceneCoordinator] Co-change clusters for " <> pkg <> ": "
+          <> show (Array.length clusters) <> " communities, "
+          <> show (Map.size communities) <> " modules assigned"
+      H.modify_ _ { coChangeClusterData = Just communities }
+    Left err ->
+      log $ "[SceneCoordinator] Failed to load co-change clusters: " <> err

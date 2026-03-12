@@ -358,6 +358,7 @@ data ColorMode
   | ClusterView         -- Color by dependency cluster (connected components / communities)
   | StructuralComplexity -- Color by coupling score (internal density + cross-module coupling)
   | ChangeFrequency      -- Color by git change frequency (heat map from commit history)
+  | CoChangeCluster      -- Color by co-change community (modules that change together)
 
 derive instance eqColorMode :: Eq ColorMode
 
@@ -372,6 +373,7 @@ instance showColorMode :: Show ColorMode where
   show ClusterView = "ClusterView"
   show StructuralComplexity = "StructuralComplexity"
   show ChangeFrequency = "ChangeFrequency"
+  show CoChangeCluster = "CoChangeCluster"
 
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String

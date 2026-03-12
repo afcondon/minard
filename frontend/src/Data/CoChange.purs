@@ -7,6 +7,7 @@ module CE2.Data.CoChange
   , reorderModules
   , moduleFrequencies
   , commitBreadths
+  , coChangeCommunities
   ) where
 
 import Prelude
@@ -16,6 +17,7 @@ import Data.Foldable (foldl)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set (Set)
 import Data.Set as Set
 import Data.Tuple (Tuple(..), fst, snd)
 import CE2.Data.Loader as Loader
@@ -127,3 +129,73 @@ coOccurrence :: CoOccurrenceMatrix -> String -> String -> Int
 coOccurrence matrix a b =
   let key = if a <= b then Tuple a b else Tuple b a
   in fromMaybe 0 (Map.lookup key matrix)
+
+-- =============================================================================
+-- Co-Change Community Detection
+-- =============================================================================
+
+-- | Detect co-change communities: groups of modules that frequently change together.
+-- | Uses connected components on the co-occurrence graph with a minimum edge threshold.
+-- | Returns: { communities :: Map String Int, clusters :: Array (Set String) }
+coChangeCommunities
+  :: Array Loader.CommitFileEntry
+  -> Array String
+  -> { communities :: Map String Int, clusters :: Array (Set String) }
+coChangeCommunities commits modules =
+  let
+    coMatrix = buildCoOccurrenceMatrix commits modules
+    -- Threshold: modules must co-occur in at least 2 commits to be linked
+    threshold = 2
+    -- Build adjacency list from co-occurrence matrix
+    adjacency = buildAdjacency coMatrix threshold modules
+    -- Find connected components via flood fill
+    components = connectedComponents modules adjacency
+    -- Assign community indices
+    communities = foldl (\acc (Tuple idx cluster) ->
+      foldl (\acc' m -> Map.insert m idx acc') acc (Array.fromFoldable cluster)
+    ) Map.empty (Array.mapWithIndex (\i c -> Tuple i c) components)
+  in { communities, clusters: components }
+
+-- | Build adjacency list: for each module, which other modules have co-occurrence >= threshold
+buildAdjacency :: CoOccurrenceMatrix -> Int -> Array String -> Map String (Set String)
+buildAdjacency coMatrix threshold modules =
+  foldl (\acc m ->
+    let neighbors = Array.foldl (\ns other ->
+          if m /= other && coOccurrence coMatrix m other >= threshold
+            then Set.insert other ns
+            else ns
+        ) Set.empty modules
+    in Map.insert m neighbors acc
+  ) Map.empty modules
+
+-- | Find connected components using iterative flood fill
+connectedComponents :: Array String -> Map String (Set String) -> Array (Set String)
+connectedComponents modules adjacency =
+  let
+    go :: Array (Set String) -> Set String -> Array String -> Array (Set String)
+    go components visited remaining = case Array.uncons remaining of
+      Nothing -> components
+      Just { head: start, tail: rest } ->
+        if Set.member start visited then go components visited rest
+        else
+          let component = floodFill start adjacency visited
+              newVisited = Set.union visited component
+              newRemaining = Array.filter (\m -> not (Set.member m newVisited)) rest
+          in go (Array.snoc components component) newVisited newRemaining
+  in go [] Set.empty modules
+
+-- | Flood fill from a starting node to find its connected component
+floodFill :: String -> Map String (Set String) -> Set String -> Set String
+floodFill start adjacency alreadyVisited =
+  let
+    go :: Set String -> Array String -> Set String
+    go visited queue = case Array.uncons queue of
+      Nothing -> visited
+      Just { head: node, tail: rest } ->
+        if Set.member node visited then go visited rest
+        else
+          let neighbors = fromMaybe Set.empty (Map.lookup node adjacency)
+              newNodes = Array.filter (\n -> not (Set.member n visited) && not (Set.member n alreadyVisited))
+                           (Array.fromFoldable neighbors)
+          in go (Set.insert node visited) (rest <> newNodes)
+  in go Set.empty [start]

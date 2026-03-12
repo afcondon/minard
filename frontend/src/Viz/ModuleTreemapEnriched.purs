@@ -83,6 +83,7 @@ type Config =
   , complexityData :: Maybe (Map String ModuleStructuralComplexity)  -- Coupling score data
   , complexityPeek :: Boolean    -- True while C key held (show coupling score overlay)
   , changeFrequencyData :: Maybe (Map String Number)  -- Normalized change frequency per module (0.0–1.0)
+  , coChangeClusterData :: Maybe (Map String Int)  -- Co-change community index per module
   }
 
 -- | Module with computed treemap position
@@ -153,8 +154,8 @@ type ModuleStyling =
   , strokeWidth :: String
   }
 
-getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> Maybe Int -> Maybe Number -> Maybe Number -> ModuleStyling
-getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore mChangeFreq = case colorMode of
+getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> Maybe Int -> Maybe Number -> Maybe Number -> Maybe Int -> ModuleStyling
+getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore mChangeFreq mCoChangeIdx = case colorMode of
   Reachability ->
     case mReachStatus of
       Just EntryPoint ->
@@ -241,6 +242,19 @@ getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore mCh
         { fillColor: "rgba(128, 128, 128, 0.08)"
         , strokeColor: "rgba(128, 128, 128, 0.15)"
         , strokeWidth: "0.5"
+        }
+  CoChangeCluster ->
+    case mCoChangeIdx of
+      Just idx ->
+        let clusterColor = clusterPaletteColor idx
+        in { fillColor: clusterColor <> "33"
+           , strokeColor: clusterColor
+           , strokeWidth: "2"
+           }
+      Nothing ->
+        { fillColor: "transparent"
+        , strokeColor: "rgba(255, 255, 255, 0.3)"
+        , strokeWidth: "1"
         }
   ChangeFrequency ->
     case mChangeFreq of
@@ -813,7 +827,9 @@ enrichedModuleCell config m =
     couplingScore = config.complexityData >>= \cd -> Map.lookup m.name cd <#> _.couplingScore
     -- Get change frequency for this module
     changeFreq = config.changeFrequencyData >>= Map.lookup m.name
-    styling = getModuleStyling config.colorMode gitStatus reachStatus clusterIdx couplingScore changeFreq
+    -- Get co-change cluster index for this module
+    coChangeIdx = config.coChangeClusterData >>= Map.lookup m.name
+    styling = getModuleStyling config.colorMode gitStatus reachStatus clusterIdx couplingScore changeFreq coChangeIdx
     -- Dim declaration bubbles for unreachable modules in Reachability mode
     declOpacity = case config.colorMode of
       Reachability -> case reachStatus of

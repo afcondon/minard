@@ -520,6 +520,9 @@ getNodeStyling colorMode gitStatus pkg dateRange maxTopoLayer = case colorMode o
     -- At package-set level, fall back to topo coloring
     -- (change frequency is module-level, not meaningful at package level)
     { color: getTopoColor pkg.topoLayer maxTopoLayer, strokeColor: "#333", strokeWidth: 0.5 }
+  CoChangeCluster ->
+    -- At package-set level, fall back to topo coloring
+    { color: getTopoColor pkg.topoLayer maxTopoLayer, strokeColor: "#333", strokeWidth: 0.5 }
 
 -- | Get color based on topo layer (green-to-blue gradient)
 getTopoColor :: Int -> Int -> String
