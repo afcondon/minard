@@ -22,6 +22,7 @@ import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
+import Data.Int as Data.Int
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
@@ -77,6 +78,7 @@ import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
 
 import CE2.Containers as C
+import CE2.Data.CoChange as CoChange
 import CE2.Data.Loader as Loader
 import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
@@ -321,6 +323,9 @@ type State =
   , complexityData :: Maybe (Map.Map String Loader.ModuleStructuralComplexity)
   , complexityPeek :: Boolean
 
+    -- Change frequency data (lazy loaded from git commit history)
+  , changeFrequencyData :: Maybe (Map.Map String Number)
+
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
@@ -377,6 +382,7 @@ data Action
   | ToggleComplexityMode                  -- Toggle structural complexity coloring
   | ComplexityPeekOn                      -- C key pressed - show coupling score overlay
   | ComplexityPeekOff                     -- C key released - hide coupling score overlay
+  | ToggleChangeFrequencyMode             -- Toggle change frequency heat map coloring
   -- Incremental refresh
   | RequestRefresh                        -- User clicks Sync button
   | ClearRefreshDone                      -- Timer fires 1.5s after sync completion
@@ -438,6 +444,7 @@ initialState input =
   , purityPeek: false
   , complexityData: Nothing
   , complexityPeek: false
+  , changeFrequencyData: Nothing
   , hideInfraLinks: false
   , loadedProjects: []
   , historyCleanup: Nothing
@@ -677,6 +684,12 @@ renderHeaderBar state =
             , HP.title "Cluster: modules colored by dependency cluster (connected components). Hold R to peek reachability."
             ]
             [ HH.text "Cluster" ]
+        , HH.button
+            [ HE.onClick \_ -> ToggleChangeFrequencyMode
+            , HP.style $ toggleButtonStyle (state.colorMode == ChangeFrequency) textColor
+            , HP.title "Changes: heat map by git change frequency (blue=cold, red=hot)"
+            ]
+            [ HH.text "Changes" ]
         , renderSyncButton state textColor
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
@@ -1070,6 +1083,7 @@ renderScene state =
                   , purityPeek: state.purityPeek
                   , complexityData: state.complexityData
                   , complexityPeek: state.complexityPeek
+                  , changeFrequencyData: state.changeFrequencyData
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1452,6 +1466,7 @@ handleAction = case _ of
         , reachabilityData = Nothing
         , clusterData = Nothing
         , purityData = Nothing
+        , changeFrequencyData = Nothing
         }
       newState <- H.get
       prepareSceneData newState
@@ -1485,6 +1500,7 @@ handleAction = case _ of
       , reachabilityData = Nothing  -- Clear stale reachability (package-specific)
       , clusterData = Nothing       -- Clear stale cluster data (package-specific)
       , purityData = Nothing        -- Clear stale purity data (package-specific)
+      , changeFrequencyData = Nothing  -- Clear stale change frequency (package-specific)
       }
 
     -- Push to browser history (enables back/forward buttons)
@@ -1502,6 +1518,12 @@ handleAction = case _ of
     when (state.colorMode == ClusterView) $ case targetScene of
       PkgTreemap pkg -> computeAndStoreClusters pkg
       PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
+      _ -> pure unit
+
+    -- If change frequency mode is active, reload for the new package
+    when (state.colorMode == ChangeFrequency) $ case targetScene of
+      PkgTreemap pkg -> loadChangeFrequencyData pkg
+      PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
       _ -> pure unit
 
     H.raise (SceneChanged targetScene)
@@ -1534,6 +1556,7 @@ handleAction = case _ of
         , reachabilityData = Nothing  -- Clear stale reachability (package-specific)
         , clusterData = Nothing       -- Clear stale cluster data (package-specific)
         , purityData = Nothing        -- Clear stale purity data (package-specific)
+        , changeFrequencyData = Nothing  -- Clear stale change frequency (package-specific)
         }
 
       -- If reachability mode is active, recompute for the target scene
@@ -1541,6 +1564,12 @@ handleAction = case _ of
         PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
         PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
         GalaxyTreemap -> computeAndStoreGlobalReachability
+        _ -> pure unit
+
+      -- If change frequency mode is active, reload for the new package
+      when (state.colorMode == ChangeFrequency) $ case targetScene of
+        PkgTreemap pkg -> loadChangeFrequencyData pkg
+        PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
         _ -> pure unit
 
       H.raise (SceneChanged targetScene)
@@ -1920,6 +1949,21 @@ handleAction = case _ of
 
   ComplexityPeekOff -> do
     H.modify_ _ { complexityPeek = false }
+
+  ToggleChangeFrequencyMode -> do
+    state <- H.get
+    if state.colorMode == ChangeFrequency
+      then do
+        log "[SceneCoordinator] Change frequency mode OFF"
+        H.modify_ _ { colorMode = FullRegistryTopo }
+      else do
+        log "[SceneCoordinator] Change frequency mode ON"
+        H.modify_ _ { colorMode = ChangeFrequency }
+        when (state.changeFrequencyData == Nothing) do
+          case state.scene of
+            PkgTreemap pkg -> loadChangeFrequencyData pkg
+            PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+            _ -> pure unit
 
   -- =========================================================================
   -- Search Typeahead Actions
@@ -2591,3 +2635,22 @@ loadComplexityData = do
       H.modify_ _ { complexityData = Just complexityMap }
     Left err ->
       log $ "[SceneCoordinator] Failed to load complexity: " <> err
+
+-- | Load change frequency data from git commit history for a package
+loadChangeFrequencyData :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
+loadChangeFrequencyData pkg = do
+  log $ "[SceneCoordinator] Fetching change frequency for " <> pkg
+  result <- liftAff $ Loader.fetchCommitFiles 200 pkg
+  case result of
+    Right r -> do
+      let freqs = CoChange.moduleFrequencies r.commits
+          freqPairs = Map.toUnfoldable freqs :: Array (Tuple String Int)
+          maxFreq = Array.foldl (\acc (Tuple _ v) -> max acc v) 1 freqPairs
+          normalized = Map.fromFoldable $ freqPairs <#> \(Tuple k v) ->
+            Tuple k (Data.Int.toNumber v / Data.Int.toNumber maxFreq)
+      log $ "[SceneCoordinator] Change frequency for " <> pkg <> ": "
+          <> show (Map.size normalized) <> " modules from "
+          <> show (Array.length r.commits) <> " commits"
+      H.modify_ _ { changeFrequencyData = Just normalized }
+    Left err ->
+      log $ "[SceneCoordinator] Failed to load change frequency: " <> err

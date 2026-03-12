@@ -82,6 +82,7 @@ type Config =
   , purityPeek :: Boolean        -- True while P key held (show purity overlay)
   , complexityData :: Maybe (Map String ModuleStructuralComplexity)  -- Coupling score data
   , complexityPeek :: Boolean    -- True while C key held (show coupling score overlay)
+  , changeFrequencyData :: Maybe (Map String Number)  -- Normalized change frequency per module (0.0–1.0)
   }
 
 -- | Module with computed treemap position
@@ -152,8 +153,8 @@ type ModuleStyling =
   , strokeWidth :: String
   }
 
-getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> Maybe Int -> Maybe Number -> ModuleStyling
-getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore = case colorMode of
+getModuleStyling :: ColorMode -> GitFileStatus -> Maybe ReachabilityStatus -> Maybe Int -> Maybe Number -> Maybe Number -> ModuleStyling
+getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore mChangeFreq = case colorMode of
   Reachability ->
     case mReachStatus of
       Just EntryPoint ->
@@ -237,6 +238,25 @@ getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore = c
            }
       Nothing ->
         -- No data: neutral gray, visually distinct from low-coupling green
+        { fillColor: "rgba(128, 128, 128, 0.08)"
+        , strokeColor: "rgba(128, 128, 128, 0.15)"
+        , strokeWidth: "0.5"
+        }
+  ChangeFrequency ->
+    case mChangeFreq of
+      Just t ->
+        -- Cool→hot heat map: blue (cold, rarely changed) → amber → red (hot, frequently changed)
+        let r = round (min 255.0 (30.0 + 225.0 * min 1.0 (t * 1.5)))
+            g = round (max 40.0 (160.0 - 120.0 * max 0.0 (t * 2.0 - 0.5)))
+            b = round (max 30.0 (200.0 - 170.0 * t))
+            fillOpacity = 0.2 + 0.45 * t
+            strokeOpacity = 0.4 + 0.6 * t
+        in { fillColor: "rgba(" <> show r <> "," <> show g <> "," <> show b <> "," <> show fillOpacity <> ")"
+           , strokeColor: "rgba(" <> show r <> "," <> show g <> "," <> show b <> "," <> show strokeOpacity <> ")"
+           , strokeWidth: if t > 0.7 then "3" else if t > 0.3 then "2" else "1"
+           }
+      Nothing ->
+        -- No frequency data: neutral
         { fillColor: "rgba(128, 128, 128, 0.08)"
         , strokeColor: "rgba(128, 128, 128, 0.15)"
         , strokeWidth: "0.5"
@@ -791,7 +811,9 @@ enrichedModuleCell config m =
     clusterIdx = config.clusterData >>= \cd -> Map.lookup m.name cd.communities
     -- Get coupling score for this module
     couplingScore = config.complexityData >>= \cd -> Map.lookup m.name cd <#> _.couplingScore
-    styling = getModuleStyling config.colorMode gitStatus reachStatus clusterIdx couplingScore
+    -- Get change frequency for this module
+    changeFreq = config.changeFrequencyData >>= Map.lookup m.name
+    styling = getModuleStyling config.colorMode gitStatus reachStatus clusterIdx couplingScore changeFreq
     -- Dim declaration bubbles for unreachable modules in Reachability mode
     declOpacity = case config.colorMode of
       Reachability -> case reachStatus of

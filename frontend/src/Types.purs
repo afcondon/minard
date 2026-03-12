@@ -357,6 +357,7 @@ data ColorMode
   | Reachability        -- Color by external reachability (dead code detection)
   | ClusterView         -- Color by dependency cluster (connected components / communities)
   | StructuralComplexity -- Color by coupling score (internal density + cross-module coupling)
+  | ChangeFrequency      -- Color by git change frequency (heat map from commit history)
 
 derive instance eqColorMode :: Eq ColorMode
 
@@ -370,6 +371,7 @@ instance showColorMode :: Show ColorMode where
   show Reachability = "Reachability"
   show ClusterView = "ClusterView"
   show StructuralComplexity = "StructuralComplexity"
+  show ChangeFrequency = "ChangeFrequency"
 
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String
