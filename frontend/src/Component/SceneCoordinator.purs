@@ -329,6 +329,9 @@ type State =
     -- Co-change cluster data (lazy computed from git commit history)
   , coChangeClusterData :: Maybe (Map.Map String Int)
 
+    -- Size-by-change-frequency toggle
+  , sizeByChangeFrequency :: Boolean
+
     -- Infrastructure link filtering (Tidy mode)
   , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
 
@@ -387,6 +390,7 @@ data Action
   | ComplexityPeekOff                     -- C key released - hide coupling score overlay
   | ToggleChangeFrequencyMode             -- Toggle change frequency heat map coloring
   | ToggleCoChangeClusterMode             -- Toggle co-change community coloring
+  | ToggleSizeByFrequency                 -- Toggle treemap sizing by change frequency
   -- Incremental refresh
   | RequestRefresh                        -- User clicks Sync button
   | ClearRefreshDone                      -- Timer fires 1.5s after sync completion
@@ -450,6 +454,7 @@ initialState input =
   , complexityPeek: false
   , changeFrequencyData: Nothing
   , coChangeClusterData: Nothing
+  , sizeByChangeFrequency: false
   , hideInfraLinks: false
   , loadedProjects: []
   , historyCleanup: Nothing
@@ -705,6 +710,12 @@ renderHeaderBar state =
             , HP.title "Co-change: modules colored by co-change community (frequently changed together)"
             ]
             [ HH.text "Co-chg" ]
+        , HH.button
+            [ HE.onClick \_ -> ToggleSizeByFrequency
+            , HP.style $ toggleButtonStyle state.sizeByChangeFrequency textColor
+            , HP.title "Size: treemap area proportional to git change frequency instead of LOC"
+            ]
+            [ HH.text "Size" ]
         , renderSyncButton state textColor
         , HH.span
             [ HP.style "font-size: 9px; opacity: 0.6;" ]
@@ -1100,6 +1111,7 @@ renderScene state =
                   , complexityPeek: state.complexityPeek
                   , changeFrequencyData: state.changeFrequencyData
                   , coChangeClusterData: state.coChangeClusterData
+                  , sizeByChangeFrequency: state.sizeByChangeFrequency
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -1995,6 +2007,18 @@ handleAction = case _ of
             PkgTreemap pkg -> loadChangeFrequencyData pkg
             PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
             _ -> pure unit
+
+  ToggleSizeByFrequency -> do
+    state <- H.get
+    let newVal = not state.sizeByChangeFrequency
+    log $ "[SceneCoordinator] Size by change frequency: " <> show newVal
+    H.modify_ _ { sizeByChangeFrequency = newVal }
+    -- Ensure frequency data is loaded when toggling on
+    when (newVal && state.changeFrequencyData == Nothing) do
+      case state.scene of
+        PkgTreemap pkg -> loadChangeFrequencyData pkg
+        PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+        _ -> pure unit
 
   ToggleCoChangeClusterMode -> do
     state <- H.get

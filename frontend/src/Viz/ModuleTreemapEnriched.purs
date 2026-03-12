@@ -84,6 +84,7 @@ type Config =
   , complexityPeek :: Boolean    -- True while C key held (show coupling score overlay)
   , changeFrequencyData :: Maybe (Map String Number)  -- Normalized change frequency per module (0.0–1.0)
   , coChangeClusterData :: Maybe (Map String Int)  -- Co-change community index per module
+  , sizeByChangeFrequency :: Boolean  -- When true, treemap area = change frequency instead of LOC
   }
 
 -- | Module with computed treemap position
@@ -347,11 +348,17 @@ computeModulePositions config modules =
   let
     moduleLeaves :: Array (ValuedNode V2ModuleListItem)
     moduleLeaves = modules <#> \m ->
-      VNode
+      let locValue = toNumber $ max 1 $ fromMaybe m.declarationCount m.loc
+          freqValue = case config.changeFrequencyData of
+            Just freqs | config.sizeByChangeFrequency ->
+              -- Use change frequency as sizing (minimum floor so unchanged modules still visible)
+              fromMaybe 0.05 (Map.lookup m.name freqs) # max 0.05
+            _ -> locValue
+      in VNode
         { data_: m
         , depth: 1
         , height: 0
-        , value: toNumber $ max 1 $ fromMaybe m.declarationCount m.loc
+        , value: freqValue
         , children: []
         , parent: Nothing
         }

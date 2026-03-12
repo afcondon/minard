@@ -55,6 +55,7 @@ type Input =
   , complexityPeek :: Boolean               -- True while C key held (show coupling scores)
   , changeFrequencyData :: Maybe (Map String Number)  -- Normalized change frequency (0.0–1.0)
   , coChangeClusterData :: Maybe (Map String Int)  -- Co-change community index per module
+  , sizeByChangeFrequency :: Boolean  -- When true, treemap sized by change frequency
   }
 
 -- | Output to parent
@@ -166,11 +167,12 @@ handleAction = case _ of
         complexityPeekChanged = input.complexityPeek /= lastInput.complexityPeek
         changeFreqChanged = (input.changeFrequencyData <#> Map.size) /= (lastInput.changeFrequencyData <#> Map.size)
         coChangeClusterChanged = (input.coChangeClusterData <#> Map.size) /= (lastInput.coChangeClusterData <#> Map.size)
+        sizeByFreqChanged = input.sizeByChangeFrequency /= lastInput.sizeByChangeFrequency
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
-    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged || reachabilityChanged || peekChanged || clusterChanged || purityChanged || purityPeekChanged || complexityChanged || complexityPeekChanged || changeFreqChanged || coChangeClusterChanged) do
+    when (packageChanged || modulesChanged || declarationsChanged || callsChanged || colorModeChanged || gitStatusChanged || reachabilityChanged || peekChanged || clusterChanged || purityChanged || purityPeekChanged || complexityChanged || complexityPeekChanged || changeFreqChanged || coChangeClusterChanged || sizeByFreqChanged) do
       log $ "[ModuleTreemapEnrichedViz] Input changed, re-rendering"
       renderTreemap input
 
@@ -223,6 +225,7 @@ renderTreemap input = do
     , complexityPeek: input.complexityPeek
     , changeFrequencyData: input.changeFrequencyData
     , coChangeClusterData: input.coChangeClusterData
+    , sizeByChangeFrequency: input.sizeByChangeFrequency
     }
     pkgModules
     pkgImports
