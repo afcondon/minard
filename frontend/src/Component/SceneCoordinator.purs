@@ -469,10 +469,14 @@ render :: forall m. MonadAff m => State -> H.ComponentHTML Action Slots m
 render state =
   let theme = Pure.themeForScene state.scene
       colors = themeColors theme
+      -- Override background for light-canvas color modes
+      bgColor = case state.colorMode of
+        CoChangeCluster -> "#FFFFFF"
+        _ -> colors.background
   in HH.div
     [ HP.class_ (HH.ClassName "scene-coordinator")
     -- Note: MUST use height: 100vh (not min-height) for flex-grow to work with the child's height: 0 pattern
-    , HP.style $ "display: flex; flex-direction: column; height: 100vh; background: " <> colors.background <> "; transition: background 0.5s ease;"
+    , HP.style $ "display: flex; flex-direction: column; height: 100vh; background: " <> bgColor <> "; transition: background 0.5s ease;"
     ]
     [ -- Header bar with breadcrumb navigation
       renderHeaderBar state

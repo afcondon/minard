@@ -246,15 +246,15 @@ getModuleStyling colorMode gitStatus mReachStatus mClusterIdx mCouplingScore mCh
   CoChangeCluster ->
     case mCoChangeIdx of
       Just idx ->
-        let clusterColor = clusterPaletteColor idx
-        in { fillColor: clusterColor <> "33"
-           , strokeColor: clusterColor
-           , strokeWidth: "2"
+        let clusterColor = coChangePaletteColor idx
+        in { fillColor: clusterColor <> "40"  -- ~25% opacity for light background
+           , strokeColor: "rgba(0, 0, 0, 0.2)"  -- Black structural lines
+           , strokeWidth: "1"
            }
       Nothing ->
-        { fillColor: "transparent"
-        , strokeColor: "rgba(255, 255, 255, 0.3)"
-        , strokeWidth: "1"
+        { fillColor: "rgba(0, 0, 0, 0.03)"
+        , strokeColor: "rgba(0, 0, 0, 0.12)"
+        , strokeWidth: "0.5"
         }
   ChangeFrequency ->
     case mChangeFreq of
@@ -835,7 +835,15 @@ enrichedModuleCell config m =
       Reachability -> case reachStatus of
         Just Unreachable -> "0.25"
         _ -> "1"
+      CoChangeCluster -> "0.2"
       _ -> "1"
+    -- Text color: dark on light backgrounds, white on dark
+    lightMode = case config.colorMode of
+      CoChangeCluster -> true
+      _ -> false
+    textColor = if lightMode then "rgba(0, 0, 0, 0.8)" else "rgba(255, 255, 255, 0.9)"
+    textMutedColor = if lightMode then "rgba(0, 0, 0, 0.4)" else "rgba(255, 255, 255, 0.5)"
+    declStrokeColor = if lightMode then "rgba(0, 0, 0, 0.15)" else "white"
   in
     withBehaviors
       ( [ onCoordinatedHighlight
@@ -887,7 +895,7 @@ enrichedModuleCell config m =
           , staticStr "text-anchor" "middle"
           , staticStr "dominant-baseline" "auto"
           , thunkedStr "font-size" (if m.width > 60.0 then "9" else "7")
-          , staticStr "fill" "rgba(255, 255, 255, 0.9)"
+          , thunkedStr "fill" textColor
           , staticStr "font-family" "system-ui, sans-serif"
           , staticStr "font-weight" "500"
           , thunkedStr "textContent" (truncateName (m.width / 7.0) m.shortName)
@@ -901,7 +909,7 @@ enrichedModuleCell config m =
           , staticStr "y" "10"
           , staticStr "text-anchor" "end"
           , staticStr "font-size" "7"
-          , staticStr "fill" "rgba(255, 255, 255, 0.5)"
+          , thunkedStr "fill" textMutedColor
           , staticStr "font-family" "system-ui, sans-serif"
           , thunkedStr "textContent"
               (if m.width > 35.0 && m.height > 25.0 && m.declarationCount > 0
@@ -1161,6 +1169,10 @@ declarationCircleElem config moduleName decl =
     declClickBehavior = case config.onDeclarationClick of
       Nothing -> []
       Just handler -> [ onClick (handler config.packageName moduleName decl.name) ]
+    isLightBg = case config.colorMode of
+      CoChangeCluster -> true
+      _ -> false
+    circleStroke = if isLightBg then "rgba(0, 0, 0, 0.15)" else "white"
   in
   withBehaviors
     ( [ onCoordinatedHighlightWithTooltip
@@ -1184,7 +1196,7 @@ declarationCircleElem config moduleName decl =
         , thunkedNum "r" decl.r
         , thunkedStr "fill" (kindColor decl.kind)
         , staticStr "fill-opacity" "0.85"
-        , staticStr "stroke" "white"
+        , thunkedStr "stroke" circleStroke
         , staticStr "stroke-width" "0.5"
         , staticStr "pointer-events" "all"
         , staticStr "cursor" "pointer"
@@ -1354,6 +1366,23 @@ clusterPaletteColor idx = case idx `mod` 10 of
   7 -> "#bfef45"  -- Lime
   8 -> "#fabebe"  -- Pink
   _ -> "#469990"  -- Teal
+
+-- | ColorBrewer-inspired qualitative palette for co-change clusters
+-- | Maximizes perceptual distance on white backgrounds (Set1 + Paired inspired)
+coChangePaletteColor :: Int -> String
+coChangePaletteColor idx = case idx `mod` 12 of
+  0  -> "#e41a1c"  -- Red
+  1  -> "#377eb8"  -- Blue
+  2  -> "#4daf4a"  -- Green
+  3  -> "#984ea3"  -- Purple
+  4  -> "#ff7f00"  -- Orange
+  5  -> "#a65628"  -- Brown
+  6  -> "#f781bf"  -- Pink
+  7  -> "#1b9e77"  -- Teal
+  8  -> "#d95f02"  -- Dark orange
+  9  -> "#7570b3"  -- Slate purple
+  10 -> "#e7298a"  -- Magenta
+  _  -> "#66a61e"  -- Olive green
 
 kindColor :: String -> String
 kindColor = case _ of
