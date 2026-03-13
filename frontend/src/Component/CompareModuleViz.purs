@@ -31,7 +31,7 @@ import Effect.Class.Console (log)
 import Effect.Class (liftEffect)
 import Halogen as H
 import Halogen.HTML as HH
-import Halogen.HTML.Core (AttrName(..), ElemName(..), Namespace(..))
+import CE2.Util.SVG (svgElem, sa)
 import Halogen.HTML.Properties as HP
 
 import CE2.Data.Decomposition as Dec
@@ -315,15 +315,6 @@ emptyPanel msg = HH.div [ HP.style (panelStyle <> " display: flex; align-items: 
 
 shortMod :: String -> String
 shortMod name = fromMaybe name $ Array.last $ String.split (String.Pattern ".") name
-
-svgNS :: Namespace
-svgNS = Namespace "http://www.w3.org/2000/svg"
-
-svgElem :: forall r w i. String -> Array (HH.IProp r i) -> Array (HH.HTML w i) -> HH.HTML w i
-svgElem name = HH.elementNS svgNS (ElemName name)
-
-sa :: forall r i. String -> String -> HH.IProp r i
-sa name val = HP.attr (AttrName name) val
 
 concernGroupForDecl :: String -> Maybe SDA.SubDeclAnalysis -> Maybe Int
 concernGroupForDecl _name Nothing = Nothing

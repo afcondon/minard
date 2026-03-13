@@ -22,7 +22,7 @@ import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
-import Halogen.HTML.Core (AttrName(..), ElemName(..), Namespace(..))
+import CE2.Util.SVG (svgElem, sa)
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import CE2.Data.Loader as Loader
@@ -119,15 +119,6 @@ handleQuery = case _ of
 -- =============================================================================
 -- SVG Helpers
 -- =============================================================================
-
-svgNS :: Namespace
-svgNS = Namespace "http://www.w3.org/2000/svg"
-
-svgElem :: forall r w i. String -> Array (HH.IProp r i) -> Array (HH.HTML w i) -> HH.HTML w i
-svgElem name = HH.elementNS svgNS (ElemName name)
-
-sa :: forall r i. String -> String -> HH.IProp r i
-sa name val = HP.attr (AttrName name) val
 
 -- | Cubic bezier path for a Sankey link band
 -- | Goes from (x0, y0)-(x0, y0+bw) on left to (x1, y1)-(x1, y1+bw) on right

@@ -24,39 +24,91 @@ module CE2.Viz.CoChangeCube
 import Prelude
 
 import Data.Array as Array
-import Data.Int (round, toNumber)
+import Data.Int (toNumber)
 import Data.Maybe (Maybe(..))
-import Data.Number (sqrt, cos, sin)
+import Data.Number (sqrt)
 import Data.Traversable (for_)
 import Effect (Effect)
+import Effect.Uncurried (EffectFn1, EffectFn2, EffectFn3, EffectFn4, EffectFn5, runEffectFn1, runEffectFn2, runEffectFn3, runEffectFn4, runEffectFn5)
 import Linear.V2 (V2(..))
 import Linear.V3 (V3(..))
 import Linear.Quaternion (Quaternion(..), axisAngle, rotate, qmul)
 import Web.HTML.HTMLCanvasElement (HTMLCanvasElement)
 
 -- =============================================================================
--- Canvas FFI (minimal primitives)
+-- Canvas FFI (uncurried EffectFn)
 -- =============================================================================
 
 foreign import data Context2D :: Type
 
-foreign import getContext2D :: HTMLCanvasElement -> Effect Context2D
-foreign import clearRect :: Context2D -> Number -> Number -> Number -> Number -> Effect Unit
-foreign import setFillStyle :: Context2D -> String -> Effect Unit
-foreign import fillRect :: Context2D -> Number -> Number -> Number -> Number -> Effect Unit
-foreign import beginPath :: Context2D -> Effect Unit
-foreign import moveTo :: Context2D -> Number -> Number -> Effect Unit
-foreign import lineTo :: Context2D -> Number -> Number -> Effect Unit
-foreign import stroke :: Context2D -> Effect Unit
-foreign import setStrokeStyle :: Context2D -> String -> Effect Unit
-foreign import setLineWidth :: Context2D -> Number -> Effect Unit
-foreign import setGlobalAlpha :: Context2D -> Number -> Effect Unit
-foreign import fillCircle :: Context2D -> Number -> Number -> Number -> Effect Unit
-foreign import strokeRect :: Context2D -> Number -> Number -> Number -> Number -> Effect Unit
-foreign import fillText :: Context2D -> String -> Number -> Number -> Effect Unit
-foreign import setFont :: Context2D -> String -> Effect Unit
-foreign import setTextAlign :: Context2D -> String -> Effect Unit
-foreign import setTextBaseline :: Context2D -> String -> Effect Unit
+foreign import getContext2DImpl :: EffectFn1 HTMLCanvasElement Context2D
+foreign import clearRectImpl :: EffectFn5 Context2D Number Number Number Number Unit
+foreign import setFillStyleImpl :: EffectFn2 Context2D String Unit
+foreign import fillRectImpl :: EffectFn5 Context2D Number Number Number Number Unit
+foreign import beginPathImpl :: EffectFn1 Context2D Unit
+foreign import moveToImpl :: EffectFn3 Context2D Number Number Unit
+foreign import lineToImpl :: EffectFn3 Context2D Number Number Unit
+foreign import strokeImpl :: EffectFn1 Context2D Unit
+foreign import setStrokeStyleImpl :: EffectFn2 Context2D String Unit
+foreign import setLineWidthImpl :: EffectFn2 Context2D Number Unit
+foreign import setGlobalAlphaImpl :: EffectFn2 Context2D Number Unit
+foreign import fillCircleImpl :: EffectFn4 Context2D Number Number Number Unit
+foreign import strokeRectImpl :: EffectFn5 Context2D Number Number Number Number Unit
+foreign import fillTextImpl :: EffectFn4 Context2D String Number Number Unit
+foreign import setFontImpl :: EffectFn2 Context2D String Unit
+foreign import setTextAlignImpl :: EffectFn2 Context2D String Unit
+foreign import setTextBaselineImpl :: EffectFn2 Context2D String Unit
+
+getContext2D :: HTMLCanvasElement -> Effect Context2D
+getContext2D = runEffectFn1 getContext2DImpl
+
+clearRect :: Context2D -> Number -> Number -> Number -> Number -> Effect Unit
+clearRect = runEffectFn5 clearRectImpl
+
+setFillStyle :: Context2D -> String -> Effect Unit
+setFillStyle = runEffectFn2 setFillStyleImpl
+
+fillRect :: Context2D -> Number -> Number -> Number -> Number -> Effect Unit
+fillRect = runEffectFn5 fillRectImpl
+
+beginPath :: Context2D -> Effect Unit
+beginPath = runEffectFn1 beginPathImpl
+
+moveTo :: Context2D -> Number -> Number -> Effect Unit
+moveTo = runEffectFn3 moveToImpl
+
+lineTo :: Context2D -> Number -> Number -> Effect Unit
+lineTo = runEffectFn3 lineToImpl
+
+stroke :: Context2D -> Effect Unit
+stroke = runEffectFn1 strokeImpl
+
+setStrokeStyle :: Context2D -> String -> Effect Unit
+setStrokeStyle = runEffectFn2 setStrokeStyleImpl
+
+setLineWidth :: Context2D -> Number -> Effect Unit
+setLineWidth = runEffectFn2 setLineWidthImpl
+
+setGlobalAlpha :: Context2D -> Number -> Effect Unit
+setGlobalAlpha = runEffectFn2 setGlobalAlphaImpl
+
+fillCircle :: Context2D -> Number -> Number -> Number -> Effect Unit
+fillCircle = runEffectFn4 fillCircleImpl
+
+strokeRect :: Context2D -> Number -> Number -> Number -> Number -> Effect Unit
+strokeRect = runEffectFn5 strokeRectImpl
+
+fillText :: Context2D -> String -> Number -> Number -> Effect Unit
+fillText = runEffectFn4 fillTextImpl
+
+setFont :: Context2D -> String -> Effect Unit
+setFont = runEffectFn2 setFontImpl
+
+setTextAlign :: Context2D -> String -> Effect Unit
+setTextAlign = runEffectFn2 setTextAlignImpl
+
+setTextBaseline :: Context2D -> String -> Effect Unit
+setTextBaseline = runEffectFn2 setTextBaselineImpl
 
 -- =============================================================================
 -- Types

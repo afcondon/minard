@@ -36,17 +36,16 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
-import Halogen.HTML.Core (AttrName(..), ElemName(..), Namespace(..), PropName(..))
+import Halogen.HTML.Core (PropName(..))
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
-import Web.HTML.HTMLCanvasElement as HTMLCanvas
-import Web.HTML.HTMLCanvasElement (toHTMLElement) as HTMLCanvas
 
 import CE2.Data.Decomposition as Dec
 import CE2.Data.Loader as Loader
 import CE2.Data.SubDeclarationAnalysis as SDA
 import CE2.Component.ModuleStructureViz as StructViz
+import CE2.Util.SVG (svgElem, sa)
 import CE2.Viz.CommitSparkline as Spark
 import CE2.Viz.DeclarationArcDiagram as ArcDiagram
 import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, ChildCircle, kindColor, childKindColor, packDeclarations)
@@ -114,7 +113,6 @@ type State =
   , replyText :: String
   , collapsedThreads :: Set Int
   , sparklineBars :: Array Spark.SparklineBar
-  , sparklineCtx :: Maybe Spark.Context2D
   }
 
 data Action
@@ -137,7 +135,6 @@ data Action
   | SubmitReply
   | ToggleThreadCollapse Int
   | CompareSnapshots
-  | RenderSparkline
 
 -- =============================================================================
 -- Component
@@ -179,21 +176,7 @@ initialState input =
   , replyText: ""
   , collapsedThreads: Set.empty
   , sparklineBars: []
-  , sparklineCtx: Nothing
   }
-
--- =============================================================================
--- SVG helpers
--- =============================================================================
-
-svgNS :: Namespace
-svgNS = Namespace "http://www.w3.org/2000/svg"
-
-svgElem :: forall r w i. String -> Array (HH.IProp r i) -> Array (HH.HTML w i) -> HH.HTML w i
-svgElem name = HH.elementNS svgNS (ElemName name)
-
-sa :: forall r i. String -> String -> HH.IProp r i
-sa name val = HP.attr (AttrName name) val
 
 -- =============================================================================
 -- Render
@@ -553,9 +536,6 @@ nodeConnected a b = case _ of
 -- Commit Sparkline
 -- =============================================================================
 
-sparklineRef :: H.RefLabel
-sparklineRef = H.RefLabel "sparkline-canvas"
-
 renderSparklineRow :: forall m. State -> H.ComponentHTML Action () m
 renderSparklineRow state
   | Array.null state.sparklineBars && Array.null state.lastInput.declarations = HH.div [] []  -- placeholder for stable child structure
@@ -577,19 +557,35 @@ renderSparklineRow state =
     , HH.div
         [ HP.style "display: flex; align-items: center; gap: 12px;" ]
         ( (if hasBubblepack then [ renderModuleBubblepack state ] else [])
-        <> (if hasSparkline
-              then [ HH.div [ HP.style "flex: 1; min-width: 0;" ]
-                       [ HH.canvas
-                           [ HP.ref sparklineRef
-                           , HP.width 1  -- placeholder; actual size set in renderSparklineCanvas
-                           , HP.height 72
-                           , HP.style "width: 100%; height: 72px; border-radius: 3px; border: 1px solid #e0ddd5; background: #f5f2eb;"
-                           ]
-                       ]
-                   ]
-              else [])
+        <> (if hasSparkline then [ renderSparklineSvg state ] else [])
         )
     ]
+
+-- | Inline SVG sparkline — pure Halogen, no Canvas FFI
+renderSparklineSvg :: forall m. State -> H.ComponentHTML Action () m
+renderSparklineSvg state =
+  let nBars = Array.length state.sparklineBars
+      -- viewBox width scales with bar count for adequate spacing
+      vbWidth = max (Int.toNumber nBars) 200.0
+      vbHeight = 72.0
+      rects = Spark.toSvgRects { width: vbWidth, height: vbHeight } state.sparklineBars
+  in HH.div [ HP.style "flex: 1; min-width: 0;" ]
+       [ svgElem "svg"
+           [ sa "viewBox" ("0 0 " <> show vbWidth <> " " <> show vbHeight)
+           , sa "preserveAspectRatio" "none"
+           , HP.style "width: 100%; height: 72px; display: block; border-radius: 3px; border: 1px solid #e0ddd5; background: #f5f2eb;"
+           ]
+           ( rects <#> \r ->
+               svgElem "rect"
+                 [ sa "x" (show r.x)
+                 , sa "y" (show r.y)
+                 , sa "width" (show r.width)
+                 , sa "height" (show r.height)
+                 , sa "fill" r.fill
+                 ]
+                 []
+           )
+       ]
 
 -- =============================================================================
 -- Module Bubblepack Glyph
@@ -1150,10 +1146,7 @@ handleAction = case _ of
   CompareSnapshots ->
     H.raise CompareSnapshotsClicked
 
-  RenderSparkline ->
-    renderSparklineCanvas
-
--- | Fetch numstat data and schedule sparkline render after next Halogen cycle
+-- | Fetch numstat data for sparkline (pure SVG render happens via Halogen re-render)
 loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit
 loadSparkline pkgName modName = do
   result <- liftAff $ Loader.fetchModuleNumstat 500 pkgName
@@ -1163,29 +1156,7 @@ loadSparkline pkgName modName = do
     Right commits -> do
       let bars = Spark.prepareData modName commits
       log $ "[Sparkline] " <> modName <> ": " <> show (Array.length bars) <> " commits"
-      H.modify_ _ { sparklineBars = bars, sparklineCtx = Nothing }
-      -- Trigger deferred render via listener so canvas exists in DOM
-      state <- H.get
-      case state.actionListener of
-        Just listener -> liftEffect $ HS.notify listener RenderSparkline
-        Nothing -> pure unit
-
--- | Render the sparkline to its canvas element (fills available width)
-renderSparklineCanvas :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
-renderSparklineCanvas = do
-  state <- H.get
-  mElem <- H.getRef sparklineRef
-  case mElem >>= HTMLCanvas.fromElement of
-    Just canvas -> do
-      -- Measure actual rendered width (CSS width: 100%), set canvas pixels to match
-      actualWidth <- liftEffect $ Spark.getElementWidth (HTMLCanvas.toHTMLElement canvas)
-      let h = 72.0
-          w = if actualWidth > 0.0 then actualWidth else 400.0
-      liftEffect $ Spark.setCanvasDimensions canvas w h
-      ctx <- liftEffect $ Spark.getContext2D canvas
-      H.modify_ _ { sparklineCtx = Just ctx }
-      liftEffect $ Spark.render ctx { width: w, height: h } state.sparklineBars
-    Nothing -> pure unit
+      H.modify_ _ { sparklineBars = bars }
 
 -- | Prepare cells, group into lanes, compute arc layout, then update state.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
