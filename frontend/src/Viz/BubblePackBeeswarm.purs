@@ -180,10 +180,10 @@ render config callbacks nodes = do
   { handle, events } <- runSimulation
     { engine: D3
     , setup: setup "bubblepack"
-        [ manyBody "charge" # withStrength (static (-100.0))
-        , collide "collision" # withRadius (dynamic \n -> n.r + 10.0)
-        , positionX "forceX" # withX (dynamic _.targetX) # withStrength (static 0.6)
-        , positionY "forceY" # withY (static 0.0) # withStrength (static 0.1)
+        [ manyBody "charge" # withStrength (static (-80.0))
+        , collide "collision" # withRadius (dynamic \n -> n.r + 4.0) # withStrength (static 0.7)
+        , positionX "forceX" # withX (dynamic _.targetX) # withStrength (static 0.5)
+        , positionY "forceY" # withY (static 0.0) # withStrength (static 0.03)
         ]
     , nodes: packedNodes
     , links: []
@@ -247,10 +247,10 @@ renderWithPositions config callbacks nodes positions = do
   { handle, events } <- runSimulation
     { engine: D3
     , setup: setup "bubblepack"
-        [ manyBody "charge" # withStrength (static (-100.0))
-        , collide "collision" # withRadius (dynamic \n -> n.r + 10.0)
-        , positionX "forceX" # withX (dynamic _.targetX) # withStrength (static 0.6)
-        , positionY "forceY" # withY (static 0.0) # withStrength (static 0.1)
+        [ manyBody "charge" # withStrength (static (-80.0))
+        , collide "collision" # withRadius (dynamic \n -> n.r + 4.0) # withStrength (static 0.7)
+        , positionX "forceX" # withX (dynamic _.targetX) # withStrength (static 0.5)
+        , positionY "forceY" # withY (static 0.0) # withStrength (static 0.03)
         ]
     , nodes: packedNodes
     , links: []
@@ -344,7 +344,8 @@ preparePackedNodes config packageNodes modulesByPackage =
   calcTargetX :: Int -> Number
   calcTargetX layer =
     let rank = fromMaybe 0 $ Map.lookup layer layerRanks
-        normalizedRank = toNumber rank / toNumber numLayers
+        -- Flip: high topoLayer (workspace/apps) on LEFT, low topoLayer (leaves) on RIGHT
+        normalizedRank = 1.0 - toNumber rank / toNumber numLayers
     in padding + normalizedRank * usableWidth - config.width / 2.0
 
   preparePkg idx pkg =
@@ -419,7 +420,8 @@ preparePackedNodesAtPositions config packageNodes modulesByPackage positionMap =
   calcTargetX :: Int -> Number
   calcTargetX layer =
     let rank = fromMaybe 0 $ Map.lookup layer layerRanks
-        normalizedRank = toNumber rank / toNumber numLayers
+        -- Flip: high topoLayer (workspace/apps) on LEFT, low topoLayer (leaves) on RIGHT
+        normalizedRank = 1.0 - toNumber rank / toNumber numLayers
     in padding + normalizedRank * usableWidth - config.width / 2.0
 
   preparePkg idx pkg =

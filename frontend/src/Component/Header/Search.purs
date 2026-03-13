@@ -47,9 +47,22 @@ render state actions =
 
 renderDropdown :: forall w i. SearchState -> SearchActions i -> HH.HTML w i
 renderDropdown state actions =
+  let
+    -- Results are pre-sorted by the coordinator (packages > modules > declarations)
+    -- Cap at 8 visible to avoid hidden scrolling
+    visible = Array.take 8 state.results
+    total = Array.length state.results
+  in
   HH.div
     [ HP.class_ (HH.ClassName "module-search-dropdown") ]
-    (Array.mapWithIndex renderResult state.results)
+    ( Array.mapWithIndex renderResult visible
+      <> if total > 8
+           then [ HH.div
+                    [ HP.style "padding: 4px 10px; font-size: 9px; color: #999; text-align: center;" ]
+                    [ HH.text $ show (total - 8) <> " more\x2026" ]
+                ]
+           else []
+    )
   where
   renderResult :: Int -> Loader.UnifiedSearchResult -> HH.HTML w i
   renderResult idx result =
@@ -110,3 +123,4 @@ renderDropdown state actions =
     "module" -> "#0891b2"
     "declaration" -> "#4e79a7"
     _ -> "#666"
+

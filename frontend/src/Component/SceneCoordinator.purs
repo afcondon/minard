@@ -38,7 +38,6 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
-import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 import Type.Proxy (Proxy(..))
@@ -65,6 +64,7 @@ import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
+import CE2.Component.PackageReportViz as PackageReportViz
 import CE2.Component.ProjectManagementViz as ProjectManagementViz
 import CE2.Component.SnapshotManagementViz as SnapshotManagementViz
 import CE2.Component.CommitModuleGridViz as CommitModuleGridViz
@@ -154,6 +154,7 @@ type Slots =
   , dependencyChordViz :: DependencyChordViz.Slot String
   , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
   , slideOutPanel :: SlideOutPanel.Slot Unit
+  , packageReportViz :: PackageReportViz.Slot Unit
   , annotationReportViz :: AnnotationReportViz.Slot Unit
   , projectManagementViz :: ProjectManagementViz.Slot Unit
   , projectAnatomyViz :: ProjectAnatomyViz.Slot Unit
@@ -201,6 +202,9 @@ _dependencyAdjacencyViz = Proxy
 
 _slideOutPanel :: Proxy "slideOutPanel"
 _slideOutPanel = Proxy
+
+_packageReportViz :: Proxy "packageReportViz"
+_packageReportViz = Proxy
 
 _annotationReportViz :: Proxy "annotationReportViz"
 _annotationReportViz = Proxy
@@ -368,6 +372,7 @@ data Action
   | HandleModuleOverviewOutput ModuleOverviewViz.Output
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
   | HandleModuleSignatureMapOutput ModuleSignatureMapViz.Output
+  | HandlePackageReportOutput PackageReportViz.Output
   | HandleAnnotationReportOutput AnnotationReportViz.Output
   | HandleProjectManagementOutput ProjectManagementViz.Output
   | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
@@ -395,8 +400,15 @@ data Action
   | ToggleChangeFrequencyMode             -- Toggle change frequency heat map coloring
   | ToggleCoChangeClusterMode             -- Toggle co-change community coloring
   | ToggleSizeByFrequency                 -- Toggle treemap sizing by change frequency
-  -- Incremental refresh
-  | RequestRefresh                        -- User clicks Sync button
+  -- Sticky peek toggles (click button = toggle on/off, vs keyboard hold = momentary)
+  | ToggleReachabilityPeek               -- Click toggle for reachability peek
+  | TogglePurityPeek                     -- Click toggle for purity peek
+  | ToggleCouplingPeek                   -- Click toggle for coupling peek
+  -- Incremental refresh (two-click confirmation)
+  | ArmSync                               -- First click: show "Confirm?" + start timeout
+  | ConfirmSync                           -- Second click: actually trigger sync
+  | RevertSyncArm                         -- Auto-revert pending state after timeout
+  | RequestRefresh                        -- Internal: actually starts the sync
   | ClearRefreshDone                      -- Timer fires 1.5s after sync completion
   -- Search typeahead
   | SearchInput String                    -- User typed in search box
@@ -510,67 +522,95 @@ render state =
         HandleSlideOutPanelOutput
     ]
 
--- | Check if scene is a package treemap
-isPackageTreemap :: Scene -> Boolean
-isPackageTreemap (PkgTreemap _) = true
-isPackageTreemap _ = false
-
 -- =============================================================================
 -- Header, Tab Strip, and Footer
 -- =============================================================================
 
--- | Render the header bar: branding + breadcrumbs | search + navigation + debug
+-- | Render the two-tier header bar
+-- | Row 1: branding + breadcrumbs | search + scene shortcuts + sync + debug
+-- | Row 2: contextual controls (view modes, overlays, peeks) — hidden when empty
 renderHeaderBar :: forall m. State -> H.ComponentHTML Action Slots m
 renderHeaderBar state =
-  HH.div
-    [ HP.class_ (HH.ClassName "scene-header-bar")
-    , HP.style $ "height: 36px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; "
+  let
+    showRow2 = Navigation.hasRow2 state.scene
+    headerStyle = "padding: 0 16px; display: flex; align-items: center; justify-content: space-between; "
         <> "background: #D4C9A8; color: #333333; "
-        <> "font-family: 'Courier New', Courier, monospace; font-size: 11px; "
-        <> "border-bottom: 1px solid #999;"
+        <> "font-family: 'Courier New', Courier, monospace; font-size: 11px;"
+  in HH.div
+    [ HP.class_ (HH.ClassName "scene-header-bar")
+    , HP.style "border-bottom: 1px solid #999;"
     ]
-    [ -- Left: Branding (home link) + Breadcrumbs
+    [ -- Row 1: global bar
       HH.div
-        [ HP.style "display: flex; align-items: center; gap: 8px;" ]
-        [ Branding.render (NavigateTo ProjectManagement)
-        , Breadcrumbs.render NavigateTo state.scene
+        [ HP.style $ headerStyle <> " height: 36px;"
+            <> if showRow2 then "" else " border-bottom: none;"
         ]
-    -- Right: Search + Navigation + debug state code
-    , HH.div
-        [ HP.style "display: flex; align-items: center; gap: 8px;" ]
-        ( [ Search.render
-              { query: state.searchQuery
-              , results: state.searchResults
-              , selectedIndex: state.searchSelectedIndex
-              , open: state.searchOpen
-              }
-              { onInput: SearchInput
-              , onKeyDown: SearchKeyDown
-              , onDismiss: SearchDismiss
-              , onConfirmIndex: SearchConfirmIndex
-              }
+        [ -- Left: Branding (double-height, home link) + Breadcrumbs
+          HH.div
+            [ HP.style "display: flex; align-items: center;" ]
+            [ Branding.render (NavigateTo ProjectManagement)
+            , Breadcrumbs.render NavigateTo state.scene
+            ]
+        -- Right: Search + scene shortcuts + sync + debug
+        , HH.div
+            [ HP.style "display: flex; align-items: center; gap: 8px;" ]
+            ( [ Search.render
+                  { query: state.searchQuery
+                  , results: state.searchResults
+                  , selectedIndex: state.searchSelectedIndex
+                  , open: state.searchOpen
+                  }
+                  { onInput: SearchInput
+                  , onKeyDown: SearchKeyDown
+                  , onDismiss: SearchDismiss
+                  , onConfirmIndex: SearchConfirmIndex
+                  }
+              ]
+              <> Navigation.renderRow1
+                  { scene: state.scene
+                  , refreshPhase: state.refreshPhase
+                  }
+                  { onNavigateTo: NavigateTo
+                  , onArmSync: ArmSync
+                  , onConfirmSync: ConfirmSync
+                  }
+              <> [ HH.span
+                     [ HP.style "font-size: 9px; opacity: 0.6;" ]
+                     [ HH.text $ "[" <> Pure.canonicalStateCode state <> "]" ]
+                 ]
+            )
+        ]
+    -- Row 2: contextual controls (hidden when empty)
+    , if showRow2
+        then HH.div
+          [ HP.style $ headerStyle <> " height: 28px; border-top: 1px solid rgba(0,0,0,0.1);" ]
+          [ HH.div
+              [ HP.style "display: flex; align-items: center; gap: 12px;" ]
+              ( Navigation.renderRow2
+                  { scene: state.scene
+                  , colorMode: state.colorMode
+                  , viewMode: state.viewMode
+                  , hideInfraLinks: state.hideInfraLinks
+                  , sizeByChangeFrequency: state.sizeByChangeFrequency
+                  , reachabilityPeek: state.reachabilityPeek
+                  , purityPeek: state.purityPeek
+                  , complexityPeek: state.complexityPeek
+                  }
+                  { onNavigateTo: NavigateTo
+                  , onSetViewMode: SetViewMode
+                  , onToggleGit: ToggleGitMode
+                  , onToggleTidy: ToggleTidyMode
+                  , onToggleCluster: ToggleClusterMode
+                  , onToggleChangeFreq: ToggleChangeFrequencyMode
+                  , onToggleCoChange: ToggleCoChangeClusterMode
+                  , onToggleSizeByFreq: ToggleSizeByFrequency
+                  , onToggleReachability: ToggleReachabilityPeek
+                  , onTogglePurity: TogglePurityPeek
+                  , onToggleCoupling: ToggleCouplingPeek
+                  }
+              )
           ]
-          <> Navigation.render
-              { scene: state.scene
-              , colorMode: state.colorMode
-              , hideInfraLinks: state.hideInfraLinks
-              , sizeByChangeFrequency: state.sizeByChangeFrequency
-              , refreshPhase: state.refreshPhase
-              }
-              { onNavigateTo: NavigateTo
-              , onToggleGit: ToggleGitMode
-              , onToggleTidy: ToggleTidyMode
-              , onToggleCluster: ToggleClusterMode
-              , onToggleChangeFreq: ToggleChangeFrequencyMode
-              , onToggleCoChange: ToggleCoChangeClusterMode
-              , onToggleSizeByFreq: ToggleSizeByFrequency
-              , onRequestRefresh: RequestRefresh
-              }
-          <> [ HH.span
-                 [ HP.style "font-size: 9px; opacity: 0.6;" ]
-                 [ HH.text $ "[" <> Pure.canonicalStateCode state <> "]" ]
-             ]
-        )
+        else HH.text ""
     ]
 
 -- | Render the footer bar (persistent, shows stats and selection info)
@@ -667,54 +707,9 @@ renderDeclarationLegend =
         , HH.span_ [ HH.text label ]
         ]
 
--- | Footer controls (view mode, scope)
+-- | Footer controls — view modes moved to header Row 2
 renderFooterControls :: forall m. State -> H.ComponentHTML Action Slots m
-renderFooterControls state =
-  let
-    btnStyle isActive = "padding: 2px 6px; font-size: 9px; border-radius: 2px; cursor: pointer; "
-      <> "border: 1px solid " <> (if isActive then "#fff" else "rgba(255,255,255,0.3)") <> "; "
-      <> "background: " <> (if isActive then "rgba(255,255,255,0.2)" else "transparent") <> "; "
-      <> "color: inherit;"
-  in
-    case state.scene of
-      _ | state.scene == SolarSwarm || isPackageTreemap state.scene ->
-        HH.div
-          [ HP.style "display: flex; gap: 4px;" ]
-          [ HH.button
-              [ HE.onClick \_ -> SetViewMode PrimaryView
-              , HP.style $ btnStyle (state.viewMode == PrimaryView)
-              ]
-              [ HH.text "Primary" ]
-          , HH.button
-              [ HE.onClick \_ -> SetViewMode ChordView
-              , HP.style $ btnStyle (state.viewMode == ChordView)
-              ]
-              [ HH.text "Chord" ]
-          , HH.button
-              [ HE.onClick \_ -> SetViewMode MatrixView
-              , HP.style $ btnStyle (state.viewMode == MatrixView)
-              ]
-              [ HH.text "Matrix" ]
-          ]
-      ModuleOverview pkg mod ->
-        HH.div
-          [ HP.style "display: flex; gap: 4px;" ]
-          [ HH.button
-              [ HE.onClick \_ -> NavigateTo (ModuleSignatureMap pkg mod)
-              , HP.style $ btnStyle false
-              ]
-              [ HH.text "Sig Map" ]
-          ]
-      ModuleSignatureMap pkg mod ->
-        HH.div
-          [ HP.style "display: flex; gap: 4px;" ]
-          [ HH.button
-              [ HE.onClick \_ -> NavigateTo (ModuleOverview pkg mod)
-              , HP.style $ btnStyle false
-              ]
-              [ HH.text "Overview" ]
-          ]
-      _ -> HH.text ""
+renderFooterControls _state = HH.text ""
 
 -- | Render the current scene using child component slots
 -- | Streamlined to 6 scenes for teaser navigation
@@ -1006,6 +1001,19 @@ renderScene state =
         HH.div
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading namespace tree..." ]
+
+  PackageReport ->
+    case state.allAnnotations, state.v2Data of
+      Just anns, Just v2 ->
+        HH.slot _packageReportViz unit PackageReportViz.component
+          { annotations: anns, packages: v2.packages, modules: v2.modules
+          , moduleDeclarations: state.packageDeclarations
+          }
+          HandlePackageReportOutput
+      _, _ ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading package report..." ]
 
   AnnotationReport ->
     case state.allAnnotations, state.v2Data of
@@ -1513,6 +1521,15 @@ handleAction = case _ of
               log $ "[SceneCoordinator] Failed to fetch snapshots: " <> err
         _ -> pure unit
 
+  HandlePackageReportOutput output -> case output of
+    PackageReportViz.NavigateToPackage pkgName -> do
+      log $ "[SceneCoordinator] Package report → package: " <> pkgName
+      handleAction (NavigateTo (PkgTreemap pkgName))
+    PackageReportViz.NavigateToModuleReport pkgName -> do
+      log $ "[SceneCoordinator] Package report → module report: " <> pkgName
+      -- TODO: pass package filter to AnnotationReport when filtering is implemented
+      handleAction (NavigateTo AnnotationReport)
+
   HandleAnnotationReportOutput output -> case output of
     AnnotationReportViz.NavigateToModule pkgName modName -> do
       log $ "[SceneCoordinator] Report navigation to: " <> pkgName <> "/" <> modName
@@ -1805,6 +1822,35 @@ handleAction = case _ of
             _ -> pure unit
 
   -- =========================================================================
+  -- Sticky Peek Toggles (click button to toggle on/off)
+  -- =========================================================================
+
+  ToggleReachabilityPeek -> do
+    state <- H.get
+    let newVal = not state.reachabilityPeek
+    H.modify_ _ { reachabilityPeek = newVal }
+    when (newVal && state.reachabilityData == Nothing) $ case state.scene of
+      PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
+      PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
+      GalaxyTreemap -> computeAndStoreGlobalReachability
+      _ -> pure unit
+
+  TogglePurityPeek -> do
+    state <- H.get
+    let newVal = not state.purityPeek
+    H.modify_ _ { purityPeek = newVal }
+    when (newVal && state.purityData == Nothing) $ case state.scene of
+      PkgTreemap pkg -> computeAndStorePurityForPeek pkg
+      PkgModuleBeeswarm pkg -> computeAndStorePurityForPeek pkg
+      _ -> pure unit
+
+  ToggleCouplingPeek -> do
+    state <- H.get
+    let newVal = not state.complexityPeek
+    H.modify_ _ { complexityPeek = newVal }
+    when (newVal && state.complexityData == Nothing) loadComplexityData
+
+  -- =========================================================================
   -- Search Typeahead Actions
   -- =========================================================================
 
@@ -1824,8 +1870,10 @@ handleAction = case _ of
             result <- liftAff $ Loader.searchAll query
             case result of
               Right results ->
+                -- Sort: packages first, modules second, declarations last
+                let sorted = Array.sortBy (comparing searchEntityPriority) results
                 -- Only apply if seqId still matches (user hasn't typed more)
-                H.modify_ _ { searchResults = results, searchSelectedIndex = 0 }
+                in H.modify_ _ { searchResults = sorted, searchSelectedIndex = 0 }
               Left err ->
                 log $ "[SceneCoordinator] Search error: " <> err
 
@@ -1863,29 +1911,52 @@ handleAction = case _ of
       liftAff $ Aff.delay (Milliseconds 200.0)
       H.modify_ _ { searchOpen = false }
 
-  RequestRefresh -> do
+  -- Two-click sync: arm → confirm → execute
+  ArmSync -> do
     state <- H.get
     case state.refreshPhase of
       RefreshIdle -> do
-        -- Ensure loadedProjects is populated before syncing
-        projects <- if Array.null state.loadedProjects
-          then do
-            result <- liftAff Loader.fetchV2Projects
-            case result of
-              Right ps -> do
-                H.modify_ _ { loadedProjects = ps }
-                pure ps
-              Left _ -> pure []
-          else pure state.loadedProjects
-        log $ "[SceneCoordinator] Sync requested for " <> show (Array.length projects) <> " project(s)"
-        H.modify_ _ { refreshPhase = RefreshSyncing }
-        H.raise (RequestDataRefresh projects)
+        H.modify_ _ { refreshPhase = RefreshPending }
+        -- Auto-revert after 3 seconds if not confirmed
+        void $ H.fork do
+          liftAff $ Aff.delay (Milliseconds 3000.0)
+          st <- H.get
+          when (st.refreshPhase == RefreshPending) $
+            H.modify_ _ { refreshPhase = RefreshIdle }
       RefreshError _ -> do
-        log "[SceneCoordinator] Sync retry requested"
-        st <- H.get
-        H.modify_ _ { refreshPhase = RefreshSyncing }
-        H.raise (RequestDataRefresh st.loadedProjects)
-      _ -> pure unit  -- Ignore if already syncing or in done state
+        H.modify_ _ { refreshPhase = RefreshPending }
+        void $ H.fork do
+          liftAff $ Aff.delay (Milliseconds 3000.0)
+          st <- H.get
+          when (st.refreshPhase == RefreshPending) $
+            H.modify_ _ { refreshPhase = RefreshIdle }
+      _ -> pure unit
+
+  ConfirmSync -> do
+    state <- H.get
+    when (state.refreshPhase == RefreshPending) $
+      handleAction RequestRefresh
+
+  RevertSyncArm -> do
+    state <- H.get
+    when (state.refreshPhase == RefreshPending) $
+      H.modify_ _ { refreshPhase = RefreshIdle }
+
+  RequestRefresh -> do
+    state <- H.get
+    -- Ensure loadedProjects is populated before syncing
+    projects <- if Array.null state.loadedProjects
+      then do
+        result <- liftAff Loader.fetchV2Projects
+        case result of
+          Right ps -> do
+            H.modify_ _ { loadedProjects = ps }
+            pure ps
+          Left _ -> pure []
+      else pure state.loadedProjects
+    log $ "[SceneCoordinator] Sync requested for " <> show (Array.length projects) <> " project(s)"
+    H.modify_ _ { refreshPhase = RefreshSyncing }
+    H.raise (RequestDataRefresh projects)
 
   ClearRefreshDone -> do
     H.modify_ _ { refreshPhase = RefreshIdle }
@@ -2163,32 +2234,12 @@ prepareSceneData state = case state.scene of
           Left err ->
             log $ "[SceneCoordinator] Failed to load namespace packages: " <> err
 
+  PackageReport -> do
+    -- Same data loading as AnnotationReport — annotations needed for both
+    loadAnnotationsIfNeeded state
+
   AnnotationReport -> do
-    case state.allAnnotations of
-      Just _ -> log "[SceneCoordinator] AnnotationReport: data cached"
-      Nothing -> do
-        log "[SceneCoordinator] Loading all annotations..."
-        result <- liftAff Loader.fetchAllAnnotations
-        case result of
-          Right anns -> do
-            log $ "[SceneCoordinator] Loaded " <> show (Array.length anns) <> " annotations"
-            H.modify_ _ { allAnnotations = Just anns }
-          Left err ->
-            log $ "[SceneCoordinator] Failed to load annotations: " <> err
-    -- Eagerly fetch declarations for annotated modules (needed for bubblepacks)
-    -- Runs blocking (not forked) so declarations are available on first render
-    st <- H.get
-    case st.v2Data, st.allAnnotations of
-      Just v2, Just anns -> do
-        let annotatedModuleNames = Set.fromFoldable $ anns <#> _.targetId
-            annotatedModules = Array.filter (\m -> Set.member m.name annotatedModuleNames) v2.modules
-            missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) annotatedModules
-        when (Array.length missingDeclModules > 0) do
-          log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " annotated modules (bubblepacks)"
-          newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
-          st2 <- H.get
-          H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
-      _, _ -> log "[SceneCoordinator] AnnotationReport: v2Data or annotations not ready for declaration fetch"
+    loadAnnotationsIfNeeded state
 
   ProjectManagement -> do
     log "[SceneCoordinator] ProjectManagement: fetching projects list"
@@ -2322,6 +2373,34 @@ prepareSceneData state = case state.scene of
         log "[SceneCoordinator] ProjectAnatomy: requesting package set data"
         H.raise RequestPackageSetData
 
+-- | Shared annotation loading for PackageReport and AnnotationReport
+loadAnnotationsIfNeeded :: forall m. MonadAff m => State -> H.HalogenM State Action Slots Output m Unit
+loadAnnotationsIfNeeded state = do
+  case state.allAnnotations of
+    Just _ -> log "[SceneCoordinator] Annotations: data cached"
+    Nothing -> do
+      log "[SceneCoordinator] Loading all annotations..."
+      result <- liftAff Loader.fetchAllAnnotations
+      case result of
+        Right anns -> do
+          log $ "[SceneCoordinator] Loaded " <> show (Array.length anns) <> " annotations"
+          H.modify_ _ { allAnnotations = Just anns }
+        Left err ->
+          log $ "[SceneCoordinator] Failed to load annotations: " <> err
+  -- Eagerly fetch declarations for annotated modules (needed for bubblepacks)
+  st <- H.get
+  case st.v2Data, st.allAnnotations of
+    Just v2, Just anns -> do
+      let annotatedModuleNames = Set.fromFoldable $ anns <#> _.targetId
+          annotatedModules = Array.filter (\m -> Set.member m.name annotatedModuleNames) v2.modules
+          missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) annotatedModules
+      when (Array.length missingDeclModules > 0) do
+        log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " annotated modules (bubblepacks)"
+        newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
+        st2 <- H.get
+        H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
+    _, _ -> log "[SceneCoordinator] Annotations: v2Data or annotations not ready for declaration fetch"
+
 -- =============================================================================
 -- Query Handlers
 -- =============================================================================
@@ -2389,6 +2468,13 @@ ensurePackageDeclarationsLoaded state pkgName =
 -- =============================================================================
 
 -- | Confirm selection of a search result and navigate
+-- | Priority for sorting search results: packages > modules > declarations
+searchEntityPriority :: Loader.UnifiedSearchResult -> Int
+searchEntityPriority r = case r.entityType of
+  "package" -> 0
+  "module" -> 1
+  _ -> 2
+
 confirmSearchSelection :: forall m. MonadAff m => State -> Int -> H.HalogenM State Action Slots Output m Unit
 confirmSearchSelection state idx =
   case Array.index state.searchResults idx of

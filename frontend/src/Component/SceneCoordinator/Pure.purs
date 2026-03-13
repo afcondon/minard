@@ -53,7 +53,7 @@ themeForScene :: Scene -> ViewTheme
 themeForScene = case _ of
   GalaxyTreemap -> MidnightTheme
   GalaxyBeeswarm -> MidnightTheme
-  SolarSwarm -> BlueprintTheme
+  SolarSwarm -> MidnightTheme
   PkgTreemap _ -> SteelTheme
   PkgModuleBeeswarm _ -> SteelTheme
   ModuleOverview _ _ -> MistTheme
@@ -61,6 +61,7 @@ themeForScene = case _ of
   ModuleSignatureMap _ _ -> MistTheme
   TypeClassGrid -> MidnightTheme
   NamespaceTree -> DaylightTheme
+  PackageReport -> DaylightTheme
   AnnotationReport -> DaylightTheme
   ProjectManagement -> DaylightTheme
   ProjectAnatomy -> DaylightTheme
@@ -104,6 +105,7 @@ canonicalStateCode state = case state.scene of
   TypeClassGrid -> "T"
   NamespaceTree -> "N"
 
+  PackageReport -> "PR"
   AnnotationReport -> "R"
   ProjectManagement -> "P"
   ProjectAnatomy -> "Y"

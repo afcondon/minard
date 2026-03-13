@@ -39,6 +39,7 @@ data Scene
   | ModuleSignatureMap String String -- Full-screen signature treemap (pkg, module)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
   | NamespaceTree                   -- Horizontal tidy tree of module namespace hierarchy
+  | PackageReport                   -- Package-level report cards with metrics + annotations
   | AnnotationReport                -- Interactive annotation report view
   | ProjectManagement               -- Project onboarding / management screen
   | ProjectAnatomy                  -- Project anatomy: workspace/direct/transitive beeswarm
@@ -63,6 +64,7 @@ instance showScene :: Show Scene where
   show (ModuleSignatureMap pkg mod) = "ModuleSignatureMap(" <> pkg <> "," <> mod <> ")"
   show TypeClassGrid = "TypeClassGrid"
   show NamespaceTree = "NamespaceTree"
+  show PackageReport = "PackageReport"
   show AnnotationReport = "AnnotationReport"
   show ProjectManagement = "ProjectManagement"
   show ProjectAnatomy = "ProjectAnatomy"
@@ -87,7 +89,8 @@ parentScene = case _ of
   ModuleSignatureMap pkg _ -> PkgTreemap pkg                -- Back to package treemap
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
   NamespaceTree -> GalaxyTreemap           -- Namespace tree returns to galaxy
-  AnnotationReport -> GalaxyTreemap        -- Report view returns to galaxy
+  PackageReport -> ProjectManagement        -- Package report returns to landing
+  AnnotationReport -> PackageReport         -- Module report returns to package report
   ProjectManagement -> ProjectManagement   -- Root-level, no parent
   ProjectAnatomy -> ProjectAnatomy         -- Root-level, no parent
   StructuralDecomp -> GalaxyTreemap       -- Cross-cutting view returns to galaxy
@@ -112,7 +115,8 @@ sceneBreadcrumbs = case _ of
   GalaxyBeeswarm      -> [reg]
   TypeClassGrid       -> [reg]
   NamespaceTree       -> [reg, { kind: "", label: "Namespaces", scene: NamespaceTree }]
-  AnnotationReport    -> [reg, { kind: "", label: "Report", scene: AnnotationReport }]
+  PackageReport       -> [reg, { kind: "", label: "Report", scene: PackageReport }]
+  AnnotationReport    -> [reg, { kind: "", label: "Report", scene: PackageReport }, { kind: "", label: "Modules", scene: AnnotationReport }]
   StructuralDecomp    -> [reg, { kind: "", label: "Structure", scene: StructuralDecomp }]
   ModuleStructure p m -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Structure", scene: ModuleStructure p m }]
   CompareModules p1 m1 _ m2 -> [reg, pkgSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
@@ -146,6 +150,7 @@ sceneLabel = case _ of
   ModuleSignatureMap _ mod -> shortModuleName mod
   TypeClassGrid -> "Type Classes"
   NamespaceTree -> "Namespace Tree"
+  PackageReport -> "Package Report"
   AnnotationReport -> "Annotations"
   ProjectManagement -> "Projects"
   ProjectAnatomy -> "Project Anatomy"
@@ -197,6 +202,7 @@ sceneFromString str
   | str == "SolarSwarm" = Just SolarSwarm
   | str == "TypeClassGrid" = Just TypeClassGrid
   | str == "NamespaceTree" = Just NamespaceTree
+  | str == "PackageReport" = Just PackageReport
   | str == "AnnotationReport" = Just AnnotationReport
   | str == "ProjectManagement" = Just ProjectManagement
   | str == "ProjectAnatomy" = Just ProjectAnatomy

@@ -378,6 +378,7 @@ instance showColorMode :: Show ColorMode where
 -- | Refresh lifecycle phase for the Sync button
 data RefreshPhase
   = RefreshIdle
+  | RefreshPending    -- First click: "Confirm?" shown, auto-reverts after timeout
   | RefreshSyncing
   | RefreshDone
   | RefreshError String

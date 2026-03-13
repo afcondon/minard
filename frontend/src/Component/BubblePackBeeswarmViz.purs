@@ -350,8 +350,8 @@ renderBubblePackBeeswarmWithPositions packages nodes mInitialPositions moduleImp
       config :: BubblePackBeeswarm.Config
       config =
         { containerSelector: C.bubblePackBeeswarmContainer
-        , width: 1650.0
-        , height: 900.0
+        , width: 1800.0
+        , height: 500.0
         , packages: packages
         , maxTopoLayer: maxTopoLayer
         , moduleImports: moduleImports

@@ -187,7 +187,7 @@ renderHero state =
           [ HP.style "display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;" ]
           [ navLink "Anatomy" Scene.ProjectAnatomy state.dataReady
           , navLink "Galaxy" Scene.GalaxyTreemap state.dataReady
-          , navLink "Report" Scene.AnnotationReport state.dataReady
+          , navLink "Report" Scene.PackageReport state.dataReady
           ]
         else HH.text ""
     ]
