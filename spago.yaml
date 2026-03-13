@@ -2,3 +2,5 @@ workspace:
   extraPackages:
     hylograph-layout:
       path: "/Users/afc/work/afc-work/purescript-hylograph-libs/purescript-hylograph-layout"
+    linear:
+      path: "/Users/afc/work/afc-work/purescript-ports/purescript-linear"

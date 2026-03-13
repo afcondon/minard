@@ -8,6 +8,7 @@ module API.Snapshots
   , deleteSnapshots
   , listSnapshotDetails
   , getCommitFiles
+  , getModuleNumstat
   ) where
 
 import Prelude
@@ -65,6 +66,9 @@ foreign import getJsonField :: EffectFn2 String String (Nullable String)
 
 -- Commit-module grid
 foreign import getCommitFilesImpl :: EffectFn3 Int Int (Array String) String
+
+-- Module numstat (per-commit line additions/deletions by module)
+foreign import getModuleNumstatImpl :: EffectFn2 Int (Array String) String
 
 -- Row field access (JS objects from DuckDB query results)
 foreign import getRowString :: Foreign -> String -> String
@@ -232,6 +236,22 @@ getCommitFiles db count offset pkg = do
   """ [unsafeToForeign pkg]
   let moduleNames = map (\row -> getRowString row "name") rows
   json <- liftEffect $ runEffectFn3 getCommitFilesImpl count offset moduleNames
+  ok' jsonHeaders json
+
+-- =============================================================================
+-- GET /api/v2/git/module-numstat?count=200&package=minard-frontend
+-- =============================================================================
+
+getModuleNumstat :: Database -> Int -> String -> Aff Response
+getModuleNumstat db count pkg = do
+  rows <- queryAllParams db """
+    SELECT m.name FROM modules m
+    JOIN package_versions pv ON m.package_version_id = pv.id
+    WHERE pv.name = ?
+    ORDER BY m.name
+  """ [unsafeToForeign pkg]
+  let moduleNames = map (\row -> getRowString row "name") rows
+  json <- liftEffect $ runEffectFn2 getModuleNumstatImpl count moduleNames
   ok' jsonHeaders json
 
 -- =============================================================================

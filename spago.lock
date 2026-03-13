@@ -150,6 +150,9 @@
               "language-cst-parser": ">=0.14.1 <0.15.0"
             },
             {
+              "linear": "*"
+            },
+            {
               "maybe": ">=6.0.0 <7.0.0"
             },
             {
@@ -317,6 +320,9 @@
     "extra_packages": {
       "hylograph-layout": {
         "path": "/Users/afc/work/afc-work/purescript-hylograph-libs/purescript-hylograph-layout"
+      },
+      "linear": {
+        "path": "/Users/afc/work/afc-work/purescript-ports/purescript-linear"
       }
     }
   },
@@ -1286,6 +1292,18 @@
         "control",
         "foldable-traversable",
         "invariant",
+        "prelude"
+      ]
+    },
+    "linear": {
+      "type": "local",
+      "path": "/Users/afc/work/afc-work/purescript-ports/purescript-linear",
+      "dependencies": [
+        "control",
+        "foldable-traversable",
+        "maybe",
+        "newtype",
+        "numbers",
         "prelude"
       ]
     },

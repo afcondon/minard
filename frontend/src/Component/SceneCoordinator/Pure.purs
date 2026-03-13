@@ -70,6 +70,7 @@ themeForScene = case _ of
   CompareSnapshots _ _ _ -> DaylightTheme
   SnapshotManagement -> DaylightTheme
   CommitModuleGrid _ -> DaylightTheme
+  CoChangeCube _ -> DaylightTheme
 
 -- =============================================================================
 -- State Code
@@ -112,6 +113,7 @@ canonicalStateCode state = case state.scene of
   CompareSnapshots p m sid -> "Z(" <> p <> "," <> m <> "," <> show sid <> ")"
   SnapshotManagement -> "SM"
   CommitModuleGrid pkg -> "CG(" <> pkg <> ")"
+  CoChangeCube pkg -> "CC(" <> pkg <> ")"
 
   where
   scopeDigit :: BeeswarmScope -> String

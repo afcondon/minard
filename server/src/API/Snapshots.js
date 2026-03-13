@@ -357,6 +357,97 @@ export const getCommitFilesImpl = (count, offset, knownModuleNames) => {
 };
 
 // =============================================================================
+// Module Numstat (git log --numstat per commit, mapped to modules)
+// =============================================================================
+
+// getModuleNumstatImpl :: EffectFn2 Int (Array String) String
+export const getModuleNumstatImpl = (count, knownModuleNames) => {
+  // Build reverse lookup: same approach as getCommitFilesImpl
+  const filePathToModule = new Map();
+  for (const modName of knownModuleNames) {
+    const modPath = modName.replace(/\./g, '/') + '.purs';
+    const srcPrefixes = ['frontend/src/', 'server/src/', 'src/', 'test/', 'database/src/', ''];
+    for (const prefix of srcPrefixes) {
+      filePathToModule.set(prefix + modPath, modName);
+    }
+    const dotIdx = modName.indexOf('.');
+    if (dotIdx > 0) {
+      const stripped = modName.substring(dotIdx + 1).replace(/\./g, '/') + '.purs';
+      for (const prefix of srcPrefixes) {
+        filePathToModule.set(prefix + stripped, modName);
+      }
+    }
+  }
+
+  try {
+    const format = '%H%x00%s%x00%ar';
+    const output = execSync(
+      `git log --numstat --format='${format}' -${count}`,
+      { encoding: 'utf8', timeout: 10000 }
+    );
+
+    const commits = [];
+    let currentCommit = null;
+
+    for (const line of output.split('\n')) {
+      if (line === '') {
+        continue;
+      }
+
+      if (line.includes('\0')) {
+        // Commit header line
+        if (currentCommit) commits.push(currentCommit);
+        const [hash, message, relativeDate] = line.split('\0');
+        currentCommit = {
+          hash,
+          shortHash: hash.substring(0, 7),
+          message,
+          relativeDate,
+          totalAdded: 0,
+          totalDeleted: 0,
+          modules: {}
+        };
+      } else if (currentCommit) {
+        // numstat format: "additions\tdeletions\tfilepath"
+        // Binary files show as: "-\t-\tfilepath"
+        const parts = line.split('\t');
+        if (parts.length >= 3) {
+          const addStr = parts[0];
+          const delStr = parts[1];
+          const filePath = parts[2];
+
+          // Skip binary files (shown as - / -)
+          if (addStr === '-' || delStr === '-') continue;
+
+          const added = parseInt(addStr, 10) || 0;
+          const deleted = parseInt(delStr, 10) || 0;
+
+          // Always count toward totals (all files, not just known modules)
+          currentCommit.totalAdded += added;
+          currentCommit.totalDeleted += deleted;
+
+          // Map to module if known
+          const mod = filePathToModule.get(filePath);
+          if (mod) {
+            if (currentCommit.modules[mod]) {
+              currentCommit.modules[mod].added += added;
+              currentCommit.modules[mod].deleted += deleted;
+            } else {
+              currentCommit.modules[mod] = { added, deleted };
+            }
+          }
+        }
+      }
+    }
+    if (currentCommit) commits.push(currentCommit);
+
+    return JSON.stringify({ commits, count: commits.length });
+  } catch (error) {
+    return JSON.stringify({ commits: [], count: 0, error: error.message });
+  }
+};
+
+// =============================================================================
 // Row Field Access (DuckDB query result objects)
 // =============================================================================
 

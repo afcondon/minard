@@ -14,15 +14,18 @@ module CE2.Component.AnnotationReportViz
 import Prelude
 
 import Data.Array as Array
-import Data.Int (floor) as Int
+import Data.Either (Either(..))
+import Data.Int (floor, toNumber) as Int
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
+import Data.Traversable (for_)
 import Data.Tuple (Tuple(..))
-import Effect.Aff.Class (class MonadAff)
+import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Core (AttrName(..), ElemName(..), Namespace(..))
@@ -30,6 +33,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 
 import CE2.Data.Loader as Loader
+import CE2.Viz.CommitSparkline as Spark
 import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, ChildCircle, kindColor, childKindColor, packDeclarations)
 
 -- =============================================================================
@@ -62,6 +66,7 @@ type State =
   , collapsedPackages :: Set String
   , collapsedModules :: Set String
   , collapsedThreads :: Set Int
+  , numstatCommits :: Map String (Array Loader.NumstatCommit)  -- package name -> commits
   }
 
 data Action
@@ -104,6 +109,7 @@ initialState input =
   , collapsedPackages: Set.empty
   , collapsedModules: Set.empty
   , collapsedThreads: Set.empty
+  , numstatCommits: Map.empty
   }
 
 buildModuleNameToId :: Array Loader.V2ModuleListItem -> Map String Int
@@ -376,6 +382,9 @@ renderModuleSection state pkgName mg =
               , HH.span
                   [ HP.style "font-size: 10px; color: #999; background: #f0ede4; padding: 1px 6px; border-radius: 8px;" ]
                   [ HH.text $ show mg.annotationCount ]
+              , HH.div
+                  [ HP.style "flex: 1; min-width: 40px;" ]
+                  [ renderModuleSparkline state pkgName mg.moduleName ]
               ]
           , if isCollapsed
               then HH.text ""
@@ -467,6 +476,38 @@ renderThread state thread =
           ]
         ) thread.replies
     )
+
+-- =============================================================================
+-- Module Sparkline (inline SVG)
+-- =============================================================================
+
+renderModuleSparkline :: forall m. State -> String -> String -> H.ComponentHTML Action () m
+renderModuleSparkline state pkgName moduleName =
+  case Map.lookup pkgName state.numstatCommits of
+    Nothing -> HH.text ""
+    Just commits ->
+      let bars = Spark.prepareData moduleName commits
+          nBars = Array.length bars
+          -- Use a generous viewBox width so bars get spacing via toSvgRects
+          vbW = max (Int.toNumber nBars) 200.0
+          h = 36.0
+          rects = Spark.toSvgRects { width: vbW, height: h } bars
+      in if nBars == 0 then HH.text ""
+         else svgElem "svg"
+            [ sa "viewBox" ("0 0 " <> show vbW <> " " <> show h)
+            , sa "preserveAspectRatio" "none"
+            , HP.style "width: 100%; height: 36px; border-radius: 2px; border: 1px solid #e8e8e8; background: #fff;"
+            ]
+            (rects <#> \r ->
+              svgElem "rect"
+                [ sa "x" (show r.x)
+                , sa "y" (show r.y)
+                , sa "width" (show r.width)
+                , sa "height" (show r.height)
+                , sa "fill" r.fill
+                ]
+                []
+            )
 
 -- =============================================================================
 -- Module Bubblepack Glyph
@@ -582,7 +623,17 @@ shortModuleName name =
 
 handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Output m Unit
 handleAction = case _ of
-  Initialize -> pure unit
+  Initialize -> do
+    state <- H.get
+    -- Fetch numstat for each unique package
+    let pkgNames = Array.nub $ state.packages <#> _.name
+    void $ for_ pkgNames \pkg -> do
+      result <- liftAff $ Loader.fetchModuleNumstat 500 pkg
+      case result of
+        Left err -> log $ "[AnnotationReport] Numstat fetch error for " <> pkg <> ": " <> err
+        Right commits -> do
+          log $ "[AnnotationReport] Loaded " <> show (Array.length commits) <> " numstat commits for " <> pkg
+          H.modify_ \st -> st { numstatCommits = Map.insert pkg commits st.numstatCommits }
 
   Receive input ->
     H.modify_ _

@@ -8,6 +8,8 @@ module CE2.Data.CoChange
   , moduleFrequencies
   , commitBreadths
   , coChangeCommunities
+  , CubeVoxel
+  , buildCubeVoxels
   ) where
 
 import Prelude
@@ -199,3 +201,39 @@ floodFill start adjacency alreadyVisited =
                            (Array.fromFoldable neighbors)
           in go (Set.insert node visited) (rest <> newNodes)
   in go Set.empty [start]
+
+-- =============================================================================
+-- 3D Co-Change Cube — Voxel Generation
+-- =============================================================================
+
+-- | A voxel in the module×module×commit tensor
+type CubeVoxel =
+  { moduleAIndex :: Int
+  , moduleBIndex :: Int
+  , commitIndex :: Int
+  }
+
+-- | Build the voxel set for the co-change cube.
+-- | For each commit, emit a voxel for every pair of modules that co-changed.
+-- | This is M^T × M expanded along the commit axis (preserving per-commit detail).
+buildCubeVoxels :: Array Loader.CommitFileEntry -> Array String -> Array CubeVoxel
+buildCubeVoxels commits modules =
+  let
+    moduleIndex :: Map String Int
+    moduleIndex = Map.fromFoldable $
+      Array.mapWithIndex (\i m -> Tuple m i) modules
+
+    commitVoxels :: Int -> Loader.CommitFileEntry -> Array CubeVoxel
+    commitVoxels cIdx commit =
+      let
+        indices = Array.mapMaybe (\m -> Map.lookup m moduleIndex) commit.modules
+        sorted = Array.sort indices
+      in do
+        i <- Array.range 0 (Array.length sorted - 2)
+        j <- Array.range (i + 1) (Array.length sorted - 1)
+        case Array.index sorted i, Array.index sorted j of
+          Just aIdx, Just bIdx -> [ { moduleAIndex: aIdx, moduleBIndex: bIdx, commitIndex: cIdx } ]
+          _, _ -> []
+  in
+    Array.concatMap (\(Tuple cIdx commit) -> commitVoxels cIdx commit)
+      (Array.mapWithIndex (\i c -> Tuple i c) commits)

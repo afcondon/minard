@@ -116,6 +116,10 @@ module CE2.Data.Loader
     -- Commit-Module Grid
   , CommitFileEntry
   , fetchCommitFiles
+    -- Module Numstat (per-commit line additions/deletions)
+  , NumstatCommit
+  , ModuleLineCounts
+  , fetchModuleNumstat
   ) where
 
 import Prelude
@@ -1953,3 +1957,38 @@ fetchCommitFiles count pkg = do
     json <- result
     response :: CommitFilesResponse <- decodeJson json # mapLeft printJsonDecodeError
     Right { commits: response.commits, allModules: response.allModules }
+
+-- =============================================================================
+-- Module Numstat (per-commit line additions/deletions by module)
+-- =============================================================================
+
+-- | Per-module line additions and deletions within a commit
+type ModuleLineCounts =
+  { added :: Int
+  , deleted :: Int
+  }
+
+-- | A commit with total lines added/deleted and per-module breakdown
+type NumstatCommit =
+  { hash :: String
+  , shortHash :: String
+  , message :: String
+  , relativeDate :: String
+  , totalAdded :: Int
+  , totalDeleted :: Int
+  , modules :: Object ModuleLineCounts  -- module name -> { added, deleted }
+  }
+
+type NumstatResponse =
+  { commits :: Array NumstatCommit
+  , count :: Int
+  }
+
+-- | Fetch per-commit line stats for a package
+fetchModuleNumstat :: Int -> String -> Aff (Either String (Array NumstatCommit))
+fetchModuleNumstat count pkg = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/git/module-numstat?count=" <> show count <> "&package=" <> pkg)
+  pure $ do
+    json <- result
+    response :: NumstatResponse <- decodeJson json # mapLeft printJsonDecodeError
+    Right response.commits

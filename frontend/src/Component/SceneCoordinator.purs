@@ -68,6 +68,7 @@ import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.ProjectManagementViz as ProjectManagementViz
 import CE2.Component.SnapshotManagementViz as SnapshotManagementViz
 import CE2.Component.CommitModuleGridViz as CommitModuleGridViz
+import CE2.Component.CoChangeCubeViz as CoChangeCubeViz
 import CE2.Component.ProjectAnatomyViz as ProjectAnatomyViz
 import CE2.Component.NamespaceTreeViz as NamespaceTreeViz
 import CE2.Component.StructuralDecompViz as StructuralDecompViz
@@ -158,6 +159,7 @@ type Slots =
   , compareModuleViz :: CompareModuleViz.Slot Unit
   , snapshotManagementViz :: SnapshotManagementViz.Slot Unit
   , commitModuleGridViz :: CommitModuleGridViz.Slot Unit
+  , coChangeCubeViz :: CoChangeCubeViz.Slot Unit
   )
 
 _bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
@@ -222,6 +224,9 @@ _snapshotManagementViz = Proxy
 
 _commitModuleGridViz :: Proxy "commitModuleGridViz"
 _commitModuleGridViz = Proxy
+
+_coChangeCubeViz :: Proxy "coChangeCubeViz"
+_coChangeCubeViz = Proxy
 
 -- | Refresh phase for Sync button lifecycle
 data RefreshPhase
@@ -344,6 +349,9 @@ type State =
     -- Incremental refresh
   , refreshPhase :: RefreshPhase
 
+    -- Scene loading (shows wait cursor during data fetch)
+  , sceneLoading :: Boolean
+
     -- Search typeahead
   , searchQuery :: String
   , searchResults :: Array Loader.UnifiedSearchResult
@@ -370,6 +378,7 @@ data Action
   | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
   | HandleSnapshotManagementOutput SnapshotManagementViz.Output
   | HandleCommitModuleGridOutput CommitModuleGridViz.Output
+  | HandleCoChangeCubeOutput CoChangeCubeViz.Output
   | HandleModuleStructureOutput ModuleStructureViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
@@ -459,6 +468,7 @@ initialState input =
   , loadedProjects: []
   , historyCleanup: Nothing
   , refreshPhase: RefreshIdle
+  , sceneLoading: false
   , searchQuery: ""
   , searchResults: []
   , searchSelectedIndex: 0
@@ -478,10 +488,11 @@ render state =
       bgColor = case state.colorMode of
         CoChangeCluster -> "#FFFFFF"
         _ -> colors.background
+      cursorStyle = if state.sceneLoading then " cursor: wait; pointer-events: none;" else ""
   in HH.div
     [ HP.class_ (HH.ClassName "scene-coordinator")
     -- Note: MUST use height: 100vh (not min-height) for flex-grow to work with the child's height: 0 pattern
-    , HP.style $ "display: flex; flex-direction: column; height: 100vh; background: " <> bgColor <> "; transition: background 0.5s ease;"
+    , HP.style $ "display: flex; flex-direction: column; height: 100vh; background: " <> bgColor <> "; transition: background 0.5s ease;" <> cursorStyle
     ]
     [ -- Header bar with breadcrumb navigation
       renderHeaderBar state
@@ -670,6 +681,7 @@ renderHeaderBar state =
                 DeclarationDetail pkg _ _ -> Just (CommitModuleGrid pkg)
                 ModuleStructure pkg _ -> Just (CommitModuleGrid pkg)
                 CommitModuleGrid _ -> Just state.scene
+                CoChangeCube pkg -> Just (CommitModuleGrid pkg)
                 _ -> Nothing
               isCommits = case state.scene of
                 CommitModuleGrid _ -> true
@@ -681,6 +693,27 @@ renderHeaderBar state =
               , HP.title "Commit-module change grid for this package"
               ]
               [ HH.text "Commits" ]
+            Nothing -> HH.text ""
+        , let mCubeTarget = case state.scene of
+                CommitModuleGrid pkg -> Just (CoChangeCube pkg)
+                CoChangeCube _ -> Just state.scene
+                PkgTreemap pkg -> Just (CoChangeCube pkg)
+                PkgModuleBeeswarm pkg -> Just (CoChangeCube pkg)
+                ModuleSignatureMap pkg _ -> Just (CoChangeCube pkg)
+                ModuleOverview pkg _ -> Just (CoChangeCube pkg)
+                DeclarationDetail pkg _ _ -> Just (CoChangeCube pkg)
+                ModuleStructure pkg _ -> Just (CoChangeCube pkg)
+                _ -> Nothing
+              isCube = case state.scene of
+                CoChangeCube _ -> true
+                _ -> false
+          in case mCubeTarget of
+            Just target -> HH.button
+              [ HE.onClick \_ -> NavigateTo target
+              , HP.style $ toggleButtonStyle isCube textColor
+              , HP.title "3D co-change tensor cube"
+              ]
+              [ HH.text "Cube" ]
             Nothing -> HH.text ""
         , HH.button
             [ HE.onClick \_ -> ToggleGitMode
@@ -1368,6 +1401,11 @@ renderScene state =
       { packageName: pkg }
       HandleCommitModuleGridOutput
 
+  CoChangeCube pkg ->
+    HH.slot _coChangeCubeViz unit CoChangeCubeViz.component
+      { packageName: pkg }
+      HandleCoChangeCubeOutput
+
   ProjectAnatomy ->
     case state.packageSetData of
       Just psData ->
@@ -1563,8 +1601,10 @@ handleAction = case _ of
       _ -> pure unit
 
     H.raise (SceneChanged targetScene)
+    H.modify_ _ { sceneLoading = true }
     newState <- H.get
     prepareSceneData newState
+    H.modify_ _ { sceneLoading = false }
 
   -- Browser back/forward button navigation
   -- Navigate to the scene without pushing to history (it's already there)
@@ -1790,6 +1830,10 @@ handleAction = case _ of
 
   HandleCommitModuleGridOutput output -> case output of
     CommitModuleGridViz.NavigateToScene scene ->
+      handleAction (NavigateTo scene)
+
+  HandleCoChangeCubeOutput output -> case output of
+    CoChangeCubeViz.NavigateToScene scene ->
       handleAction (NavigateTo scene)
 
   HandleProjectAnatomyOutput output -> case output of
@@ -2406,22 +2450,20 @@ prepareSceneData state = case state.scene of
             H.modify_ _ { allAnnotations = Just anns }
           Left err ->
             log $ "[SceneCoordinator] Failed to load annotations: " <> err
-    -- Fork declarations fetch so it doesn't block rendering (Halogen re-renders on completion)
-    _ <- H.fork do
-      st <- H.get
-      case st.v2Data, st.allAnnotations of
-        Just v2, Just anns -> do
-          -- Only fetch declarations for modules that appear in annotations
-          let annotatedModuleNames = Set.fromFoldable $ anns <#> _.targetId
-              annotatedModules = Array.filter (\m -> Set.member m.name annotatedModuleNames) v2.modules
-              missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) annotatedModules
-          when (Array.length missingDeclModules > 0) do
-            log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " annotated modules (bubblepacks)"
-            newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
-            st2 <- H.get
-            H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
-        _, _ -> pure unit
-    pure unit
+    -- Eagerly fetch declarations for annotated modules (needed for bubblepacks)
+    -- Runs blocking (not forked) so declarations are available on first render
+    st <- H.get
+    case st.v2Data, st.allAnnotations of
+      Just v2, Just anns -> do
+        let annotatedModuleNames = Set.fromFoldable $ anns <#> _.targetId
+            annotatedModules = Array.filter (\m -> Set.member m.name annotatedModuleNames) v2.modules
+            missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) annotatedModules
+        when (Array.length missingDeclModules > 0) do
+          log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " annotated modules (bubblepacks)"
+          newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
+          st2 <- H.get
+          H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
+      _, _ -> log "[SceneCoordinator] AnnotationReport: v2Data or annotations not ready for declaration fetch"
 
   ProjectManagement -> do
     log "[SceneCoordinator] ProjectManagement: fetching projects list"
@@ -2439,6 +2481,10 @@ prepareSceneData state = case state.scene of
 
   CommitModuleGrid pkg -> do
     log $ "[SceneCoordinator] CommitModuleGrid: " <> pkg
+    -- Component handles its own data loading
+
+  CoChangeCube pkg -> do
+    log $ "[SceneCoordinator] CoChangeCube: " <> pkg
     -- Component handles its own data loading
 
   StructuralDecomp -> do

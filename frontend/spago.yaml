@@ -25,6 +25,7 @@ package:
     - hylograph-simulation-halogen: ">=0.3.0 <0.4.0"
     - integers: ">=6.0.0 <7.0.0"
     - language-cst-parser: ">=0.14.1 <0.15.0"
+    - linear: "*"
     - maybe: ">=6.0.0 <7.0.0"
     - newtype: ">=5.0.0 <6.0.0"
     - nullable: ">=6.0.0 <7.0.0"

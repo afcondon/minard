@@ -110,6 +110,9 @@ module CE2.Containers
   , anatomyModuleBeeswarmContainer
   , anatomyModuleNodesId
   , anatomyModuleNodes
+    -- Co-Change Cube (3D tensor)
+  , coChangeCubeContainerId
+  , coChangeCubeContainer
   ) where
 
 import Prelude
@@ -437,3 +440,13 @@ anatomyModuleNodesId = "anatomy-module-nodes"
 
 anatomyModuleNodes :: Selector
 anatomyModuleNodes = toSelector anatomyModuleNodesId
+
+-- =============================================================================
+-- Co-Change Cube (3D tensor visualization)
+-- =============================================================================
+
+coChangeCubeContainerId :: ElementId
+coChangeCubeContainerId = "co-change-cube-container"
+
+coChangeCubeContainer :: Selector
+coChangeCubeContainer = toSelector coChangeCubeContainerId

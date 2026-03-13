@@ -48,6 +48,7 @@ data Scene
   | CompareSnapshots String String Int          -- Cross-snapshot comparison (pkg, module, beforeSnapshotId)
   | SnapshotManagement                         -- Snapshot creation + cleanup
   | CommitModuleGrid String                    -- Commit-module change grid (package)
+  | CoChangeCube String                        -- 3D co-change tensor (package)
 
 derive instance eqScene :: Eq Scene
 
@@ -71,6 +72,7 @@ instance showScene :: Show Scene where
   show (CompareSnapshots p m sid) = "CompareSnapshots(" <> p <> "," <> m <> "," <> show sid <> ")"
   show SnapshotManagement = "SnapshotManagement"
   show (CommitModuleGrid pkg) = "CommitModuleGrid(" <> pkg <> ")"
+  show (CoChangeCube pkg) = "CoChangeCube(" <> pkg <> ")"
 
 -- | Get the parent scene for back navigation
 parentScene :: Scene -> Scene
@@ -94,6 +96,7 @@ parentScene = case _ of
   CompareSnapshots p m _ -> ModuleSignatureMap p m      -- Back to the module being compared
   SnapshotManagement -> ProjectManagement              -- Back to project management
   CommitModuleGrid pkg -> PkgTreemap pkg              -- Back to package treemap
+  CoChangeCube pkg -> CommitModuleGrid pkg            -- Back to 2D commit grid
 
 -- | A segment in the breadcrumb trail
 type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
@@ -116,6 +119,7 @@ sceneBreadcrumbs = case _ of
   CompareSnapshots p m _ -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Compare", scene: CompareSnapshots p m 0 }]
   SnapshotManagement     -> [{ kind: "", label: "Projects", scene: ProjectManagement }, { kind: "", label: "Snapshots", scene: SnapshotManagement }]
   CommitModuleGrid pkg   -> [reg, pkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }]
+  CoChangeCube pkg       -> [reg, pkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }, { kind: "", label: "Cube", scene: CoChangeCube pkg }]
   SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
   PkgTreemap pkg      -> [reg, pkgSeg pkg]
   PkgModuleBeeswarm p -> [reg, pkgSeg p]
@@ -151,6 +155,7 @@ sceneLabel = case _ of
   CompareSnapshots _ m _ -> shortModuleName m <> " (Compare)"
   SnapshotManagement -> "Snapshots"
   CommitModuleGrid pkg -> pkg <> " Commits"
+  CoChangeCube pkg -> pkg <> " Co-Change Cube"
 
 -- | Check if scene is at the Galaxy level (registry-wide)
 isGalaxyScene :: Scene -> Boolean
@@ -167,6 +172,8 @@ isSolarScene _ = false
 isPackageScene :: Scene -> Boolean
 isPackageScene (PkgTreemap _) = true
 isPackageScene (PkgModuleBeeswarm _) = true
+isPackageScene (CommitModuleGrid _) = true
+isPackageScene (CoChangeCube _) = true
 isPackageScene _ = false
 
 -- | Check if scene is at the Module level (deepest zoom)
@@ -208,6 +215,10 @@ sceneFromString str
       let inner = String.drop 17 str
           pkg = String.take (String.length inner - 1) inner
       in Just (CommitModuleGrid pkg)
+  | String.take 14 str == "CoChangeCube(" =
+      let inner = String.drop 14 str
+          pkg = String.take (String.length inner - 1) inner
+      in Just (CoChangeCube pkg)
   | String.take 11 str == "PkgTreemap(" =
       let inner = String.drop 11 str
           pkg = String.take (String.length inner - 1) inner  -- Remove trailing ")"

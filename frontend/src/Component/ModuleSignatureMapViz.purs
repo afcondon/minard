@@ -40,12 +40,16 @@ import Halogen.HTML.Core (AttrName(..), ElemName(..), Namespace(..), PropName(..
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
+import Web.HTML.HTMLCanvasElement as HTMLCanvas
+import Web.HTML.HTMLCanvasElement (toHTMLElement) as HTMLCanvas
 
 import CE2.Data.Decomposition as Dec
 import CE2.Data.Loader as Loader
 import CE2.Data.SubDeclarationAnalysis as SDA
 import CE2.Component.ModuleStructureViz as StructViz
+import CE2.Viz.CommitSparkline as Spark
 import CE2.Viz.DeclarationArcDiagram as ArcDiagram
+import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, ChildCircle, kindColor, childKindColor, packDeclarations)
 import CE2.Viz.DeclarationLayerDiagram as LayerDiagram
 import CE2.Viz.DOMHelpers as DOMHelpers
 import CE2.Viz.ModuleSignatureMap as MSM
@@ -109,6 +113,8 @@ type State =
   , replyingTo :: Maybe Int
   , replyText :: String
   , collapsedThreads :: Set Int
+  , sparklineBars :: Array Spark.SparklineBar
+  , sparklineCtx :: Maybe Spark.Context2D
   }
 
 data Action
@@ -131,6 +137,7 @@ data Action
   | SubmitReply
   | ToggleThreadCollapse Int
   | CompareSnapshots
+  | RenderSparkline
 
 -- =============================================================================
 -- Component
@@ -171,6 +178,8 @@ initialState input =
   , replyingTo: Nothing
   , replyText: ""
   , collapsedThreads: Set.empty
+  , sparklineBars: []
+  , sparklineCtx: Nothing
   }
 
 -- =============================================================================
@@ -196,11 +205,12 @@ render state =
     [ HP.class_ (HH.ClassName "module-signature-map")
     , HP.style "overflow-y: auto; padding: 12px 16px; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
     ]
-    -- Stable three-child structure: annotation container + arc diagram + lanes container.
+    -- Stable child structure: annotation container + sparkline + arc diagram + lanes container.
     -- This prevents Halogen's index-based VDOM diff from patching lane cells
     -- (which use innerHTML prop) into annotation columns when annotations
     -- arrive asynchronously and shift the children array.
     [ HH.div [] (renderAnnotationHeader state)
+    , renderSparklineRow state
     , renderDiagramSection state
     , if Array.null state.lanes && state.initialized then
         HH.div
@@ -538,6 +548,102 @@ nodeConnected a b = case _ of
   Just layout -> Array.any (\e ->
     (e.fromName == a && e.toName == b) || (e.fromName == b && e.toName == a)
     ) layout.edges
+
+-- =============================================================================
+-- Commit Sparkline
+-- =============================================================================
+
+sparklineRef :: H.RefLabel
+sparklineRef = H.RefLabel "sparkline-canvas"
+
+renderSparklineRow :: forall m. State -> H.ComponentHTML Action () m
+renderSparklineRow state
+  | Array.null state.sparklineBars && Array.null state.lastInput.declarations = HH.div [] []  -- placeholder for stable child structure
+renderSparklineRow state =
+  let nBars = Array.length state.sparklineBars
+      hasSparkline = nBars > 0
+      hasBubblepack = not (Array.null state.lastInput.declarations)
+  in HH.div
+    [ HP.style "margin: 0 0 12px 0; padding: 8px 0; border-bottom: 1px solid #e8e8e8;" ]
+    [ HH.div
+        [ HP.style "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;" ]
+        [ HH.span
+            [ HP.style "font-size: 9px; color: #aaa; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;" ]
+            [ HH.text (if hasSparkline then show nBars <> " commits" else "") ]
+        , HH.span
+            [ HP.style "font-size: 9px; color: #bbb;" ]
+            [ HH.text (if hasSparkline then "green = additions, red = deletions, gray = rest of commit" else "") ]
+        ]
+    , HH.div
+        [ HP.style "display: flex; align-items: center; gap: 12px;" ]
+        ( (if hasBubblepack then [ renderModuleBubblepack state ] else [])
+        <> (if hasSparkline
+              then [ HH.div [ HP.style "flex: 1; min-width: 0;" ]
+                       [ HH.canvas
+                           [ HP.ref sparklineRef
+                           , HP.width 1  -- placeholder; actual size set in renderSparklineCanvas
+                           , HP.height 72
+                           , HP.style "width: 100%; height: 72px; border-radius: 3px; border: 1px solid #e0ddd5; background: #f5f2eb;"
+                           ]
+                       ]
+                   ]
+              else [])
+        )
+    ]
+
+-- =============================================================================
+-- Module Bubblepack Glyph
+-- =============================================================================
+
+renderModuleBubblepack :: forall m. State -> H.ComponentHTML Action () m
+renderModuleBubblepack state =
+  let decls = state.lastInput.declarations
+  in if Array.null decls then HH.text ""
+     else
+       let
+         { declarations, packRadius } = packDeclarations decls state.lastInput.moduleName 200.0 200.0 Map.empty Map.empty
+         pad = 2.0
+         r = packRadius + pad
+         viewBox = show (-r) <> " " <> show (-r) <> " " <> show (r * 2.0) <> " " <> show (r * 2.0)
+       in
+         svgElem "svg"
+           [ sa "viewBox" viewBox
+           , HP.style "width: 72px; height: 72px; flex-shrink: 0; overflow: visible; display: block;"
+           ]
+           (Array.concatMap renderDeclCircle declarations)
+  where
+  renderDeclCircle :: DeclarationCircle -> forall w i. Array (HH.HTML w i)
+  renderDeclCircle decl =
+    let hasChildren = not (Array.null decl.children)
+    in
+    [ svgElem "circle"
+        [ sa "cx" (show decl.x)
+        , sa "cy" (show decl.y)
+        , sa "r" (show decl.r)
+        , sa "fill" (kindColor decl.kind)
+        , sa "fill-opacity" (if hasChildren then "0.3" else "0.85")
+        , sa "stroke" (if hasChildren then kindColor decl.kind else "white")
+        , sa "stroke-width" (if hasChildren then "1" else "0.5")
+        ]
+        [ svgElem "title" []
+            [ HH.text $ decl.kind <> ": " <> decl.name ]
+        ]
+    ] <> (decl.children <#> \child -> renderChildCircle decl child)
+
+  renderChildCircle :: DeclarationCircle -> ChildCircle -> forall w i. HH.HTML w i
+  renderChildCircle parent child =
+    svgElem "circle"
+      [ sa "cx" (show (parent.x + child.x))
+      , sa "cy" (show (parent.y + child.y))
+      , sa "r" (show child.r)
+      , sa "fill" (childKindColor parent.kind child.kind)
+      , sa "fill-opacity" "0.85"
+      , sa "stroke" "white"
+      , sa "stroke-width" "0.3"
+      ]
+      [ svgElem "title" []
+          [ HH.text $ child.kind <> ": " <> child.name ]
+      ]
 
 -- =============================================================================
 -- Annotation header
@@ -930,6 +1036,9 @@ handleAction = case _ of
       ConcernClusterView -> renderConcernClusters
       _ -> pure unit
 
+    -- Fetch commit sparkline data (non-blocking, renders after load)
+    loadSparkline input.packageName input.moduleName
+
   Receive input -> do
     state <- H.get
     let changed = input.moduleName /= state.lastInput.moduleName
@@ -946,6 +1055,8 @@ handleAction = case _ of
         DeclStructureView -> renderDeclStructure
         ConcernClusterView -> renderConcernClusters
         _ -> pure unit
+    when (changed && state.initialized) do
+      loadSparkline input.packageName input.moduleName
 
   Finalize -> do
     log "[ModuleSignatureMapViz] Finalizing"
@@ -1038,6 +1149,43 @@ handleAction = case _ of
 
   CompareSnapshots ->
     H.raise CompareSnapshotsClicked
+
+  RenderSparkline ->
+    renderSparklineCanvas
+
+-- | Fetch numstat data and schedule sparkline render after next Halogen cycle
+loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit
+loadSparkline pkgName modName = do
+  result <- liftAff $ Loader.fetchModuleNumstat 500 pkgName
+  case result of
+    Left err ->
+      log $ "[Sparkline] Error fetching numstat: " <> err
+    Right commits -> do
+      let bars = Spark.prepareData modName commits
+      log $ "[Sparkline] " <> modName <> ": " <> show (Array.length bars) <> " commits"
+      H.modify_ _ { sparklineBars = bars, sparklineCtx = Nothing }
+      -- Trigger deferred render via listener so canvas exists in DOM
+      state <- H.get
+      case state.actionListener of
+        Just listener -> liftEffect $ HS.notify listener RenderSparkline
+        Nothing -> pure unit
+
+-- | Render the sparkline to its canvas element (fills available width)
+renderSparklineCanvas :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
+renderSparklineCanvas = do
+  state <- H.get
+  mElem <- H.getRef sparklineRef
+  case mElem >>= HTMLCanvas.fromElement of
+    Just canvas -> do
+      -- Measure actual rendered width (CSS width: 100%), set canvas pixels to match
+      actualWidth <- liftEffect $ Spark.getElementWidth (HTMLCanvas.toHTMLElement canvas)
+      let h = 72.0
+          w = if actualWidth > 0.0 then actualWidth else 400.0
+      liftEffect $ Spark.setCanvasDimensions canvas w h
+      ctx <- liftEffect $ Spark.getContext2D canvas
+      H.modify_ _ { sparklineCtx = Just ctx }
+      liftEffect $ Spark.render ctx { width: w, height: h } state.sparklineBars
+    Nothing -> pure unit
 
 -- | Prepare cells, group into lanes, compute arc layout, then update state.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
