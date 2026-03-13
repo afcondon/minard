@@ -77,13 +77,17 @@ import CE2.Component.CompareModuleViz as CompareModuleViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
+import CE2.Component.Header.Branding as Branding
+import CE2.Component.Header.Breadcrumbs as Breadcrumbs
+import CE2.Component.Header.Navigation as Navigation
+import CE2.Component.Header.Search as Search
 
 import CE2.Containers as C
 import CE2.Data.CoChange as CoChange
 import CE2.Data.Loader as Loader
-import CE2.Scene (Scene(..), BreadcrumbSegment, sceneBreadcrumbs, sceneFromString, sceneToString)
+import CE2.Scene (Scene(..), sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
-import CE2.Types (ColorMode(..), BeeswarmScope(..), themeColors, isDarkTheme, PackageReachability, PackageClusters, PackagePurity)
+import CE2.Types (ColorMode(..), BeeswarmScope(..), RefreshPhase(..), themeColors, isDarkTheme, PackageReachability, PackageClusters, PackagePurity)
 import CE2.Viz.DeclarationArcDiagram (isEffectful) as ArcDiagram
 import CE2.Component.SceneCoordinator.Pure (ViewMode(..), viewModeToString, viewModeFromString)
 import CE2.Component.SceneCoordinator.Pure as Pure
@@ -227,15 +231,6 @@ _commitModuleGridViz = Proxy
 
 _coChangeCubeViz :: Proxy "coChangeCubeViz"
 _coChangeCubeViz = Proxy
-
--- | Refresh phase for Sync button lifecycle
-data RefreshPhase
-  = RefreshIdle
-  | RefreshSyncing
-  | RefreshDone
-  | RefreshError String
-
-derive instance eqRefreshPhase :: Eq RefreshPhase
 
 -- | Captured position for transitions (from treemap cells or beeswarm)
 type CapturedPosition = { name :: String, x :: Number, y :: Number, r :: Number }
@@ -524,236 +519,58 @@ isPackageTreemap _ = false
 -- Header, Tab Strip, and Footer
 -- =============================================================================
 
--- | Style for header toggle buttons (Types, Git)
-toggleButtonStyle :: Boolean -> String -> String
-toggleButtonStyle isActive textColor =
-  "background: " <> (if isActive then "rgba(0,0,0,0.15)" else "none") <> "; "
-    <> "border: 1px solid " <> (if isActive then textColor else "rgba(0,0,0,0.25)") <> "; "
-    <> "color: " <> textColor <> "; "
-    <> "cursor: pointer; font-size: 9px; padding: 2px 6px; border-radius: 3px;"
-
--- | Render the Sync button with phase-dependent appearance
-renderSyncButton :: forall m. State -> String -> H.ComponentHTML Action Slots m
-renderSyncButton state textColor = case state.refreshPhase of
-  RefreshIdle ->
-    HH.button
-      [ HE.onClick \_ -> RequestRefresh
-      , HP.style $ toggleButtonStyle false textColor
-      , HP.title "Re-run loader and refresh data from disk"
-      ]
-      [ HH.text "Sync" ]
-  RefreshSyncing ->
-    HH.button
-      [ HP.disabled true
-      , HP.style $ "background: none; border: 1px solid rgba(0,0,0,0.15); "
-          <> "color: " <> textColor <> "; cursor: wait; font-size: 9px; padding: 2px 6px; "
-          <> "border-radius: 3px; opacity: 0.7;"
-      ]
-      [ HH.text "Syncing\x2026" ]
-  RefreshDone ->
-    HH.button
-      [ HP.disabled true
-      , HP.style $ "background: rgba(0,128,0,0.1); border: 1px solid rgba(0,128,0,0.4); "
-          <> "color: " <> textColor <> "; cursor: default; font-size: 9px; padding: 2px 6px; "
-          <> "border-radius: 3px;"
-      ]
-      [ HH.text "\x2713 Synced" ]
-  RefreshError _msg ->
-    HH.button
-      [ HE.onClick \_ -> RequestRefresh
-      , HP.style $ "background: rgba(200,0,0,0.1); border: 1px solid rgba(200,0,0,0.4); "
-          <> "color: #8b0000; cursor: pointer; font-size: 9px; padding: 2px 6px; "
-          <> "border-radius: 3px;"
-      , HP.title "Sync failed — click to retry"
-      ]
-      [ HH.text "Sync \x2718" ]
-
--- | Render the header bar with breadcrumb navigation
+-- | Render the header bar: branding + breadcrumbs | search + navigation + debug
 renderHeaderBar :: forall m. State -> H.ComponentHTML Action Slots m
 renderHeaderBar state =
-  let
-    textColor = "#333333"
-    bgColor = "#D4C9A8"
-    crumbs = sceneBreadcrumbs state.scene
-    lastIdx = Array.length crumbs - 1
-
-    -- Render a single breadcrumb segment
-    renderSegment :: Int -> BreadcrumbSegment -> Array (H.ComponentHTML Action Slots m)
-    renderSegment idx seg =
-      let
-        isFinal = idx == lastIdx
-        separator = if idx > 0
-          then [ HH.span
-                   [ HP.style "margin: 0 6px; opacity: 0.5;" ]
-                   [ HH.text "›" ] ]
-          else []
-        kindPrefix = if seg.kind == ""
-          then []
-          else [ HH.span
-                   [ HP.style "opacity: 0.45; font-weight: normal;" ]
-                   [ HH.text (seg.kind <> " ") ] ]
-        label =
-          if isFinal
-            then
-              HH.span
-                [ HP.style "font-weight: bold;" ]
-                (kindPrefix <> [ HH.text seg.label ])
-            else
-              HH.span
-                [ HE.onClick \_ -> NavigateTo seg.scene
-                , HP.style "cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: rgba(0,0,0,0.3);"
-                ]
-                (kindPrefix <> [ HH.text seg.label ])
-      in separator <> [label]
-
-  in HH.div
+  HH.div
     [ HP.class_ (HH.ClassName "scene-header-bar")
     , HP.style $ "height: 36px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; "
-        <> "background: " <> bgColor <> "; color: " <> textColor <> "; "
+        <> "background: #D4C9A8; color: #333333; "
         <> "font-family: 'Courier New', Courier, monospace; font-size: 11px; "
         <> "border-bottom: 1px solid #999;"
     ]
-    [ -- Left: Branding + Breadcrumbs
+    [ -- Left: Branding (home link) + Breadcrumbs
       HH.div
         [ HP.style "display: flex; align-items: center; gap: 8px;" ]
-        ( [ HH.span
-              [ HP.style "font-weight: bold; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; margin-right: 8px;" ]
-              [ HH.text "MINARD" ]
-          ]
-          <> Array.concat (Array.mapWithIndex renderSegment crumbs)
-        )
-
-      -- Right: Search + Types + Git toggle + state code (debug)
+        [ Branding.render (NavigateTo ProjectManagement)
+        , Breadcrumbs.render NavigateTo state.scene
+        ]
+    -- Right: Search + Navigation + debug state code
     , HH.div
         [ HP.style "display: flex; align-items: center; gap: 8px;" ]
-        [ -- Search input with dropdown
-          renderSearchInput state
-        , HH.button
-            [ HE.onClick \_ -> NavigateTo ProjectManagement
-            , HP.style $ toggleButtonStyle (state.scene == ProjectManagement) textColor
-            ]
-            [ HH.text "Projects" ]
-        , HH.button
-            [ HE.onClick \_ -> NavigateTo SnapshotManagement
-            , HP.style $ toggleButtonStyle (state.scene == SnapshotManagement) textColor
-            ]
-            [ HH.text "Snapshots" ]
-        , HH.button
-            [ HE.onClick \_ -> NavigateTo ProjectAnatomy
-            , HP.style $ toggleButtonStyle (state.scene == ProjectAnatomy) textColor
-            ]
-            [ HH.text "Anatomy" ]
-        , HH.button
-            [ HE.onClick \_ -> NavigateTo TypeClassGrid
-            , HP.style $ toggleButtonStyle (state.scene == TypeClassGrid) textColor
-            ]
-            [ HH.text "Types" ]
-        , HH.button
-            [ HE.onClick \_ -> NavigateTo NamespaceTree
-            , HP.style $ toggleButtonStyle (state.scene == NamespaceTree) textColor
-            ]
-            [ HH.text "Namespaces" ]
-        , HH.button
-            [ HE.onClick \_ -> NavigateTo AnnotationReport
-            , HP.style $ toggleButtonStyle (state.scene == AnnotationReport) textColor
-            ]
-            [ HH.text "Report" ]
-        , let structureTarget = case state.scene of
-                ModuleSignatureMap pkg mod -> ModuleStructure pkg mod
-                ModuleOverview pkg mod -> ModuleStructure pkg mod
-                DeclarationDetail pkg mod _ -> ModuleStructure pkg mod
-                ModuleStructure _ _ -> state.scene  -- already there
-                _ -> StructuralDecomp
-              isStructure = case state.scene of
-                StructuralDecomp -> true
-                ModuleStructure _ _ -> true
-                _ -> false
-          in HH.button
-            [ HE.onClick \_ -> NavigateTo structureTarget
-            , HP.style $ toggleButtonStyle isStructure textColor
-            ]
-            [ HH.text "Structure" ]
-        , let mCommitsTarget = case state.scene of
-                PkgTreemap pkg -> Just (CommitModuleGrid pkg)
-                PkgModuleBeeswarm pkg -> Just (CommitModuleGrid pkg)
-                ModuleSignatureMap pkg _ -> Just (CommitModuleGrid pkg)
-                ModuleOverview pkg _ -> Just (CommitModuleGrid pkg)
-                DeclarationDetail pkg _ _ -> Just (CommitModuleGrid pkg)
-                ModuleStructure pkg _ -> Just (CommitModuleGrid pkg)
-                CommitModuleGrid _ -> Just state.scene
-                CoChangeCube pkg -> Just (CommitModuleGrid pkg)
-                _ -> Nothing
-              isCommits = case state.scene of
-                CommitModuleGrid _ -> true
-                _ -> false
-          in case mCommitsTarget of
-            Just target -> HH.button
-              [ HE.onClick \_ -> NavigateTo target
-              , HP.style $ toggleButtonStyle isCommits textColor
-              , HP.title "Commit-module change grid for this package"
-              ]
-              [ HH.text "Commits" ]
-            Nothing -> HH.text ""
-        , let mCubeTarget = case state.scene of
-                CommitModuleGrid pkg -> Just (CoChangeCube pkg)
-                CoChangeCube _ -> Just state.scene
-                PkgTreemap pkg -> Just (CoChangeCube pkg)
-                PkgModuleBeeswarm pkg -> Just (CoChangeCube pkg)
-                ModuleSignatureMap pkg _ -> Just (CoChangeCube pkg)
-                ModuleOverview pkg _ -> Just (CoChangeCube pkg)
-                DeclarationDetail pkg _ _ -> Just (CoChangeCube pkg)
-                ModuleStructure pkg _ -> Just (CoChangeCube pkg)
-                _ -> Nothing
-              isCube = case state.scene of
-                CoChangeCube _ -> true
-                _ -> false
-          in case mCubeTarget of
-            Just target -> HH.button
-              [ HE.onClick \_ -> NavigateTo target
-              , HP.style $ toggleButtonStyle isCube textColor
-              , HP.title "3D co-change tensor cube"
-              ]
-              [ HH.text "Cube" ]
-            Nothing -> HH.text ""
-        , HH.button
-            [ HE.onClick \_ -> ToggleGitMode
-            , HP.style $ toggleButtonStyle (state.colorMode == GitStatus) textColor
-            ]
-            [ HH.text "Git" ]
-        , HH.button
-            [ HE.onClick \_ -> ToggleTidyMode
-            , HP.style $ toggleButtonStyle state.hideInfraLinks textColor
-            ]
-            [ HH.text "Tidy" ]
-        , HH.button
-            [ HE.onClick \_ -> ToggleClusterMode
-            , HP.style $ toggleButtonStyle (state.colorMode == ClusterView) textColor
-            , HP.title "Cluster: modules colored by dependency cluster (connected components). Hold R to peek reachability."
-            ]
-            [ HH.text "Cluster" ]
-        , HH.button
-            [ HE.onClick \_ -> ToggleChangeFrequencyMode
-            , HP.style $ toggleButtonStyle (state.colorMode == ChangeFrequency) textColor
-            , HP.title "Changes: heat map by git change frequency (blue=cold, red=hot)"
-            ]
-            [ HH.text "Changes" ]
-        , HH.button
-            [ HE.onClick \_ -> ToggleCoChangeClusterMode
-            , HP.style $ toggleButtonStyle (state.colorMode == CoChangeCluster) textColor
-            , HP.title "Co-change: modules colored by co-change community (frequently changed together)"
-            ]
-            [ HH.text "Co-chg" ]
-        , HH.button
-            [ HE.onClick \_ -> ToggleSizeByFrequency
-            , HP.style $ toggleButtonStyle state.sizeByChangeFrequency textColor
-            , HP.title "Size: treemap area proportional to git change frequency instead of LOC"
-            ]
-            [ HH.text "Size" ]
-        , renderSyncButton state textColor
-        , HH.span
-            [ HP.style "font-size: 9px; opacity: 0.6;" ]
-            [ HH.text $ "[" <> Pure.canonicalStateCode state <> "]" ]
-        ]
+        ( [ Search.render
+              { query: state.searchQuery
+              , results: state.searchResults
+              , selectedIndex: state.searchSelectedIndex
+              , open: state.searchOpen
+              }
+              { onInput: SearchInput
+              , onKeyDown: SearchKeyDown
+              , onDismiss: SearchDismiss
+              , onConfirmIndex: SearchConfirmIndex
+              }
+          ]
+          <> Navigation.render
+              { scene: state.scene
+              , colorMode: state.colorMode
+              , hideInfraLinks: state.hideInfraLinks
+              , sizeByChangeFrequency: state.sizeByChangeFrequency
+              , refreshPhase: state.refreshPhase
+              }
+              { onNavigateTo: NavigateTo
+              , onToggleGit: ToggleGitMode
+              , onToggleTidy: ToggleTidyMode
+              , onToggleCluster: ToggleClusterMode
+              , onToggleChangeFreq: ToggleChangeFrequencyMode
+              , onToggleCoChange: ToggleCoChangeClusterMode
+              , onToggleSizeByFreq: ToggleSizeByFrequency
+              , onRequestRefresh: RequestRefresh
+              }
+          <> [ HH.span
+                 [ HP.style "font-size: 9px; opacity: 0.6;" ]
+                 [ HH.text $ "[" <> Pure.canonicalStateCode state <> "]" ]
+             ]
+        )
     ]
 
 -- | Render the footer bar (persistent, shows stats and selection info)
@@ -849,98 +666,6 @@ renderDeclarationLegend =
             []
         , HH.span_ [ HH.text label ]
         ]
-
--- =============================================================================
--- Search Typeahead
--- =============================================================================
-
--- | Render the search input with dropdown overlay
-renderSearchInput :: forall m. State -> H.ComponentHTML Action Slots m
-renderSearchInput state =
-  HH.div
-    [ HP.class_ (HH.ClassName "header-search-wrapper") ]
-    [ HH.input
-        [ HP.type_ HP.InputText
-        , HP.class_ (HH.ClassName "module-search-input")
-        , HP.placeholder "search..."
-        , HP.value state.searchQuery
-        , HE.onValueInput SearchInput
-        , HE.onKeyDown SearchKeyDown
-        , HE.onBlur \_ -> SearchDismiss
-        ]
-    , if state.searchOpen && Array.length state.searchResults > 0
-        then renderSearchDropdown state
-        else HH.text ""
-    ]
-
--- | Render the search results dropdown
-renderSearchDropdown :: forall m. State -> H.ComponentHTML Action Slots m
-renderSearchDropdown state =
-  HH.div
-    [ HP.class_ (HH.ClassName "module-search-dropdown") ]
-    (Array.mapWithIndex renderResult state.searchResults)
-  where
-  renderResult :: Int -> Loader.UnifiedSearchResult -> H.ComponentHTML Action Slots m
-  renderResult idx result =
-    let
-      isSelected = idx == state.searchSelectedIndex
-      entityIcon = case result.entityType of
-        "package" -> "pkg"
-        "module" -> "mod"
-        _ -> fromMaybe "val" (result.kind <#> kindAbbrev)
-      contextText = case result.entityType of
-        "package" -> result.packageVersion
-        "module" -> result.packageName
-        "declaration" -> fromMaybe "" result.moduleName <> " / " <> result.packageName
-        _ -> ""
-      typeSigSnippet = case result.typeSignature of
-        Just sig -> " :: " <> String.take 50 sig
-        Nothing -> ""
-    in
-      HH.div
-        [ HP.classes
-            [ HH.ClassName "module-search-result"
-            , HH.ClassName (if isSelected then "module-search-result--selected" else "")
-            ]
-        , HE.onMouseDown \_ -> SearchConfirmIndex idx
-        ]
-        [ HH.div
-            [ HP.style "display: flex; align-items: baseline; gap: 6px;" ]
-            [ HH.span
-                [ HP.style $ "font-size: 8px; padding: 1px 3px; border-radius: 2px; background: " <> entityColor result.entityType <> "; color: #fff;" ]
-                [ HH.text entityIcon ]
-            , HH.span
-                [ HP.style "font-weight: bold;" ]
-                [ HH.text result.name ]
-            , HH.span
-                [ HP.style "opacity: 0.5; font-size: 10px;" ]
-                [ HH.text contextText ]
-            ]
-        , if typeSigSnippet /= ""
-            then HH.div
-              [ HP.style "font-size: 9px; opacity: 0.4; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" ]
-              [ HH.text typeSigSnippet ]
-            else HH.text ""
-        ]
-
-  -- Abbreviate declaration kind for the tag
-  kindAbbrev :: String -> String
-  kindAbbrev = case _ of
-    "value" -> "val"
-    "data" -> "dat"
-    "newtype" -> "new"
-    "type_synonym" -> "syn"
-    "type_class" -> "cls"
-    "foreign" -> "ffi"
-    other -> String.take 3 other
-
-  -- Color for entity type badge
-  entityColor :: String -> String
-  entityColor = case _ of
-    "package" -> "#7c3aed"    -- purple
-    "module" -> "#0891b2"     -- cyan
-    "declaration" -> "#4e79a7" -- blue
-    _ -> "#666"
 
 -- | Footer controls (view mode, scope)
 renderFooterControls :: forall m. State -> H.ComponentHTML Action Slots m

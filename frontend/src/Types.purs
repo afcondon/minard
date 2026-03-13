@@ -375,6 +375,15 @@ instance showColorMode :: Show ColorMode where
   show ChangeFrequency = "ChangeFrequency"
   show CoChangeCluster = "CoChangeCluster"
 
+-- | Refresh lifecycle phase for the Sync button
+data RefreshPhase
+  = RefreshIdle
+  | RefreshSyncing
+  | RefreshDone
+  | RefreshError String
+
+derive instance eqRefreshPhase :: Eq RefreshPhase
+
 -- | Bright color for project packages (theme-appropriate)
 brightColor :: ViewTheme -> String
 brightColor theme = if isDarkTheme theme
