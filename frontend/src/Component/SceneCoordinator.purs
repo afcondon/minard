@@ -30,12 +30,12 @@ import Data.Set as Set
 import Data.String as String
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Uncurried (EffectFn2, runEffectFn2)
 import Effect.Aff (Milliseconds(..))
 import Effect.Aff as Aff
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
+import Foreign (Foreign, unsafeToForeign, unsafeFromForeign, isNull, isUndefined)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Properties as HP
@@ -46,7 +46,9 @@ import Web.Event.Event (EventType(..))
 import Web.Event.EventTarget (addEventListener, removeEventListener, eventListener) as ET
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (toEventTarget) as HTMLDoc
-import Web.HTML.Window (document) as Win
+import Web.HTML.Window (document, history, toEventTarget) as Win
+import Web.HTML.History (pushState, replaceState, DocumentTitle(..), URL(..)) as History
+import Web.HTML.Event.PopStateEvent as PopStateEvent
 import Web.UIEvent.KeyboardEvent (KeyboardEvent, toEvent, key, repeat)
 import Web.UIEvent.KeyboardEvent as KE
 
@@ -93,10 +95,33 @@ import CE2.Viz.DeclarationArcDiagram (isEffectful) as ArcDiagram
 import CE2.Component.SceneCoordinator.Pure (ViewMode(..), viewModeToString, viewModeFromString)
 import CE2.Component.SceneCoordinator.Pure as Pure
 
--- FFI declarations for browser history integration
-foreign import pushHistoryState :: EffectFn2 String String Unit
-foreign import replaceHistoryState :: EffectFn2 String String Unit
-foreign import setupPopstateListener :: (String -> String -> Effect Unit) -> Effect (Effect Unit)
+-- =============================================================================
+-- Browser History (pure PureScript, no FFI)
+-- =============================================================================
+
+type HistoryState = { scene :: String, viewMode :: String }
+
+pushHistoryState :: String -> String -> Effect Unit
+pushHistoryState sceneStr viewModeStr = do
+  w <- window
+  h <- Win.history w
+  let st = unsafeToForeign { scene: sceneStr, viewMode: viewModeStr }
+  History.pushState st (History.DocumentTitle "") (History.URL "") h
+
+replaceHistoryState :: String -> String -> Effect Unit
+replaceHistoryState sceneStr viewModeStr = do
+  w <- window
+  h <- Win.history w
+  let st = unsafeToForeign { scene: sceneStr, viewMode: viewModeStr }
+  History.replaceState st (History.DocumentTitle "") (History.URL "") h
+
+-- | Read scene/viewMode from a PopStateEvent, returning Nothing if state is null
+readPopState :: WE.Event -> Maybe HistoryState
+readPopState evt = do
+  popEvt <- PopStateEvent.fromEvent evt
+  let st = PopStateEvent.state popEvt
+  if isNull st || isUndefined st then Nothing
+  else Just (unsafeFromForeign st :: HistoryState)
 
 -- =============================================================================
 -- Types
@@ -1174,27 +1199,34 @@ handleAction = case _ of
     state <- H.get
 
     -- Replace current history state with initial scene (so back works from start)
-    liftEffect $ runEffectFn2 replaceHistoryState (sceneToString state.scene) (viewModeToString state.viewMode)
+    liftEffect $ replaceHistoryState (sceneToString state.scene) (viewModeToString state.viewMode)
 
     -- Set up popstate listener for back/forward navigation
     { emitter: historyEmitter, listener: historyListener } <- liftEffect HS.create
     void $ H.subscribe historyEmitter
 
-    cleanup <- liftEffect $ setupPopstateListener \sceneStr viewModeStr -> do
-      case sceneFromString sceneStr of
-        Just scene -> HS.notify historyListener (HandlePopstate scene (viewModeFromString viewModeStr))
+    doc <- liftEffect $ Win.document =<< window
+    let docTarget = HTMLDoc.toEventTarget doc
+    w <- liftEffect window
+    let winTarget = Win.toEventTarget w
+
+    popstateListener <- liftEffect $ ET.eventListener \e ->
+      case readPopState e of
+        Just hs -> case sceneFromString hs.scene of
+          Just scene -> HS.notify historyListener (HandlePopstate scene (viewModeFromString hs.viewMode))
+          Nothing -> pure unit
         Nothing -> pure unit
 
-    H.modify_ _ { historyCleanup = Just cleanup }
+    liftEffect $ ET.addEventListener (EventType "popstate") popstateListener false winTarget
+
+    let historyCleanup = ET.removeEventListener (EventType "popstate") popstateListener false winTarget
+    H.modify_ _ { historyCleanup = Just historyCleanup }
 
     log "[SceneCoordinator] Browser history integration enabled"
 
-    -- Set up keyboard listener for reachability peek (hold R)
+    -- Set up keyboard listener for overlay peeks
     { emitter: keyEmitter, listener: keyListener } <- liftEffect HS.create
     void $ H.subscribe keyEmitter
-
-    doc <- liftEffect $ Win.document =<< window
-    let docTarget = HTMLDoc.toEventTarget doc
 
     let overlayKeys = ["c", "g", "h", "k", "p", "r", "x"]
 
@@ -1311,7 +1343,7 @@ handleAction = case _ of
 
     -- Push to browser history (enables back/forward buttons)
     -- ViewMode resets to PrimaryView on scene change
-    liftEffect $ runEffectFn2 pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
+    liftEffect $ pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
 
     -- If reachability mode is active, recompute for the target scene
     when (state.colorMode == Reachability) $ case targetScene of
@@ -1666,7 +1698,7 @@ handleAction = case _ of
     log $ "[SceneCoordinator] Setting view mode: " <> show targetMode
     H.modify_ _ { viewMode = targetMode }
     -- Push view mode change to browser history
-    liftEffect $ runEffectFn2 pushHistoryState (sceneToString state.scene) (viewModeToString targetMode)
+    liftEffect $ pushHistoryState (sceneToString state.scene) (viewModeToString targetMode)
     -- Re-render the visualization with new mode
     newState <- H.get
     prepareSceneData newState
