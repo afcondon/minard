@@ -65,14 +65,15 @@ import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.PackageReportViz as PackageReportViz
+import CE2.Component.LandingPageViz as LandingPageViz
 import CE2.Component.ProjectManagementViz as ProjectManagementViz
 import CE2.Component.SnapshotManagementViz as SnapshotManagementViz
 import CE2.Component.CommitModuleGridViz as CommitModuleGridViz
 import CE2.Component.CoChangeCubeViz as CoChangeCubeViz
 import CE2.Component.ProjectAnatomyViz as ProjectAnatomyViz
 import CE2.Component.NamespaceTreeViz as NamespaceTreeViz
-import CE2.Component.StructuralDecompViz as StructuralDecompViz
-import CE2.Component.ModuleStructureViz as ModuleStructureViz
+import CE2.Component.PackageAnatomyViz as PackageAnatomyViz
+import CE2.Component.ModuleAnatomyViz as ModuleAnatomyViz
 import CE2.Component.CompareModuleViz as CompareModuleViz
 import CE2.Component.DependencyChordViz as DependencyChordViz
 import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
@@ -149,18 +150,19 @@ type Slots =
   , moduleOverviewViz :: ModuleOverviewViz.Slot Unit
   , declarationDetailViz :: DeclarationDetailViz.Slot Unit
   , pkgModuleBeeswarmViz :: PkgModuleBeeswarmViz.Slot Unit
-  , typeClassGridViz :: TypeClassGridViz.Slot Unit
+  , typeClassGridViz :: H.Slot TypeClassGridViz.Query TypeClassGridViz.Output Unit
   , moduleSignatureMapViz :: ModuleSignatureMapViz.Slot Unit
   , dependencyChordViz :: DependencyChordViz.Slot String
   , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
   , slideOutPanel :: SlideOutPanel.Slot Unit
   , packageReportViz :: PackageReportViz.Slot Unit
   , annotationReportViz :: AnnotationReportViz.Slot Unit
+  , landingPageViz :: LandingPageViz.Slot Unit
   , projectManagementViz :: ProjectManagementViz.Slot Unit
   , projectAnatomyViz :: ProjectAnatomyViz.Slot Unit
-  , namespaceTreeViz :: NamespaceTreeViz.Slot Unit
-  , structuralDecompViz :: StructuralDecompViz.Slot Unit
-  , moduleStructureViz :: ModuleStructureViz.Slot Unit
+  , namespaceTreeViz :: H.Slot NamespaceTreeViz.Query NamespaceTreeViz.Output Unit
+  , packageAnatomyViz :: PackageAnatomyViz.Slot Unit
+  , moduleAnatomyViz :: ModuleAnatomyViz.Slot Unit
   , compareModuleViz :: CompareModuleViz.Slot Unit
   , snapshotManagementViz :: SnapshotManagementViz.Slot Unit
   , commitModuleGridViz :: CommitModuleGridViz.Slot Unit
@@ -209,6 +211,9 @@ _packageReportViz = Proxy
 _annotationReportViz :: Proxy "annotationReportViz"
 _annotationReportViz = Proxy
 
+_landingPageViz :: Proxy "landingPageViz"
+_landingPageViz = Proxy
+
 _projectManagementViz :: Proxy "projectManagementViz"
 _projectManagementViz = Proxy
 
@@ -218,11 +223,11 @@ _projectAnatomyViz = Proxy
 _namespaceTreeViz :: Proxy "namespaceTreeViz"
 _namespaceTreeViz = Proxy
 
-_structuralDecompViz :: Proxy "structuralDecompViz"
-_structuralDecompViz = Proxy
+_packageAnatomyViz :: Proxy "packageAnatomyViz"
+_packageAnatomyViz = Proxy
 
-_moduleStructureViz :: Proxy "moduleStructureViz"
-_moduleStructureViz = Proxy
+_moduleAnatomyViz :: Proxy "moduleAnatomyViz"
+_moduleAnatomyViz = Proxy
 
 _compareModuleViz :: Proxy "compareModuleViz"
 _compareModuleViz = Proxy
@@ -373,13 +378,17 @@ data Action
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
   | HandleModuleSignatureMapOutput ModuleSignatureMapViz.Output
   | HandlePackageReportOutput PackageReportViz.Output
+  | HandleTypeClassGridOutput TypeClassGridViz.Output
+  | HandleNamespaceTreeOutput NamespaceTreeViz.Output
   | HandleAnnotationReportOutput AnnotationReportViz.Output
+  | HandleLandingPageOutput LandingPageViz.Output
   | HandleProjectManagementOutput ProjectManagementViz.Output
   | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
+  | HandlePackageAnatomyOutput PackageAnatomyViz.Output
   | HandleSnapshotManagementOutput SnapshotManagementViz.Output
   | HandleCommitModuleGridOutput CommitModuleGridViz.Output
   | HandleCoChangeCubeOutput CoChangeCubeViz.Output
-  | HandleModuleStructureOutput ModuleStructureViz.Output
+  | HandleModuleAnatomyOutput ModuleAnatomyViz.Output
   | SetScope BeeswarmScope
   | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
   | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
@@ -979,7 +988,7 @@ renderScene state =
           { typeClassStats: stats
           , theme: theme
           }
-          absurd
+          HandleTypeClassGridOutput
       Nothing ->
         HH.div
           [ HP.class_ (HH.ClassName "loading") ]
@@ -996,7 +1005,7 @@ renderScene state =
               Nothing -> []
           , theme: theme
           }
-          absurd
+          HandleNamespaceTreeOutput
       Nothing ->
         HH.div
           [ HP.class_ (HH.ClassName "loading") ]
@@ -1028,22 +1037,23 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading annotations..." ]
 
-  StructuralDecomp ->
+  PackageAnatomy pkg ->
     case state.v2Data of
       Just v2 ->
-        HH.slot _structuralDecompViz unit StructuralDecompViz.component
-          { allImports: v2.imports <#> \mi -> { moduleName: mi.moduleName, imports: mi.imports }
+        HH.slot _packageAnatomyViz unit PackageAnatomyViz.component
+          { packageName: pkg
+          , allImports: v2.imports <#> \mi -> { moduleName: mi.moduleName, imports: mi.imports }
           , packages: v2.packages <#> \p -> { name: p.name, source: p.source, modules: v2.modules
               # Array.filter (\m -> m.package.name == p.name)
               # map _.name }
           }
-          absurd
+          HandlePackageAnatomyOutput
       Nothing ->
         HH.div
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading module data..." ]
 
-  ModuleStructure pkgName modName ->
+  ModuleAnatomy pkgName modName ->
     case state.v2Data of
       Just v2 ->
         case Pure.lookupModuleDeclarations state pkgName modName of
@@ -1060,7 +1070,7 @@ renderScene state =
               moduleSourceMap = Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.package.source
               siblingMods = Array.filter (\m -> m.package.name == pkgName && m.name /= modName) v2.modules
                               <#> _.name
-            in HH.slot _moduleStructureViz unit ModuleStructureViz.component
+            in HH.slot _moduleAnatomyViz unit ModuleAnatomyViz.component
               { packageName: pkgName
               , moduleName: modName
               , declarations: declInfos
@@ -1069,7 +1079,7 @@ renderScene state =
               , moduleSourceMap
               , siblingModules: siblingMods
               }
-              HandleModuleStructureOutput
+              HandleModuleAnatomyOutput
           Nothing ->
             HH.div [ HP.class_ (HH.ClassName "loading") ]
               [ HH.text "Loading declarations..." ]
@@ -1118,6 +1128,11 @@ renderScene state =
           [ HH.text "Loading snapshot data..." ]
 
   ProjectManagement ->
+    HH.slot _landingPageViz unit LandingPageViz.component
+      { dataReady: state.packageSetData /= Nothing }
+      HandleLandingPageOutput
+
+  ProjectSetup ->
     HH.slot _projectManagementViz unit ProjectManagementViz.component
       { projects: state.loadedProjects
       , dataReady: state.packageSetData /= Nothing
@@ -1529,11 +1544,29 @@ handleAction = case _ of
       log $ "[SceneCoordinator] Package report → module report: " <> pkgName
       -- TODO: pass package filter to AnnotationReport when filtering is implemented
       handleAction (NavigateTo AnnotationReport)
+    PackageReportViz.NavigateToCommits pkgName -> do
+      log $ "[SceneCoordinator] Package report → commits: " <> pkgName
+      handleAction (NavigateTo (CommitModuleGrid pkgName))
+
+  HandleTypeClassGridOutput output -> case output of
+    TypeClassGridViz.NavigateToModule pkgName modName -> do
+      log $ "[SceneCoordinator] Type class grid → module: " <> pkgName <> "/" <> modName
+      handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
+
+  HandleNamespaceTreeOutput output -> case output of
+    NamespaceTreeViz.NavigateToPackage pkgName -> do
+      log $ "[SceneCoordinator] Namespace tree → package: " <> pkgName
+      handleAction (NavigateTo (PkgTreemap pkgName))
 
   HandleAnnotationReportOutput output -> case output of
     AnnotationReportViz.NavigateToModule pkgName modName -> do
       log $ "[SceneCoordinator] Report navigation to: " <> pkgName <> "/" <> modName
       handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
+
+  HandleLandingPageOutput output -> case output of
+    LandingPageViz.NavigateToScene scene -> do
+      log $ "[SceneCoordinator] Landing page navigation to: " <> show scene
+      handleAction (NavigateTo scene)
 
   HandleProjectManagementOutput output -> case output of
     ProjectManagementViz.ProjectAdded _loadResult -> do
@@ -1542,9 +1575,6 @@ handleAction = case _ of
     ProjectManagementViz.NavigateToProject _projectId -> do
       log "[SceneCoordinator] Navigate to loaded project"
       H.raise ProjectLoaded
-    ProjectManagementViz.NavigateToScene scene -> do
-      log $ "[SceneCoordinator] Hub navigation to: " <> show scene
-      handleAction (NavigateTo scene)
     ProjectManagementViz.ProjectDeleted _projectId -> do
       log "[SceneCoordinator] Project deleted"
       -- Re-fetch projects list
@@ -1581,25 +1611,37 @@ handleAction = case _ of
   HandleProjectAnatomyOutput output -> case output of
     ProjectAnatomyViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] Anatomy package clicked: " <> pkgName
-      handleAction (NavigateTo (PkgTreemap pkgName))
+      handleAction (NavigateTo (PackageAnatomy pkgName))
+    ProjectAnatomyViz.ModuleClicked pkgName modName -> do
+      log $ "[SceneCoordinator] Anatomy module clicked: " <> modName
+      handleAction (NavigateTo (ModuleAnatomy pkgName modName))
     ProjectAnatomyViz.NavigateToGalaxy -> do
       log "[SceneCoordinator] Anatomy → Galaxy"
       handleAction (NavigateTo GalaxyTreemap)
     ProjectAnatomyViz.NavigateToProjects -> do
       log "[SceneCoordinator] Anatomy → Projects"
-      handleAction (NavigateTo ProjectManagement)
+      handleAction (NavigateTo ProjectSetup)
 
-  HandleModuleStructureOutput output -> case output of
-    ModuleStructureViz.NavigateToDeclaration declName -> do
+  HandlePackageAnatomyOutput output -> case output of
+    PackageAnatomyViz.ModuleClicked modName -> do
       state <- H.get
       case state.scene of
-        ModuleStructure pkg mod ->
+        PackageAnatomy pkg -> do
+          log $ "[SceneCoordinator] PackageAnatomy module clicked: " <> modName
+          handleAction (NavigateTo (ModuleAnatomy pkg modName))
+        _ -> pure unit
+
+  HandleModuleAnatomyOutput output -> case output of
+    ModuleAnatomyViz.NavigateToDeclaration declName -> do
+      state <- H.get
+      case state.scene of
+        ModuleAnatomy pkg mod ->
           handleAction (NavigateTo (DeclarationDetail pkg mod declName))
         _ -> pure unit
-    ModuleStructureViz.CompareWith targetMod -> do
+    ModuleAnatomyViz.CompareWith targetMod -> do
       state <- H.get
       case state.scene of
-        ModuleStructure pkg mod ->
+        ModuleAnatomy pkg mod ->
           handleAction (NavigateTo (CompareModules pkg mod pkg targetMod))
         _ -> pure unit
 
@@ -2242,7 +2284,10 @@ prepareSceneData state = case state.scene of
     loadAnnotationsIfNeeded state
 
   ProjectManagement -> do
-    log "[SceneCoordinator] ProjectManagement: fetching projects list"
+    log "[SceneCoordinator] ProjectManagement: landing page (static)"
+
+  ProjectSetup -> do
+    log "[SceneCoordinator] ProjectSetup: fetching projects list"
     result <- liftAff Loader.fetchV2Projects
     case result of
       Right projects -> do
@@ -2263,12 +2308,12 @@ prepareSceneData state = case state.scene of
     log $ "[SceneCoordinator] CoChangeCube: " <> pkg
     -- Component handles its own data loading
 
-  StructuralDecomp -> do
+  PackageAnatomy pkg -> do
     -- Data is already available in v2Data (imports loaded upfront)
-    log "[SceneCoordinator] StructuralDecomp"
+    log $ "[SceneCoordinator] PackageAnatomy: " <> pkg
 
-  ModuleStructure pkgName modName -> do
-    log $ "[SceneCoordinator] ModuleStructure: " <> modName
+  ModuleAnatomy pkgName modName -> do
+    log $ "[SceneCoordinator] ModuleAnatomy: " <> modName
     -- Need declarations and function calls for this module
     st <- H.get
     case st.v2Data of

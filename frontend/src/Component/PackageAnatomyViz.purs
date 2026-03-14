@@ -1,12 +1,13 @@
--- | Structural Decomposition Visualization
+-- | Package Anatomy Visualization
 -- |
 -- | Shows biconnected component decomposition of the module dependency graph.
 -- | Renders: metrics panel, annotated graph (nodes colored by block,
 -- | articulation points as diamonds, bridges dashed), and before/after
 -- | adjacency matrices.
-module CE2.Component.StructuralDecompViz
+module CE2.Component.PackageAnatomyViz
   ( component
   , Input
+  , Output(..)
   , Query
   , Slot
   ) where
@@ -43,13 +44,16 @@ import CE2.Data.LayerDiscovery as LD
 -- =============================================================================
 
 type Input =
-  { allImports :: Array { moduleName :: String, imports :: Array String }
+  { packageName :: String
+  , allImports :: Array { moduleName :: String, imports :: Array String }
   , packages :: Array { name :: String, modules :: Array String, source :: String }
   }
 
+data Output = ModuleClicked String
+
 data Query (a :: Type)
 
-type Slot = H.Slot Query Void
+type Slot = H.Slot Query Output
 
 -- | Which panel is active in the main area
 data ViewPanel = DecompPanel | LayersPanel
@@ -60,24 +64,15 @@ type State =
   { input :: Input
   , decompInfo :: Maybe Dec.DecompInfo
   , graph :: Maybe (Dec.SimpleGraph String)
-  , scopeFilter :: ScopeFilter
   , layerResult :: Maybe LD.LayerDiscoveryResult
   , viewPanel :: ViewPanel
   }
 
--- | Filter scope: which modules to include in decomposition
-data ScopeFilter
-  = AllModules
-  | WorkspaceOnly  -- Only workspace package modules
-  | SinglePackage String  -- Modules within one package
-
-derive instance Eq ScopeFilter
-
 data Action
   = Initialize
   | Receive Input
-  | SetScope ScopeFilter
   | SetViewPanel ViewPanel
+  | ClickModule String
 
 -- =============================================================================
 -- Block colors (same palette as decomposition demo)
@@ -98,7 +93,7 @@ blockColor i = fromMaybe "#888" (blockColors !! (i `mod` Array.length blockColor
 -- Component
 -- =============================================================================
 
-component :: forall o m. MonadAff m => H.Component Query Input o m
+component :: forall m. MonadAff m => H.Component Query Input Output m
 component =
   H.mkComponent
     { initialState
@@ -115,7 +110,6 @@ initialState input =
   { input
   , decompInfo: Nothing
   , graph: Nothing
-  , scopeFilter: WorkspaceOnly
   , layerResult: Nothing
   , viewPanel: DecompPanel
   }
@@ -127,43 +121,50 @@ initialState input =
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
   let
-    wsPackages = Array.filter (\p -> p.source == "workspace") state.input.packages
-    wsSorted = sortBy (\a b -> compare a.name b.name) wsPackages
+    pillStyle active = "padding: 6px 16px; border: 1px solid "
+      <> (if active then "#555; background: #555; color: #fff;" else "#C0BDB4; background: #fff; color: #555;")
+      <> " cursor: pointer; font-size: 12px; font-weight: 500; font-family: 'Courier New', monospace;"
+    isDecomp = state.viewPanel == DecompPanel
+    isLayers = state.viewPanel == LayersPanel
   in
-  HH.div [ HP.style "display: flex; flex-direction: column; height: 100%; gap: 12px; padding: 16px; font-family: system-ui, sans-serif;" ]
-    [ -- Scope filter bar
-      HH.div [ HP.style "display: flex; gap: 6px; align-items: center; flex-wrap: wrap;" ]
-        ( [ HH.span [ HP.style "font-size: 13px; color: #666; margin-right: 4px;" ] [ HH.text "Scope:" ]
-          , scopeButton state.scopeFilter WorkspaceOnly "Workspace"
-          , scopeButton state.scopeFilter AllModules "All"
-          , HH.span [ HP.style "width: 1px; height: 20px; background: #ddd; margin: 0 4px;" ] []
-          ]
-          <> (wsSorted <#> \pkg ->
-            scopeButton state.scopeFilter (SinglePackage pkg.name) pkg.name
-          )
-        )
-    -- Panel toggle
-    , HH.div [ HP.style "display: flex; gap: 6px; align-items: center;" ]
-        [ panelButton state.viewPanel DecompPanel "Decomposition"
-        , panelButton state.viewPanel LayersPanel "Layer Discovery"
+  HH.div
+    [ HP.style "width: 100%; height: 100%; overflow-y: auto; background: #fafaf8; color: #333; font-family: 'Courier New', Courier, monospace;" ]
+    [ -- Heading + toggle bar
+      HH.div
+        [ HP.style "padding: 24px 32px 0; max-width: 1200px; margin: 0 auto;" ]
+        [ HH.div
+            [ HP.style "display: flex; align-items: baseline; gap: 16px; margin: 0 0 16px;" ]
+            [ HH.h1
+                [ HP.style "font-size: 20px; font-weight: bold; margin: 0; letter-spacing: 0.5px;" ]
+                [ HH.text $ "Anatomy of " <> state.input.packageName ]
+            , HH.div
+                [ HP.style "display: flex; gap: 0;" ]
+                [ HH.button
+                    [ HE.onClick \_ -> SetViewPanel DecompPanel
+                    , HP.style $ pillStyle isDecomp <> " border-radius: 4px 0 0 4px;"
+                    ]
+                    [ HH.text "Decomposition" ]
+                , HH.button
+                    [ HE.onClick \_ -> SetViewPanel LayersPanel
+                    , HP.style $ pillStyle isLayers <> " border-radius: 0 4px 4px 0; border-left: none;"
+                    ]
+                    [ HH.text "Layers" ]
+                ]
+            ]
         ]
-    , case state.decompInfo, state.graph of
-        Just info, Just graph ->
-          case state.viewPanel of
-            DecompPanel -> renderDecompPanel info graph
-            LayersPanel -> renderLayersPanel info graph state.layerResult
-        _, _ ->
-          HH.div [ HP.style "display: flex; align-items: center; justify-content: center; flex: 1; color: #888;" ]
-            [ HH.text "Computing decomposition..." ]
+    -- Main content
+    , HH.div
+        [ HP.style "max-width: 1200px; margin: 0 auto; padding: 0 32px 24px;" ]
+        [ case state.decompInfo, state.graph of
+            Just info, Just graph ->
+              case state.viewPanel of
+                DecompPanel -> renderDecompPanel info graph
+                LayersPanel -> renderLayersPanel info graph state.layerResult
+            _, _ ->
+              HH.div [ HP.style "display: flex; align-items: center; justify-content: center; flex: 1; color: #888;" ]
+                [ HH.text "Computing decomposition..." ]
+        ]
     ]
-
-panelButton :: forall m. ViewPanel -> ViewPanel -> String -> H.ComponentHTML Action () m
-panelButton current target label =
-  let active = current == target
-      style = if active
-        then "padding: 5px 16px; font-size: 13px; border: 1px solid #333; background: #333; color: #fff; border-radius: 3px; cursor: pointer; font-weight: 600;"
-        else "padding: 5px 16px; font-size: 13px; border: 1px solid #ccc; background: #fff; color: #555; border-radius: 3px; cursor: pointer;"
-  in HH.button [ HP.style style, HE.onClick \_ -> SetViewPanel target ] [ HH.text label ]
 
 renderDecompPanel :: forall m. Dec.DecompInfo -> Dec.SimpleGraph String -> H.ComponentHTML Action () m
 renderDecompPanel info graph =
@@ -256,8 +257,6 @@ renderLayerCard :: forall m. LD.DiscoveredLayer -> H.ComponentHTML Action () m
 renderLayerCard layer =
   let
     moduleList = Array.sort (Set.toUnfoldable layer.modules :: Array String)
-    shortNames = moduleList <#> \name ->
-      fromMaybe name $ Array.last (String.split (String.Pattern ".") name)
   in
   HH.div [ HP.style $ "border: 1px solid #ddd; border-radius: 4px; padding: 12px; border-left: 4px solid " <> layerColor layer.order <> ";" ]
     [ HH.div [ HP.style "display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;" ]
@@ -266,8 +265,15 @@ renderLayerCard layer =
         , HH.span [ HP.style "font-size: 12px; color: #888;" ]
             [ HH.text $ "Layer " <> show layer.order <> " — " <> show (Set.size layer.modules) <> " modules" ]
         ]
-    , HH.div [ HP.style "font-size: 11px; color: #666; line-height: 1.6;" ]
-        [ HH.text $ String.joinWith ", " shortNames ]
+    , HH.div [ HP.style "font-size: 11px; color: #666; line-height: 1.6; display: flex; flex-wrap: wrap; gap: 2px 6px;" ]
+        (moduleList <#> \name ->
+          let shortName = fromMaybe name $ Array.last (String.split (String.Pattern ".") name)
+          in HH.span
+            [ HP.style "cursor: pointer; text-decoration: underline; text-decoration-color: #ccc;"
+            , HE.onClick \_ -> ClickModule name
+            ]
+            [ HH.text shortName ]
+        )
     , HH.div [ HP.style "font-size: 10px; color: #999; margin-top: 4px; font-family: monospace;" ]
         [ HH.text $ "pattern: " <> layer.pattern ]
     ]
@@ -328,14 +334,6 @@ renderLayerMetrics info result =
             else "no change"
       in metricRow "Improvement" improvementStr
     ]
-
-scopeButton :: forall m. ScopeFilter -> ScopeFilter -> String -> H.ComponentHTML Action () m
-scopeButton current target label =
-  let active = current == target
-      style = if active
-        then "padding: 4px 12px; font-size: 12px; border: 1px solid #333; background: #333; color: #fff; border-radius: 3px; cursor: pointer;"
-        else "padding: 4px 12px; font-size: 12px; border: 1px solid #ccc; background: #fff; color: #333; border-radius: 3px; cursor: pointer;"
-  in HH.button [ HP.style style, HE.onClick \_ -> SetScope target ] [ HH.text label ]
 
 renderMetrics :: forall m. Dec.DecompInfo -> H.ComponentHTML Action () m
 renderMetrics info =
@@ -402,11 +400,23 @@ renderBlockList info =
               Dec.ShapeTree -> "tree"
             n = Set.size block.nodes
             e = Set.size block.edges
+            moduleNames = Array.sort (Set.toUnfoldable block.nodes :: Array String)
           in
-            HH.div [ HP.style "display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px;" ]
-              [ HH.span [ HP.style $ "display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: " <> blockColor block.index <> ";" ] []
-              , HH.span [ HP.style "color: #333;" ] [ HH.text $ show n <> "n " <> show e <> "e" ]
-              , HH.span [ HP.style "color: #888; font-style: italic;" ] [ HH.text shapeLabel ]
+            HH.div [ HP.style "padding: 4px 0; font-size: 12px; border-bottom: 1px solid #f0f0f0;" ]
+              [ HH.div [ HP.style "display: flex; align-items: center; gap: 6px;" ]
+                  [ HH.span [ HP.style $ "display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: " <> blockColor block.index <> ";" ] []
+                  , HH.span [ HP.style "color: #333;" ] [ HH.text $ show n <> "n " <> show e <> "e" ]
+                  , HH.span [ HP.style "color: #888; font-style: italic;" ] [ HH.text shapeLabel ]
+                  ]
+              , HH.div [ HP.style "margin-left: 16px; font-size: 11px; color: #666; display: flex; flex-wrap: wrap; gap: 1px 5px;" ]
+                  (moduleNames <#> \name ->
+                    let shortName = fromMaybe name $ Array.last (String.split (String.Pattern ".") name)
+                    in HH.span
+                      [ HP.style "cursor: pointer; text-decoration: underline; text-decoration-color: #ccc;"
+                      , HE.onClick \_ -> ClickModule name
+                      ]
+                      [ HH.text shortName ]
+                  )
               ]
         )
       )
@@ -415,22 +425,19 @@ renderBlockList info =
 -- Actions
 -- =============================================================================
 
-handleAction :: forall o m. MonadAff m => Action -> H.HalogenM State Action () o m Unit
+handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Output m Unit
 handleAction = case _ of
   Initialize -> do
     computeAndRender
 
   Receive input -> do
     state <- H.get
-    when (input.allImports /= state.input.allImports) do
+    when (input.allImports /= state.input.allImports || input.packageName /= state.input.packageName) do
       H.modify_ _ { input = input }
       computeAndRender
 
-  SetScope scope -> do
-    state <- H.get
-    when (scope /= state.scopeFilter) do
-      H.modify_ _ { scopeFilter = scope }
-      computeAndRender
+  ClickModule modName -> do
+    H.raise (ModuleClicked modName)
 
   SetViewPanel panel -> do
     state <- H.get
@@ -457,15 +464,15 @@ handleAction = case _ of
               pure unit
             _, _, _ -> pure unit
 
-computeAndRender :: forall o m. MonadAff m => H.HalogenM State Action () o m Unit
+computeAndRender :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
 computeAndRender = do
   state <- H.get
-  let filtered = filterImports state.scopeFilter state.input
+  let filtered = filterImportsForPackage state.input.packageName state.input
   let graph = Dec.importsToSimpleGraph filtered
   let info = Dec.analyzeGraph graph
   let layerResult = LD.discoverLayersFromImports graph info filtered
 
-  log $ "[StructuralDecomp] " <> show (Array.length graph.nodes) <> " nodes, "
+  log $ "[PackageAnatomy] " <> show (Array.length graph.nodes) <> " nodes, "
       <> show info.metrics.biconnectedComponentCount <> " blocks, "
       <> show info.metrics.articulationPointCount <> " APs, "
       <> show info.metrics.bridgeCount <> " bridges, "
@@ -490,19 +497,11 @@ computeAndRender = do
       pure unit
 
 -- =============================================================================
--- Scope filtering
+-- Package filtering
 -- =============================================================================
 
-filterImports :: ScopeFilter -> Input -> Array { moduleName :: String, imports :: Array String }
-filterImports AllModules input = input.allImports
-filterImports WorkspaceOnly input =
-  let
-    wsModules = Set.fromFoldable $ Array.concat $
-      Array.filter (\p -> p.source == "workspace") input.packages <#> _.modules
-  in
-    Array.filter (\mi -> Set.member mi.moduleName wsModules) input.allImports
-      <#> \mi -> mi { imports = Array.filter (\imp -> Set.member imp wsModules) mi.imports }
-filterImports (SinglePackage pkg) input =
+filterImportsForPackage :: String -> Input -> Array { moduleName :: String, imports :: Array String }
+filterImportsForPackage pkg input =
   let
     pkgModules = Set.fromFoldable $ fromMaybe [] $
       Array.find (\p -> p.name == pkg) input.packages <#> _.modules

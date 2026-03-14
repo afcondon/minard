@@ -7,6 +7,7 @@
 module CE2.Component.NamespaceTreeViz
   ( component
   , Input
+  , Output(..)
   , Query
   , Slot
   ) where
@@ -27,6 +28,7 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
+import Halogen.Subscription as HS
 
 import Hylograph.HATS.InterpreterTick (clearContainer)
 
@@ -50,14 +52,18 @@ type Input =
 -- | No queries
 data Query (a :: Type)
 
--- | Slot type for parent component (Void = no outputs)
-type Slot = H.Slot Query Void
+-- | Output to parent
+data Output = NavigateToPackage String  -- dominant packageName
+
+-- | Slot type for parent component
+type Slot = H.Slot Query Output
 
 -- | Component state
 type State =
   { lastInput :: Input
   , selectedPackages :: Set String  -- checked package names
   , initialized :: Boolean          -- true after first render with packages
+  , actionListener :: Maybe (HS.Listener Action)
   }
 
 -- | Actions
@@ -68,6 +74,7 @@ data Action
   | TogglePackage String
   | SelectCategory PackageCategory
   | ClearCategory PackageCategory
+  | HandleNodeClick String  -- packageName
 
 -- | A classified package for the filter panel
 type ClassifiedPackage =
@@ -79,7 +86,7 @@ type ClassifiedPackage =
 -- Component
 -- =============================================================================
 
-component :: forall m. MonadAff m => H.Component Query Input Void m
+component :: forall m. MonadAff m => H.Component Query Input Output m
 component =
   H.mkComponent
     { initialState
@@ -97,6 +104,7 @@ initialState input =
   { lastInput: input
   , selectedPackages: defaultSelection input.packages
   , initialized: false
+  , actionListener: Nothing
   }
 
 -- | Default selection: workspace packages only
@@ -219,12 +227,18 @@ renderCheckbox state pkg =
 -- Action Handlers
 -- =============================================================================
 
-handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Void m Unit
+handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Output m Unit
 handleAction = case _ of
   Initialize -> do
     state <- H.get
     let input = state.lastInput
     log $ "[NamespaceTreeViz] Initializing with " <> show (Array.length input.namespaceTree) <> " nodes"
+
+    -- Set up subscription for viz click callbacks -> Halogen actions
+    { emitter, listener } <- liftEffect HS.create
+    void $ H.subscribe emitter
+    H.modify_ _ { actionListener = Just listener }
+
     renderFilteredTree state
 
   Receive input -> do
@@ -285,6 +299,10 @@ handleAction = case _ of
     newState <- H.get
     renderFilteredTree newState
 
+  HandleNodeClick pkgName -> do
+    log $ "[NamespaceTreeViz] Node clicked, navigating to package: " <> pkgName
+    H.raise (NavigateToPackage pkgName)
+
 -- | Get all package names in a category
 packageNamesForCategory :: PackageCategory -> Array Loader.V2Package -> Set String
 packageNamesForCategory cat packages =
@@ -298,7 +316,7 @@ packageNamesForCategory cat packages =
       packages
 
 -- | Build the nsPkgMap and packageCategories, then delegate to Viz.NamespaceTree
-renderFilteredTree :: forall m. MonadAff m => State -> H.HalogenM State Action () Void m Unit
+renderFilteredTree :: forall m. MonadAff m => State -> H.HalogenM State Action () Output m Unit
 renderFilteredTree state = do
   let
     input = state.lastInput
@@ -323,12 +341,18 @@ renderFilteredTree state = do
     packageCategories = Map.fromFoldable $ input.packages <#> \p ->
       Tuple p.name (classify wsNames directDepNames p)
 
+    clickHandler = case state.actionListener of
+      Just listener -> Just $ \pkgName ->
+        HS.notify listener (HandleNodeClick pkgName)
+      Nothing -> Nothing
+
     config =
       { containerSelector
       , theme: input.theme
       , selectedPackages: state.selectedPackages
       , nsPkgMap
       , packageCategories
+      , onNodeClick: clickHandler
       }
 
   -- Don't render until we have the namespace→packages mapping;

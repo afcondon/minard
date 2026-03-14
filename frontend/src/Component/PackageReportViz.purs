@@ -47,6 +47,7 @@ type Input =
 data Output
   = NavigateToPackage String         -- → PkgTreemap
   | NavigateToModuleReport String    -- → AnnotationReport (filtered to package)
+  | NavigateToCommits String         -- → CommitModuleGrid (workspace packages only)
 
 data Query a = NoQuery a
 
@@ -77,6 +78,7 @@ data Action
   | SetFilterCategory String
   | ClickPackageName String
   | ClickModuleReport String
+  | ClickCommits String
 
 -- =============================================================================
 -- Component
@@ -324,6 +326,14 @@ renderCard state card =
         , metricSpan ("topo " <> show card.pkg.topoLayer)
         , -- Sparkline
           renderPackageSparkline state card.pkg.name
+        , -- Commits link (workspace packages only)
+          if card.category == "workspace"
+            then HH.button
+              [ HE.onClick \_ -> ClickCommits card.pkg.name
+              , HP.style "font-size: 10px; color: #8b7355; cursor: pointer; background: none; border: 1px solid #d4c9a8; border-radius: 3px; padding: 1px 8px; font-family: inherit; margin-left: auto;"
+              ]
+              [ HH.text "commits" ]
+            else HH.text ""
         ]
 
     -- Package-level annotations
@@ -481,3 +491,7 @@ handleAction = case _ of
   ClickModuleReport pkgName -> do
     log $ "[PackageReport] Navigate to module report for: " <> pkgName
     H.raise (NavigateToModuleReport pkgName)
+
+  ClickCommits pkgName -> do
+    log $ "[PackageReport] Navigate to commits for: " <> pkgName
+    H.raise (NavigateToCommits pkgName)

@@ -101,7 +101,7 @@ hasRow2 = case _ of
   PkgModuleBeeswarm _ -> true
   ModuleSignatureMap _ _ -> true
   ModuleOverview _ _ -> true
-  ModuleStructure _ _ -> true
+  ModuleAnatomy _ _ -> true
   DeclarationDetail _ _ _ -> true
   _ -> false
 
@@ -163,7 +163,7 @@ renderRow2 state actions =
       , sceneLinks (moduleSceneLinks pkg)
       ]
 
-    ModuleStructure pkg _ -> concat
+    ModuleAnatomy pkg _ -> concat
       [ sceneLinks (moduleSceneLinks pkg)
       ]
 
@@ -252,8 +252,8 @@ renderRow2 state actions =
             (isSignatureMap state.scene)
         , moduleViewBtn "Overview" (ModuleOverview pkg mod)
             (isOverview state.scene)
-        , moduleViewBtn "Structure" (ModuleStructure pkg mod)
-            (isStructure state.scene)
+        , moduleViewBtn "Anatomy" (ModuleAnatomy pkg mod)
+            (isModuleAnatomy state.scene)
         ]
     ]
 
@@ -304,8 +304,8 @@ renderRow2 state actions =
   -- Context-dependent scene links
   packageSceneLinks :: String -> Array (HH.HTML w i)
   packageSceneLinks pkg =
-    [ sceneLinkButton "Structure" StructuralDecomp
-        (isStructuralDecomp state.scene)
+    [ sceneLinkButton "Anatomy" (PackageAnatomy pkg)
+        (isPackageAnatomy state.scene)
     , sceneLinkButton "Commits" (CommitModuleGrid pkg)
         (isCommitGrid state.scene)
     , sceneLinkButton "Cube" (CoChangeCube pkg)
@@ -411,13 +411,13 @@ renderRow2 state actions =
   isOverview (ModuleOverview _ _) = true
   isOverview _ = false
 
-  isStructure :: Scene -> Boolean
-  isStructure (ModuleStructure _ _) = true
-  isStructure _ = false
+  isModuleAnatomy :: Scene -> Boolean
+  isModuleAnatomy (ModuleAnatomy _ _) = true
+  isModuleAnatomy _ = false
 
-  isStructuralDecomp :: Scene -> Boolean
-  isStructuralDecomp StructuralDecomp = true
-  isStructuralDecomp _ = false
+  isPackageAnatomy :: Scene -> Boolean
+  isPackageAnatomy (PackageAnatomy _) = true
+  isPackageAnatomy _ = false
 
   isCommitGrid :: Scene -> Boolean
   isCommitGrid (CommitModuleGrid _) = true

@@ -37,7 +37,7 @@ import Halogen.HTML.Properties as HP
 import CE2.Data.Decomposition as Dec
 import CE2.Data.Loader as Loader
 import CE2.Data.SubDeclarationAnalysis as SDA
-import CE2.Component.ModuleStructureViz as StructViz
+import CE2.Component.ModuleAnatomyViz as StructViz
 import CE2.Viz.DeclarationArcDiagram as ArcDiagram
 import CE2.Viz.DeclarationLayerDiagram as LayerDiagram
 import CE2.Viz.DOMHelpers as DOMHelpers

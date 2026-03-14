@@ -64,9 +64,10 @@ themeForScene = case _ of
   PackageReport -> DaylightTheme
   AnnotationReport -> DaylightTheme
   ProjectManagement -> DaylightTheme
+  ProjectSetup -> DaylightTheme
   ProjectAnatomy -> DaylightTheme
-  StructuralDecomp -> DaylightTheme
-  ModuleStructure _ _ -> DaylightTheme
+  PackageAnatomy _ -> DaylightTheme
+  ModuleAnatomy _ _ -> DaylightTheme
   CompareModules _ _ _ _ -> DaylightTheme
   CompareSnapshots _ _ _ -> DaylightTheme
   SnapshotManagement -> DaylightTheme
@@ -108,9 +109,10 @@ canonicalStateCode state = case state.scene of
   PackageReport -> "PR"
   AnnotationReport -> "R"
   ProjectManagement -> "P"
+  ProjectSetup -> "PS"
   ProjectAnatomy -> "Y"
-  StructuralDecomp -> "D"
-  ModuleStructure pkg mod -> "X(" <> pkg <> "," <> mod <> ")"
+  PackageAnatomy pkg -> "D(" <> pkg <> ")"
+  ModuleAnatomy pkg mod -> "X(" <> pkg <> "," <> mod <> ")"
   CompareModules p1 m1 p2 m2 -> "V(" <> p1 <> "," <> m1 <> "," <> p2 <> "," <> m2 <> ")"
   CompareSnapshots p m sid -> "Z(" <> p <> "," <> m <> "," <> show sid <> ")"
   SnapshotManagement -> "SM"

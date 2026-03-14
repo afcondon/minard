@@ -521,7 +521,7 @@ commonPrefix strs =
 -- =============================================================================
 
 -- | Convert branch analysis into the same DeclInfo/FunctionCall format
--- | used by ModuleStructureViz, enabling reuse of decomposition visualization
+-- | used by ModuleAnatomyViz, enabling reuse of decomposition visualization
 branchesToDeclGraph
   :: Array BranchInfo
   -> { declarations :: Array { name :: String, kind :: String }

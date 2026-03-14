@@ -6,6 +6,7 @@
 module CE2.Component.TypeClassGridViz
   ( component
   , Input
+  , Output(..)
   , Query
   , Slot
   ) where
@@ -19,6 +20,7 @@ import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Properties as HP
+import Halogen.Subscription as HS
 
 import Hylograph.HATS.InterpreterTick (clearContainer)
 
@@ -39,12 +41,16 @@ type Input =
 -- | No queries
 data Query (a :: Type)
 
--- | Slot type for parent component (Void = no outputs)
-type Slot = H.Slot Query Void
+-- | Output to parent
+data Output = NavigateToModule String String  -- packageName, moduleName
+
+-- | Slot type for parent component
+type Slot = H.Slot Query Output
 
 -- | Component state — for change detection only
 type State =
   { lastInput :: Input
+  , actionListener :: Maybe (HS.Listener Action)
   }
 
 -- | Actions
@@ -52,12 +58,13 @@ data Action
   = Initialize
   | Receive Input
   | Finalize
+  | HandleClassClick String String  -- packageName, moduleName
 
 -- =============================================================================
 -- Component
 -- =============================================================================
 
-component :: forall m. MonadAff m => H.Component Query Input Void m
+component :: forall m. MonadAff m => H.Component Query Input Output m
 component =
   H.mkComponent
     { initialState
@@ -73,6 +80,7 @@ component =
 initialState :: Input -> State
 initialState input =
   { lastInput: input
+  , actionListener: Nothing
   }
 
 -- =============================================================================
@@ -99,12 +107,18 @@ render _state =
 -- Action Handlers
 -- =============================================================================
 
-handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Void m Unit
+handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Output m Unit
 handleAction = case _ of
   Initialize -> do
     state <- H.get
     let input = state.lastInput
     log $ "[TypeClassGridViz] Initializing with " <> show input.typeClassStats.count <> " type classes"
+
+    -- Set up subscription for viz click callbacks -> Halogen actions
+    { emitter, listener } <- liftEffect HS.create
+    void $ H.subscribe emitter
+    H.modify_ _ { actionListener = Just listener }
+
     renderGrid input
 
   Receive input -> do
@@ -123,13 +137,23 @@ handleAction = case _ of
     log "[TypeClassGridViz] Finalizing"
     liftEffect $ clearContainer containerSelector
 
+  HandleClassClick pkgName modName -> do
+    log $ "[TypeClassGridViz] Class clicked: " <> pkgName <> "/" <> modName
+    H.raise (NavigateToModule pkgName modName)
+
 -- | Render the grid visualization
-renderGrid :: forall m. MonadAff m => Input -> H.HalogenM State Action () Void m Unit
+renderGrid :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
 renderGrid input = do
-  let config =
+  state <- H.get
+  let clickHandler = case state.actionListener of
+        Just listener -> Just $ \pkgName modName ->
+          HS.notify listener (HandleClassClick pkgName modName)
+        Nothing -> Nothing
+      config =
         { containerSelector
         , width: 1650.0
         , height: 900.0
         , theme: input.theme
+        , onClassClick: clickHandler
         }
   liftEffect $ TypeClassGrid.render config input.typeClassStats

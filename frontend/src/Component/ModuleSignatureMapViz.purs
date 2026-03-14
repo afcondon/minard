@@ -44,7 +44,7 @@ import Halogen.Subscription as HS
 import CE2.Data.Decomposition as Dec
 import CE2.Data.Loader as Loader
 import CE2.Data.SubDeclarationAnalysis as SDA
-import CE2.Component.ModuleStructureViz as StructViz
+import CE2.Component.ModuleAnatomyViz as StructViz
 import CE2.Util.SVG (svgElem, sa)
 import CE2.Viz.CommitSparkline as Spark
 import CE2.Viz.DeclarationArcDiagram as ArcDiagram

@@ -43,10 +43,11 @@ data Scene
   | AnnotationReport                -- Interactive annotation report view
   | ProjectManagement               -- Project onboarding / management screen
   | ProjectAnatomy                  -- Project anatomy: workspace/direct/transitive beeswarm
-  | StructuralDecomp                -- Biconnected component decomposition of module graph
-  | ModuleStructure String String   -- Declaration-level decomposition (pkg, module)
+  | PackageAnatomy String            -- Biconnected component decomposition of module graph (package)
+  | ModuleAnatomy String String     -- Declaration-level decomposition (pkg, module)
   | CompareModules String String String String  -- Before/after comparison (pkg1, mod1, pkg2, mod2)
   | CompareSnapshots String String Int          -- Cross-snapshot comparison (pkg, module, beforeSnapshotId)
+  | ProjectSetup                               -- Project CRUD (add/delete/list)
   | SnapshotManagement                         -- Snapshot creation + cleanup
   | CommitModuleGrid String                    -- Commit-module change grid (package)
   | CoChangeCube String                        -- 3D co-change tensor (package)
@@ -67,9 +68,10 @@ instance showScene :: Show Scene where
   show PackageReport = "PackageReport"
   show AnnotationReport = "AnnotationReport"
   show ProjectManagement = "ProjectManagement"
+  show ProjectSetup = "ProjectSetup"
   show ProjectAnatomy = "ProjectAnatomy"
-  show StructuralDecomp = "StructuralDecomp"
-  show (ModuleStructure pkg mod) = "ModuleStructure(" <> pkg <> "," <> mod <> ")"
+  show (PackageAnatomy pkg) = "PackageAnatomy(" <> pkg <> ")"
+  show (ModuleAnatomy pkg mod) = "ModuleAnatomy(" <> pkg <> "," <> mod <> ")"
   show (CompareModules p1 m1 p2 m2) = "CompareModules(" <> p1 <> "," <> m1 <> "," <> p2 <> "," <> m2 <> ")"
   show (CompareSnapshots p m sid) = "CompareSnapshots(" <> p <> "," <> m <> "," <> show sid <> ")"
   show SnapshotManagement = "SnapshotManagement"
@@ -92,12 +94,13 @@ parentScene = case _ of
   PackageReport -> ProjectManagement        -- Package report returns to landing
   AnnotationReport -> PackageReport         -- Module report returns to package report
   ProjectManagement -> ProjectManagement   -- Root-level, no parent
+  ProjectSetup -> ProjectManagement        -- Back to landing
   ProjectAnatomy -> ProjectAnatomy         -- Root-level, no parent
-  StructuralDecomp -> GalaxyTreemap       -- Cross-cutting view returns to galaxy
-  ModuleStructure pkg mod -> ModuleSignatureMap pkg mod  -- Back to module sig map
+  PackageAnatomy _ -> ProjectAnatomy     -- Back to project anatomy
+  ModuleAnatomy pkg _ -> PackageAnatomy pkg  -- Back to package anatomy
   CompareModules _ _ _ _ -> GalaxyTreemap               -- Compare view returns to galaxy
   CompareSnapshots p m _ -> ModuleSignatureMap p m      -- Back to the module being compared
-  SnapshotManagement -> ProjectManagement              -- Back to project management
+  SnapshotManagement -> ProjectSetup                   -- Back to project setup
   CommitModuleGrid pkg -> PkgTreemap pkg              -- Back to package treemap
   CoChangeCube pkg -> CommitModuleGrid pkg            -- Back to 2D commit grid
 
@@ -109,7 +112,8 @@ type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
 -- | Earlier segments are clickable navigation targets.
 sceneBreadcrumbs :: Scene -> Array BreadcrumbSegment
 sceneBreadcrumbs = case _ of
-  ProjectManagement   -> [{ kind: "", label: "Projects", scene: ProjectManagement }]
+  ProjectManagement   -> [{ kind: "", label: "Home", scene: ProjectManagement }]
+  ProjectSetup        -> [{ kind: "", label: "Home", scene: ProjectManagement }, { kind: "", label: "Projects", scene: ProjectSetup }]
   ProjectAnatomy      -> [{ kind: "", label: "Anatomy", scene: ProjectAnatomy }]
   GalaxyTreemap       -> [reg]
   GalaxyBeeswarm      -> [reg]
@@ -117,11 +121,11 @@ sceneBreadcrumbs = case _ of
   NamespaceTree       -> [reg, { kind: "", label: "Namespaces", scene: NamespaceTree }]
   PackageReport       -> [reg, { kind: "", label: "Report", scene: PackageReport }]
   AnnotationReport    -> [reg, { kind: "", label: "Report", scene: PackageReport }, { kind: "", label: "Modules", scene: AnnotationReport }]
-  StructuralDecomp    -> [reg, { kind: "", label: "Structure", scene: StructuralDecomp }]
-  ModuleStructure p m -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Structure", scene: ModuleStructure p m }]
+  PackageAnatomy pkg -> [anatomySeg, { kind: "Package", label: pkg, scene: PackageAnatomy pkg }]
+  ModuleAnatomy p m -> [anatomySeg, { kind: "Package", label: p, scene: PackageAnatomy p }, modSeg p m]
   CompareModules p1 m1 _ m2 -> [reg, pkgSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
   CompareSnapshots p m _ -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Compare", scene: CompareSnapshots p m 0 }]
-  SnapshotManagement     -> [{ kind: "", label: "Projects", scene: ProjectManagement }, { kind: "", label: "Snapshots", scene: SnapshotManagement }]
+  SnapshotManagement     -> [{ kind: "", label: "Home", scene: ProjectManagement }, { kind: "", label: "Projects", scene: ProjectSetup }, { kind: "", label: "Snapshots", scene: SnapshotManagement }]
   CommitModuleGrid pkg   -> [reg, pkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }]
   CoChangeCube pkg       -> [reg, pkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }, { kind: "", label: "Cube", scene: CoChangeCube pkg }]
   SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
@@ -133,14 +137,15 @@ sceneBreadcrumbs = case _ of
                                   , { kind: "Decl", label: d, scene: DeclarationDetail p m d }]
   ModuleSignatureMap p m -> [reg, pkgSeg p, modSeg p m]
   where
-    reg = { kind: "", label: "Registry", scene: GalaxyTreemap }
+    reg = { kind: "", label: "Galaxy", scene: GalaxyTreemap }
+    anatomySeg = { kind: "", label: "Anatomy", scene: ProjectAnatomy }
     pkgSeg pkg = { kind: "Package", label: pkg, scene: PkgTreemap pkg }
     modSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleSignatureMap p m }
 
 -- | Human-readable label for display in navigation UI
 sceneLabel :: Scene -> String
 sceneLabel = case _ of
-  GalaxyTreemap -> "Galaxy (Treemap)"
+  GalaxyTreemap -> "Galaxy"
   GalaxyBeeswarm -> "Galaxy (Beeswarm)"
   SolarSwarm -> "Project Packages"
   PkgTreemap pkg -> pkg <> " Modules"
@@ -152,10 +157,11 @@ sceneLabel = case _ of
   NamespaceTree -> "Namespace Tree"
   PackageReport -> "Package Report"
   AnnotationReport -> "Annotations"
-  ProjectManagement -> "Projects"
+  ProjectManagement -> "Home"
+  ProjectSetup -> "Projects"
   ProjectAnatomy -> "Project Anatomy"
-  StructuralDecomp -> "Structural Decomposition"
-  ModuleStructure _ mod -> shortModuleName mod <> " Structure"
+  PackageAnatomy pkg -> pkg <> " Anatomy"
+  ModuleAnatomy _ mod -> shortModuleName mod <> " Anatomy"
   CompareModules _ m1 _ m2 -> shortModuleName m1 <> " vs " <> shortModuleName m2
   CompareSnapshots _ m _ -> shortModuleName m <> " (Compare)"
   SnapshotManagement -> "Snapshots"
@@ -206,16 +212,20 @@ sceneFromString str
   | str == "AnnotationReport" = Just AnnotationReport
   | str == "ProjectManagement" = Just ProjectManagement
   | str == "ProjectAnatomy" = Just ProjectAnatomy
-  | str == "StructuralDecomp" = Just StructuralDecomp
-  | str == "SnapshotManagement" = Just SnapshotManagement
-  | String.take 16 str == "ModuleStructure(" =
+  | String.take 16 str == "PackageAnatomy(" =
       let inner = String.drop 16 str
+          pkg = String.take (String.length inner - 1) inner
+      in Just (PackageAnatomy pkg)
+  | str == "ProjectSetup" = Just ProjectSetup
+  | str == "SnapshotManagement" = Just SnapshotManagement
+  | String.take 14 str == "ModuleAnatomy(" =
+      let inner = String.drop 14 str
           content = String.take (String.length inner - 1) inner
       in case String.indexOf (String.Pattern ",") content of
           Just idx ->
             let pkg = String.take idx content
                 mod = String.drop (idx + 1) content
-            in Just (ModuleStructure pkg mod)
+            in Just (ModuleAnatomy pkg mod)
           Nothing -> Nothing
   | String.take 17 str == "CommitModuleGrid(" =
       let inner = String.drop 17 str

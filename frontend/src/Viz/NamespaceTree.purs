@@ -31,7 +31,7 @@ import Data.Tree (Tree, mkTree) as DT
 import Effect (Effect)
 
 -- HATS imports
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, onZoom, withBehaviors) as HATS
+import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, onZoom, withBehaviors, onClick) as HATS
 import Hylograph.HATS.InterpreterTick (rerender)
 import Hylograph.Internal.Behavior.Types (ZoomConfig(..), ScaleExtent(..))
 import Hylograph.Internal.Element.Types (ElementType(..))
@@ -56,6 +56,7 @@ type Config =
   , selectedPackages :: Set String
   , nsPkgMap :: Map.Map Int (Array { packageName :: String, moduleCount :: Int })
   , packageCategories :: Map.Map String PackageCategory
+  , onNodeClick :: Maybe (String -> Effect Unit)  -- dominant packageName
   }
 
 -- | Node data carried through layout
@@ -73,6 +74,7 @@ type NodeData =
   , isSynthetic :: Boolean
   , dominantColor :: String
   , isPathOnly :: Boolean
+  , dominantPackage :: Maybe String
   }
 
 -- =============================================================================
@@ -104,6 +106,7 @@ render config nodes = do
                    , isLeaf: false, dbId: -1, isSynthetic: true
                    , dominantColor: pathOnlyColor
                    , isPathOnly: true
+                   , dominantPackage: Nothing
                    }
                    forest
           result = layoutTree singleTree
@@ -158,20 +161,20 @@ filterByPackages config nodes
     in
       Array.filter (\n -> Set.member n.id allIncluded) nodes
 
--- | Determine the dominant color for a namespace node
-dominantColorForNode :: Config -> V2NamespaceTreeNode -> { color :: String, isPathOnly :: Boolean }
+-- | Determine the dominant color and package for a namespace node
+dominantColorForNode :: Config -> V2NamespaceTreeNode -> { color :: String, isPathOnly :: Boolean, dominantPkg :: Maybe String }
 dominantColorForNode config node =
   case Map.lookup node.id config.nsPkgMap of
-    Nothing -> { color: pathOnlyColor, isPathOnly: true }
+    Nothing -> { color: pathOnlyColor, isPathOnly: true, dominantPkg: Nothing }
     Just pkgs ->
       -- Filter to only selected packages
       let selectedPkgs = Array.filter (\p -> Set.member p.packageName config.selectedPackages) pkgs
       in case Array.head (Array.sortWith (\p -> negate p.moduleCount) selectedPkgs) of
-        Nothing -> { color: pathOnlyColor, isPathOnly: true }
+        Nothing -> { color: pathOnlyColor, isPathOnly: true, dominantPkg: Nothing }
         Just dominant ->
           case Map.lookup dominant.packageName config.packageCategories of
-            Just cat -> { color: categoryColor cat, isPathOnly: false }
-            Nothing -> { color: pathOnlyColor, isPathOnly: false }
+            Just cat -> { color: categoryColor cat, isPathOnly: false, dominantPkg: Just dominant.packageName }
+            Nothing -> { color: pathOnlyColor, isPathOnly: false, dominantPkg: Just dominant.packageName }
 
 -- =============================================================================
 -- Step 1: Build rose tree from flat array
@@ -198,7 +201,7 @@ buildForest config nodes =
       let children = Array.sortWith _.segment $ fromMaybe [] (Map.lookup (Just node.id) childrenOf)
           childTrees = map buildNode children
           hasChildren = Array.length children > 0
-          { color, isPathOnly } = dominantColorForNode config node
+          { color, isPathOnly, dominantPkg } = dominantColorForNode config node
           -- If a node has both children AND modules, add a synthetic leaf
           -- so the modules are represented in the layout
           syntheticLeaf =
@@ -214,6 +217,7 @@ buildForest config nodes =
                     , isSynthetic: true
                     , dominantColor: color
                     , isPathOnly: isPathOnly
+                    , dominantPackage: dominantPkg
                     }
                     Nil
                  ]
@@ -230,6 +234,7 @@ buildForest config nodes =
           , isSynthetic: false
           , dominantColor: color
           , isPathOnly: isPathOnly
+          , dominantPackage: dominantPkg
           }
           (fromFoldable allChildren)
   in
@@ -312,7 +317,7 @@ nodeRadius nd
   | otherwise = clamp 2.5 10.0 (2.5 + sqrt (toNumber nd.moduleCount) * 1.5)
 
 renderRadialTree :: Config -> LayoutResult -> HATS.Tree
-renderRadialTree _config result =
+renderRadialTree config result =
   let
     r = result.outerRadius
     -- SVG size: diameter + padding for labels
@@ -384,15 +389,20 @@ renderRadialTree _config result =
                   else if nd.moduleCount > 0
                        then clamp 0.5 1.0 (0.5 + toNumber nd.moduleCount / 50.0)
                        else 0.35
-      in
-        HATS.elem Circle
+        circleElem = HATS.elem Circle
           [ HATS.thunkedStr "cx" (show cx)
           , HATS.thunkedStr "cy" (show cy)
           , HATS.thunkedStr "r" (show radius)
           , HATS.thunkedStr "fill" nd.dominantColor
           , HATS.thunkedStr "opacity" (show opacity)
+          , HATS.staticStr "cursor" (case nd.dominantPackage of
+              Just _ -> "pointer"
+              Nothing -> "default")
           ]
           []
+      in case config.onNodeClick, nd.dominantPackage of
+        Just handler, Just pkg -> HATS.withBehaviors [ HATS.onClick (handler pkg) ] circleElem
+        _, _ -> circleElem
 
     -- Render a text label with radial orientation
     renderLabel :: { node :: NodeData, parent :: Maybe NodeData } -> HATS.Tree

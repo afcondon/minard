@@ -23,17 +23,16 @@ import Data.Number (pi, cos, sin)
 import Data.String.Pattern (Pattern(..))
 import Data.String.Common (split) as StringCommon
 import Effect (Effect)
-import Data.Functor (void)
 import Data.Int (floor) as Int
 
 -- HATS imports
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr)
+import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, withBehaviors, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Element.Types (ElementType(..))
 
 -- Local imports
 import CE2.Data.Loader (TypeClassStats, TypeClassInfo)
-import CE2.Types (ViewTheme(..), themeColors)
+import CE2.Types (ViewTheme, themeColors)
 
 -- =============================================================================
 -- Types
@@ -44,6 +43,7 @@ type Config =
   , width :: Number
   , height :: Number
   , theme :: ViewTheme
+  , onClassClick :: Maybe (String -> String -> Effect Unit)  -- packageName, moduleName
   }
 
 -- =============================================================================
@@ -75,7 +75,7 @@ renderGrid config stats =
     ]
     [ renderBackground config
     , renderHeader config stats
-    , renderCards config stats.typeClasses
+    , renderCards config stats.typeClasses config.onClassClick
     ]
 
 -- | Background rect
@@ -117,8 +117,8 @@ renderHeader config stats =
     ]
 
 -- | Render all type class cards in a grid
-renderCards :: Config -> Array TypeClassInfo -> Tree
-renderCards config classes =
+renderCards :: Config -> Array TypeClassInfo -> Maybe (String -> String -> Effect Unit) -> Tree
+renderCards config classes mClickHandler =
   let
     -- Grid layout parameters
     cardWidth = 120.0
@@ -131,15 +131,15 @@ renderCards config classes =
     cols = max 1.0 $ (config.width - startX * 2.0) / (cardWidth + padding)
 
     -- Position each card
-    positionedCards = Array.mapWithIndex (positionCard cols cardWidth cardHeight padding startX startY) classes
+    positionedCards = Array.mapWithIndex (positionCard cols cardWidth cardHeight padding startX startY mClickHandler) classes
   in
     elem Group
       [ staticStr "class" "cards" ]
       positionedCards
 
 -- | Position a single card in the grid
-positionCard :: Number -> Number -> Number -> Number -> Number -> Number -> Int -> TypeClassInfo -> Tree
-positionCard cols cardW cardH padding startX startY idx tc =
+positionCard :: Number -> Number -> Number -> Number -> Number -> Number -> Maybe (String -> String -> Effect Unit) -> Int -> TypeClassInfo -> Tree
+positionCard cols cardW cardH padding startX startY mClickHandler idx tc =
   let
     colsInt = max 1 $ Int.floor cols
     col = toNumber (idx `mod` colsInt)
@@ -147,22 +147,27 @@ positionCard cols cardW cardH padding startX startY idx tc =
     x = startX + col * (cardW + padding)
     y = startY + row * (cardH + padding)
   in
-    renderCard cardW cardH x y tc
+    renderCard cardW cardH x y tc mClickHandler
 
 -- | Render a single type class card
 -- | Donut centered with instance count inside, class name below
-renderCard :: Number -> Number -> Number -> Number -> TypeClassInfo -> Tree
-renderCard w h x y tc =
+renderCard :: Number -> Number -> Number -> Number -> TypeClassInfo -> Maybe (String -> String -> Effect Unit) -> Tree
+renderCard w h x y tc mClickHandler =
   let
     -- Donut centered in upper portion, leaving room for text below
     donutCx = w / 2.0
     donutCy = h / 2.0 - 10.0
     donutRadius = 40.0  -- 3x bigger than before (was 15)
-  in
-    elem Group
+    cardElem = elem Group
       [ staticStr "class" "type-class-card"
       , thunkedStr "transform" $ "translate(" <> show x <> "," <> show y <> ")"
+      , staticStr "cursor" "pointer"
       ]
+    wrappedCard children = case mClickHandler of
+      Just handler -> withBehaviors [ onClick (handler tc.packageName tc.moduleName) ] (cardElem children)
+      Nothing -> cardElem children
+  in
+    wrappedCard
       [ -- Donut with instance count in center
         renderDonut donutCx donutCy donutRadius tc.methodCount tc.instanceCount 12
       -- Class name (bottom)

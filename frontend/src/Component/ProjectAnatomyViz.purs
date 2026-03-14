@@ -42,6 +42,7 @@ type Input =
 
 data Output
   = PackageClicked String
+  | ModuleClicked String String  -- packageName, moduleName
   | NavigateToGalaxy
   | NavigateToProjects
 
@@ -83,6 +84,7 @@ data Action
   | Receive Input
   | Finalize
   | HandlePackageClick String
+  | HandleModuleClick String
   | GoToGalaxy
   | GoToProjects
   | SwitchToPackages
@@ -439,6 +441,16 @@ handleAction = case _ of
     log $ "[ProjectAnatomyViz] Package clicked: " <> pkgName
     H.raise (PackageClicked pkgName)
 
+  HandleModuleClick modName -> do
+    log $ "[ProjectAnatomyViz] Module clicked: " <> modName
+    state <- H.get
+    let mPkg = case state.cachedModules of
+          Just modules -> Array.find (\m -> m.name == modName) modules <#> _.package.name
+          Nothing -> Nothing
+    case mPkg of
+      Just pkgName -> H.raise (ModuleClicked pkgName modName)
+      Nothing -> log $ "[ProjectAnatomyViz] Could not find package for module: " <> modName
+
   GoToGalaxy -> do
     log "[ProjectAnatomyViz] Navigate to Galaxy"
     H.raise NavigateToGalaxy
@@ -535,13 +547,18 @@ startModuleVisualization modules = do
 
   let maxLayer = foldl (\acc p -> max acc p.topoLayer) 0 state.packages
 
+  let mClickHandler = case state.actionListener of
+        Just listener -> Just $ \modName ->
+          HS.notify listener (HandleModuleClick modName)
+        Nothing -> Nothing
+
   let modConfig :: ModBeeswarm.AnatomyModuleConfig
       modConfig =
         { containerSelector: C.anatomyBeeswarmContainer
         , width: 1200.0
         , height: 560.0
         , maxTopoLayer: maxLayer
-        , onClick: Nothing
+        , onClick: mClickHandler
         , packages: state.packages
         , colorMode: "category-age"
         }

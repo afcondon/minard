@@ -1,9 +1,9 @@
--- | Module-Level Structural Decomposition
+-- | Module Anatomy Visualization
 -- |
 -- | Decomposes a single module's declaration call graph using biconnected
 -- | components. Reveals: tightly coupled function clusters, articulation-point
 -- | "god functions", cross-module coupling edges, and refactoring difficulty.
-module CE2.Component.ModuleStructureViz
+module CE2.Component.ModuleAnatomyViz
   ( component
   , Input
   , DeclInfo
@@ -257,20 +257,52 @@ initialState input =
 
 render :: forall m. MonadAff m => State -> H.ComponentHTML Action () m
 render state =
-  HH.div [ HP.style "display: flex; flex-direction: column; height: 100%; gap: 12px; padding: 16px; font-family: system-ui, sans-serif;" ]
-    [ -- Header
-      HH.div [ HP.style "display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;" ]
-        [ HH.h2 [ HP.style "margin: 0; font-size: 16px; font-weight: 600; color: #333;" ]
-            [ HH.text $ shortModuleName state.input.moduleName <> " — Declaration Structure" ]
-        , HH.span [ HP.style "font-size: 12px; color: #888;" ]
-            [ HH.text $ show (Array.length state.input.declarations) <> " declarations, "
-                <> show (Array.length state.input.functionCalls) <> " internal calls, "
-                <> show (Array.length state.input.crossModuleCalls) <> " cross-module"
+  let
+    pillStyle active = "padding: 6px 16px; border: 1px solid "
+      <> (if active then "#555; background: #555; color: #fff;" else "#C0BDB4; background: #fff; color: #555;")
+      <> " cursor: pointer; font-size: 12px; font-weight: 500; font-family: 'Courier New', monospace;"
+    isDeclView = case state.viewMode of
+      DeclarationView -> true
+      _ -> false
+    isSubDeclView = case state.viewMode of
+      SubDeclarationView -> true
+      _ -> false
+  in
+  HH.div
+    [ HP.style "width: 100%; height: 100%; overflow-y: auto; background: #fafaf8; color: #333; font-family: 'Courier New', Courier, monospace;" ]
+    [ -- Heading + toggle bar
+      HH.div
+        [ HP.style "padding: 24px 32px 0; max-width: 1200px; margin: 0 auto;" ]
+        [ HH.div
+            [ HP.style "display: flex; align-items: baseline; gap: 16px; margin: 0 0 16px; flex-wrap: wrap;" ]
+            [ HH.h1
+                [ HP.style "font-size: 20px; font-weight: bold; margin: 0; letter-spacing: 0.5px;" ]
+                [ HH.text $ "Anatomy of " <> shortModuleName state.input.moduleName ]
+            , HH.span [ HP.style "font-size: 12px; color: #888;" ]
+                [ HH.text $ show (Array.length state.input.declarations) <> " declarations, "
+                    <> show (Array.length state.input.functionCalls) <> " internal calls, "
+                    <> show (Array.length state.input.crossModuleCalls) <> " cross-module"
+                ]
+            , renderComparePicker state.input.moduleName state.input.siblingModules
+            , HH.div
+                [ HP.style "display: flex; gap: 0; margin-left: auto;" ]
+                [ HH.button
+                    [ HP.style $ pillStyle isDeclView <> " border-radius: 4px 0 0 4px;"
+                    , HE.onClick \_ -> SwitchView DeclarationView
+                    ]
+                    [ HH.text "Declarations" ]
+                , HH.button
+                    [ HP.style $ pillStyle isSubDeclView <> " border-radius: 0 4px 4px 0; border-left: none;"
+                    , HE.onClick \_ -> SwitchView SubDeclarationView
+                    ]
+                    [ HH.text "Sub-Declarations" ]
+                ]
             ]
-        , renderComparePicker state.input.moduleName state.input.siblingModules
-        , renderViewTabs state.viewMode
         ]
-    , case state.viewMode of
+    -- Main content
+    , HH.div
+        [ HP.style "max-width: 1200px; margin: 0 auto; padding: 0 32px 24px;" ]
+        [ case state.viewMode of
         SubDeclarationView -> renderSubDeclarationView state
         DeclarationView ->
           case state.decompInfo, state.graph of
@@ -303,6 +335,7 @@ render state =
             _, _ ->
               HH.div [ HP.style "display: flex; align-items: center; justify-content: center; flex: 1; color: #888;" ]
                 [ HH.text "Computing declaration structure..." ]
+        ]
     ]
 
 -- =============================================================================
@@ -335,40 +368,6 @@ renderComparePicker currentMod siblings =
       <> (if Array.null related then [] else (related <#> optionEl) <> [separator])
       <> (others <#> optionEl)
       )
-
--- =============================================================================
--- View tabs
--- =============================================================================
-
-renderViewTabs :: forall m. MonadAff m => ViewMode -> H.ComponentHTML Action () m
-renderViewTabs current =
-  let
-    isDeclView = case current of
-      DeclarationView -> true
-      _ -> false
-    isSubDeclView = case current of
-      SubDeclarationView -> true
-      _ -> false
-    tabStyle isActive = "padding: 4px 12px; font-size: 12px; border: 1px solid "
-      <> (if isActive then "#333; background: #333; color: #fff" else "#ccc; background: #fff; color: #666")
-      <> "; cursor: pointer; font-weight: 500;"
-    leftTab = tabStyle isDeclView
-      <> " border-radius: 3px 0 0 3px; border-right: none;"
-    rightTab = tabStyle isSubDeclView
-      <> " border-radius: 0 3px 3px 0;"
-  in
-  HH.div [ HP.style "display: flex; margin-left: auto;" ]
-    [ HH.button
-        [ HP.style leftTab
-        , HE.onClick \_ -> SwitchView DeclarationView
-        ]
-        [ HH.text "Declarations" ]
-    , HH.button
-        [ HP.style rightTab
-        , HE.onClick \_ -> SwitchView SubDeclarationView
-        ]
-        [ HH.text "Sub-Declarations" ]
-    ]
 
 -- =============================================================================
 -- Sub-declaration view
@@ -1001,7 +1000,7 @@ computeAndRender = do
   let { graph, crossEdges } = buildCallGraph state.input
   let info = Dec.analyzeGraph graph
 
-  log $ "[ModuleStructure] " <> state.input.moduleName <> ": "
+  log $ "[ModuleAnatomy] " <> state.input.moduleName <> ": "
       <> show (Array.length graph.nodes) <> " decls, "
       <> show info.metrics.biconnectedComponentCount <> " clusters, "
       <> show info.metrics.articulationPointCount <> " hubs, "
