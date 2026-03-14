@@ -2177,6 +2177,84 @@ select.project-dropdown:focus {
 }
 
 /* =============================================================================
+   Declaration Graph (callGraphTree) Hover Highlighting
+   ============================================================================= */
+
+.decl-node {
+  transition: opacity 0.15s ease-out;
+}
+
+.decl-node.highlight-primary circle,
+.decl-node.highlight-primary rect {
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
+}
+
+.decl-node.highlight-primary text {
+  font-weight: 700 !important;
+  opacity: 1 !important;
+}
+
+.decl-node.highlight-related {
+  opacity: 0.9;
+}
+
+.decl-node.highlight-dimmed {
+  opacity: 0.15;
+}
+
+.decl-edge {
+  transition: stroke-opacity 0.15s ease-out, stroke-width 0.15s ease-out;
+}
+
+.decl-edge.highlight-related {
+  stroke-opacity: 0.8 !important;
+  stroke-width: 2px !important;
+}
+
+.decl-edge.highlight-dimmed {
+  stroke-opacity: 0.04 !important;
+}
+
+/* =============================================================================
+   Concern Graph (concernClusteredTree) Hover Highlighting
+   ============================================================================= */
+
+.concern-node {
+  transition: opacity 0.15s ease-out;
+}
+
+.concern-node.highlight-primary circle {
+  r: 8px;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
+}
+
+.concern-node.highlight-primary text {
+  opacity: 1 !important;
+  font-weight: 600;
+}
+
+.concern-node.highlight-related text {
+  opacity: 0.8 !important;
+}
+
+.concern-node.highlight-dimmed {
+  opacity: 0.15;
+}
+
+.concern-edge {
+  transition: stroke-opacity 0.15s ease-out, stroke-width 0.15s ease-out;
+}
+
+.concern-edge.highlight-related {
+  stroke-opacity: 0.6 !important;
+  stroke-width: 1.5px !important;
+}
+
+.concern-edge.highlight-dimmed {
+  stroke-opacity: 0.03 !important;
+}
+
+/* =============================================================================
    Package Overview Layout (Beeswarm/CirclePack with Auxiliary Panels)
    ============================================================================= */
 

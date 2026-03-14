@@ -38,9 +38,10 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 
-import Hylograph.HATS (Tree, elem, staticStr, staticNum)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, withBehaviors, onCoordinatedHighlight)
 import Hylograph.HATS.InterpreterTick (clearContainer, rerender)
 import Hylograph.Internal.Element.Types (ElementType(..))
+import Hylograph.Internal.Behavior.Types (HighlightClass(..))
 
 import CE2.Data.Decomposition as Dec
 import CE2.Data.SubDeclarationAnalysis as SDA
@@ -1165,54 +1166,103 @@ concernClusteredTree graph caseExprs =
         if name < tgt then
           case Map.lookup name nodePositions, Map.lookup tgt nodePositions of
             Just p1, Just p2 ->
-              let sameGroup = p1.group == p2.group
+              let
+                sameGroup = p1.group == p2.group
+                edgeHl = onCoordinatedHighlight
+                  { identify: name <> "→" <> tgt
+                  , classify: \hoveredId ->
+                      if hoveredId == name || hoveredId == tgt then Related
+                      else Dimmed
+                  , group: Just "concern-graph"
+                  }
               in if sameGroup then
-                -- Intra-group: quadratic bezier curved through group center
                 case groupCenters Array.!! p1.group of
                   Just gc ->
                     let
-                      -- Control point biased toward group center
                       cpx = (p1.x + p2.x) / 2.0 * 0.4 + gc.x * 0.6
                       cpy = (p1.y + p2.y) / 2.0 * 0.4 + gc.y * 0.6
                       d = "M" <> show p1.x <> "," <> show p1.y
                         <> " Q" <> show cpx <> "," <> show cpy
                         <> " " <> show p2.x <> "," <> show p2.y
-                    in Just $ elem Path
+                    in Just $ withBehaviors [ edgeHl ] $ elem Path
                       [ staticStr "d" d
                       , staticStr "fill" "none"
                       , staticStr "stroke" (blockColor p1.group)
                       , staticNum "stroke-width" 0.5
                       , staticNum "stroke-opacity" 0.12
+                      , staticStr "class" "concern-edge"
                       ] []
                   Nothing -> Nothing
               else
-                -- Inter-group: straight line, colored by source group
-                Just $ elem Line
+                Just $ withBehaviors [ edgeHl ] $ elem Line
                   [ staticNum "x1" p1.x, staticNum "y1" p1.y
                   , staticNum "x2" p2.x, staticNum "y2" p2.y
                   , staticStr "stroke" (blockColor p1.group)
                   , staticNum "stroke-width" 1.0
                   , staticNum "stroke-opacity" 0.25
+                  , staticStr "class" "concern-edge"
                   ] []
             _, _ -> Nothing
         else Nothing
       ) (Set.toUnfoldable targets :: Array String)
     ) graph.nodes
 
-    -- Node circles (no labels — hover to be added later)
+    -- Node circles with hover
     nodeElems = Array.mapMaybe (\name ->
       case Map.lookup name nodePositions of
         Nothing -> Nothing
         Just pos ->
-          Just $ elem Circle
-            [ staticNum "cx" pos.x, staticNum "cy" pos.y, staticNum "r" 5.0
-            , staticStr "fill" (blockColor pos.group)
-            , staticStr "stroke" "#fff", staticNum "stroke-width" 0.8
-            ] []
+          let
+            nodeHl = onCoordinatedHighlight
+              { identify: name
+              , classify: \hoveredId ->
+                  if hoveredId == name then Primary
+                  else if Set.member hoveredId (fromMaybe Set.empty (Map.lookup name graph.edges)) then Related
+                  else if Set.member name (fromMaybe Set.empty (Map.lookup hoveredId graph.edges)) then Related
+                  else Dimmed
+              , group: Just "concern-graph"
+              }
+          in Just $ withBehaviors [ nodeHl ] $
+            elem Group [ staticStr "class" "concern-node", staticStr "cursor" "pointer" ]
+              [ elem Circle
+                  [ staticNum "cx" pos.x, staticNum "cy" pos.y, staticNum "r" 5.0
+                  , staticStr "fill" (blockColor pos.group)
+                  , staticStr "stroke" "#fff", staticNum "stroke-width" 0.8
+                  ] []
+              , elem Text
+                  [ staticNum "x" pos.x, staticNum "y" (pos.y - 8.0)
+                  , staticStr "text-anchor" "middle", staticStr "font-size" "7px"
+                  , staticStr "fill" "#555", staticStr "font-family" "system-ui, sans-serif"
+                  , staticStr "textContent" name
+                  , staticNum "opacity" 0.0
+                  ] []
+              ]
     ) graph.nodes
+
+    -- Compute bounding box from group centers + radii + label space
+    groupExtents = Array.mapMaybe (\(Tuple gi ce) ->
+      case groupCenters Array.!! gi of
+        Nothing -> Nothing
+        Just center ->
+          let
+            n = Array.length ce.branches
+            r = max 25.0 (Number.sqrt (Int.toNumber n) * 18.0) + 22.0  -- includes label offset
+          in Just { minX: center.x - r, maxX: center.x + r, minY: center.y - r - 16.0, maxY: center.y + r }
+    ) (mapWithIndex Tuple caseExprs)
+
+    bbox = foldl (\acc e ->
+      { minX: min acc.minX e.minX, maxX: max acc.maxX e.maxX
+      , minY: min acc.minY e.minY, maxY: max acc.maxY e.maxY }
+    ) { minX: width, maxX: 0.0, minY: height, maxY: 0.0 } groupExtents
+
+    pad = 20.0
+    vbX = bbox.minX - pad
+    vbY = bbox.minY - pad
+    vbW = max 100.0 (bbox.maxX - bbox.minX + pad * 2.0)
+    vbH = max 100.0 (bbox.maxY - bbox.minY + pad * 2.0)
   in
     elem SVG
-      [ staticStr "viewBox" $ "0 0 " <> show width <> " " <> show height
+      [ staticStr "viewBox" $ show vbX <> " " <> show vbY <> " " <> show vbW <> " " <> show vbH
       , staticStr "width" "100%"
       , staticStr "preserveAspectRatio" "xMidYMid meet"
       , staticStr "style" "background: transparent; border-radius: 4px;"
@@ -1257,14 +1307,26 @@ callGraphTree graph info kindMap =
                 edgeColor = case Map.lookup (Tuple name tgt) info.edgeBlock of
                   Just bi -> blockColor bi
                   Nothing -> "#ccc"
-              in Just $ elem Line
-                [ staticNum "x1" p1.x, staticNum "y1" p1.y
-                , staticNum "x2" p2.x, staticNum "y2" p2.y
-                , staticStr "stroke" edgeColor
-                , staticNum "stroke-width" (if isBridge then 2.0 else 1.0)
-                , staticStr "stroke-dasharray" (if isBridge then "5,3" else "")
-                , staticNum "stroke-opacity" (if isBridge then 0.6 else 0.3)
-                ] []
+              in Just $
+                withBehaviors
+                  [ onCoordinatedHighlight
+                      { identify: name <> "→" <> tgt
+                      , classify: \hoveredId ->
+                          if hoveredId == name then Related
+                          else if hoveredId == tgt then Related
+                          else Dimmed
+                      , group: Just "decl-graph"
+                      }
+                  ]
+                $ elem Line
+                    [ staticNum "x1" p1.x, staticNum "y1" p1.y
+                    , staticNum "x2" p2.x, staticNum "y2" p2.y
+                    , staticStr "stroke" edgeColor
+                    , staticNum "stroke-width" (if isBridge then 2.0 else 1.0)
+                    , staticStr "stroke-dasharray" (if isBridge then "5,3" else "")
+                    , staticNum "stroke-opacity" (if isBridge then 0.6 else 0.3)
+                    , staticStr "class" "decl-edge"
+                    ] []
             _, _ -> Nothing
         else Nothing
       ) (Set.toUnfoldable targets :: Array String)
@@ -1279,9 +1341,19 @@ callGraphTree graph info kindMap =
             kind = fromMaybe "value" (Map.lookup name kindMap)
             fill = if nl.isArticulationPoint then "#fff" else kindColor kind
             r = if nl.isArticulationPoint then 7.0 else 5.0
+            hlBehavior = onCoordinatedHighlight
+              { identify: name
+              , classify: \hoveredId ->
+                  if hoveredId == name then Primary
+                  else if Set.member hoveredId (fromMaybe Set.empty (Map.lookup name graph.edges)) then Related
+                  else if Set.member name (fromMaybe Set.empty (Map.lookup hoveredId graph.edges)) then Related
+                  else Dimmed
+              , group: Just "decl-graph"
+              }
           in Just $
             if nl.isArticulationPoint then
-              elem Group []
+              withBehaviors [ hlBehavior ] $
+              elem Group [ staticStr "class" "decl-node", staticStr "cursor" "pointer" ]
                 [ elem Rect
                     [ staticNum "x" (nl.x - r), staticNum "y" (nl.y - r)
                     , staticNum "width" (r * 2.0), staticNum "height" (r * 2.0)
@@ -1298,7 +1370,8 @@ callGraphTree graph info kindMap =
                     ] []
                 ]
             else
-              elem Group []
+              withBehaviors [ hlBehavior ] $
+              elem Group [ staticStr "class" "decl-node", staticStr "cursor" "pointer" ]
                 [ elem Circle
                     [ staticNum "cx" nl.x, staticNum "cy" nl.y, staticNum "r" r
                     , staticStr "fill" fill, staticStr "stroke" "#fff", staticNum "stroke-width" 0.5
