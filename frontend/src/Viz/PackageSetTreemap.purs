@@ -762,8 +762,9 @@ renderModuleCirclesInCell config colors (PackageRenderData d) =
               fillColor = case config.colorMode of
                 GitStatus -> gitStatusColor gitSt
                 Reachability -> case reachStatus of
-                  Just EntryPoint  -> "#d6eaf8"
-                  Just Unreachable -> "rgba(180, 180, 180, 0.25)"
+                  Just EntryPoint  -> "#00e5ff"
+                  Just Unreachable -> "#661111"
+                  Just Reachable   -> "#4caf50"
                   _                -> colors.stroke
                 _ -> colors.stroke
               strokeColor = case config.colorMode of
@@ -773,8 +774,9 @@ renderModuleCirclesInCell config colors (PackageRenderData d) =
                   GitUntracked -> "#7d3c98"
                   GitClean -> "rgba(150, 150, 150, 0.3)"
                 Reachability -> case reachStatus of
-                  Just EntryPoint  -> "#2980b9"
-                  Just Unreachable -> "rgba(150, 150, 150, 0.4)"
+                  Just EntryPoint  -> "#ffffff"
+                  Just Unreachable -> "#331111"
+                  Just Reachable   -> "#2e7d32"
                   _                -> colors.text
                 _ -> colors.text
               strokeW = case config.colorMode of
@@ -783,7 +785,8 @@ renderModuleCirclesInCell config colors (PackageRenderData d) =
                   _ -> "2.5"
                 Reachability -> case reachStatus of
                   Just EntryPoint -> "3"
-                  _ -> "0.5"
+                  Just Unreachable -> "0.5"
+                  _ -> "1.5"
                 _ -> "0.5"
             in
               elem Circle

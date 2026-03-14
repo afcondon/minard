@@ -17,6 +17,10 @@ module CE2.Scene
   , isSolarScene
   , isPackageScene
   , isModuleScene
+  , isMapScene
+  , isAnatomyScene
+  , isReportScene
+  , isProjectScene
   , sceneToString
   , sceneFromString
   ) where
@@ -112,35 +116,47 @@ type BreadcrumbSegment = { kind :: String, label :: String, scene :: Scene }
 -- | Earlier segments are clickable navigation targets.
 sceneBreadcrumbs :: Scene -> Array BreadcrumbSegment
 sceneBreadcrumbs = case _ of
-  ProjectManagement   -> [{ kind: "", label: "Home", scene: ProjectManagement }]
-  ProjectSetup        -> [{ kind: "", label: "Home", scene: ProjectManagement }, { kind: "", label: "Projects", scene: ProjectSetup }]
-  ProjectAnatomy      -> [{ kind: "", label: "Anatomy", scene: ProjectAnatomy }]
-  GalaxyTreemap       -> [reg]
-  GalaxyBeeswarm      -> [reg]
-  TypeClassGrid       -> [reg]
-  NamespaceTree       -> [reg, { kind: "", label: "Namespaces", scene: NamespaceTree }]
-  PackageReport       -> [reg, { kind: "", label: "Report", scene: PackageReport }]
-  AnnotationReport    -> [reg, { kind: "", label: "Report", scene: PackageReport }, { kind: "", label: "Modules", scene: AnnotationReport }]
-  PackageAnatomy pkg -> [anatomySeg, { kind: "Package", label: pkg, scene: PackageAnatomy pkg }]
-  ModuleAnatomy p m -> [anatomySeg, { kind: "Package", label: p, scene: PackageAnatomy p }, modSeg p m]
-  CompareModules p1 m1 _ m2 -> [reg, pkgSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
-  CompareSnapshots p m _ -> [reg, pkgSeg p, modSeg p m, { kind: "", label: "Compare", scene: CompareSnapshots p m 0 }]
-  SnapshotManagement     -> [{ kind: "", label: "Home", scene: ProjectManagement }, { kind: "", label: "Projects", scene: ProjectSetup }, { kind: "", label: "Snapshots", scene: SnapshotManagement }]
-  CommitModuleGrid pkg   -> [reg, pkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }]
-  CoChangeCube pkg       -> [reg, pkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }, { kind: "", label: "Cube", scene: CoChangeCube pkg }]
-  SolarSwarm          -> [reg, { kind: "", label: "Packages", scene: SolarSwarm }]
-  PkgTreemap pkg      -> [reg, pkgSeg pkg]
-  PkgModuleBeeswarm p -> [reg, pkgSeg p]
-  ModuleOverview p m  -> [reg, pkgSeg p, modSeg p m
+  -- Maps family (Powers of Ten: Galaxy → SolarSystem → Planet)
+  GalaxyTreemap       -> [mapsSeg, galaxySeg]
+  GalaxyBeeswarm      -> [mapsSeg, galaxySeg]
+  SolarSwarm          -> [mapsSeg, galaxySeg]
+  PkgTreemap pkg      -> [mapsSeg, galaxySeg, solarSeg pkg]
+  PkgModuleBeeswarm p -> [mapsSeg, galaxySeg, solarSeg p]
+  ModuleSignatureMap p m -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m]
+  ModuleOverview p m  -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
                                   , { kind: "", label: "Overview", scene: ModuleOverview p m }]
-  DeclarationDetail p m d -> [reg, pkgSeg p, modSeg p m
+  DeclarationDetail p m d -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
                                   , { kind: "Decl", label: d, scene: DeclarationDetail p m d }]
-  ModuleSignatureMap p m -> [reg, pkgSeg p, modSeg p m]
+  CompareModules p1 m1 _ m2 -> [mapsSeg, galaxySeg, solarSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
+  CompareSnapshots p m _ -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m, { kind: "", label: "Compare", scene: CompareSnapshots p m 0 }]
+  CommitModuleGrid pkg   -> [mapsSeg, galaxySeg, solarSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }]
+  CoChangeCube pkg       -> [mapsSeg, galaxySeg, solarSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }, { kind: "", label: "Cube", scene: CoChangeCube pkg }]
+
+  -- Anatomy family
+  ProjectAnatomy      -> [anatomySeg]
+  PackageAnatomy pkg -> [anatomySeg, { kind: "Package", label: pkg, scene: PackageAnatomy pkg }]
+  ModuleAnatomy p m -> [anatomySeg, { kind: "Package", label: p, scene: PackageAnatomy p }, { kind: "Module", label: shortModuleName m, scene: ModuleAnatomy p m }]
+
+  -- Reports family
+  PackageReport       -> [reportsSeg]
+  AnnotationReport    -> [reportsSeg, { kind: "", label: "Modules", scene: AnnotationReport }]
+
+  -- Projects family
+  ProjectManagement   -> [{ kind: "", label: "Home", scene: ProjectManagement }]
+  ProjectSetup        -> [projectsSeg]
+  SnapshotManagement  -> [projectsSeg, { kind: "", label: "Snapshots", scene: SnapshotManagement }]
+
+  -- Deferred views
+  TypeClassGrid       -> [mapsSeg, { kind: "", label: "Types", scene: TypeClassGrid }]
+  NamespaceTree       -> [mapsSeg, { kind: "", label: "Namespaces", scene: NamespaceTree }]
   where
-    reg = { kind: "", label: "Galaxy", scene: GalaxyTreemap }
+    mapsSeg = { kind: "", label: "Maps", scene: GalaxyTreemap }
+    galaxySeg = { kind: "", label: "Galaxy", scene: GalaxyTreemap }
     anatomySeg = { kind: "", label: "Anatomy", scene: ProjectAnatomy }
-    pkgSeg pkg = { kind: "Package", label: pkg, scene: PkgTreemap pkg }
-    modSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleSignatureMap p m }
+    reportsSeg = { kind: "", label: "Reports", scene: PackageReport }
+    projectsSeg = { kind: "", label: "Projects", scene: ProjectSetup }
+    solarSeg pkg = { kind: "SolarSystem", label: pkg, scene: PkgTreemap pkg }
+    planetSeg p m = { kind: "Planet", label: shortModuleName m, scene: ModuleSignatureMap p m }
 
 -- | Human-readable label for display in navigation UI
 sceneLabel :: Scene -> String
@@ -194,6 +210,45 @@ isModuleScene (ModuleOverview _ _) = true
 isModuleScene (DeclarationDetail _ _ _) = true
 isModuleScene (ModuleSignatureMap _ _) = true
 isModuleScene _ = false
+
+-- | Check if scene belongs to the Maps family (treemap / powers-of-ten drill chain)
+isMapScene :: Scene -> Boolean
+isMapScene = case _ of
+  GalaxyTreemap -> true
+  GalaxyBeeswarm -> true
+  SolarSwarm -> true
+  PkgTreemap _ -> true
+  PkgModuleBeeswarm _ -> true
+  ModuleOverview _ _ -> true
+  ModuleSignatureMap _ _ -> true
+  DeclarationDetail _ _ _ -> true
+  CompareModules _ _ _ _ -> true
+  CompareSnapshots _ _ _ -> true
+  CommitModuleGrid _ -> true
+  CoChangeCube _ -> true
+  _ -> false
+
+-- | Check if scene belongs to the Anatomy family
+isAnatomyScene :: Scene -> Boolean
+isAnatomyScene = case _ of
+  ProjectAnatomy -> true
+  PackageAnatomy _ -> true
+  ModuleAnatomy _ _ -> true
+  _ -> false
+
+-- | Check if scene belongs to the Reports family
+isReportScene :: Scene -> Boolean
+isReportScene = case _ of
+  PackageReport -> true
+  AnnotationReport -> true
+  _ -> false
+
+-- | Check if scene belongs to the Projects family
+isProjectScene :: Scene -> Boolean
+isProjectScene = case _ of
+  ProjectSetup -> true
+  SnapshotManagement -> true
+  _ -> false
 
 -- | Serialize scene to string for browser history state
 sceneToString :: Scene -> String

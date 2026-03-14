@@ -20,7 +20,7 @@ import Data.Maybe (Maybe(..))
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import CE2.Scene (Scene(..))
+import CE2.Scene (Scene(..), isMapScene, isAnatomyScene, isReportScene, isProjectScene)
 import CE2.Types (ColorMode(..), RefreshPhase(..))
 import CE2.Component.SceneCoordinator.Pure (ViewMode(..))
 
@@ -39,13 +39,13 @@ type Row1Actions i =
   , onConfirmSync :: i
   }
 
--- | Global scene shortcuts: Anatomy, Types, Namespaces, Report + Sync
+-- | Global scene shortcuts: Maps, Reports, Anatomy, Projects + Sync
 renderRow1 :: forall w i. Row1State -> Row1Actions i -> Array (HH.HTML w i)
 renderRow1 state actions =
-  [ navButton "Anatomy" ProjectAnatomy (state.scene == ProjectAnatomy)
-  , navButton "Types" TypeClassGrid (state.scene == TypeClassGrid)
-  , navButton "Namespaces" NamespaceTree (state.scene == NamespaceTree)
-  , navButton "Report" PackageReport (state.scene == PackageReport || state.scene == AnnotationReport)
+  [ navButton "Maps" GalaxyTreemap (isMapScene state.scene)
+  , navButton "Reports" PackageReport (isReportScene state.scene)
+  , navButton "Anatomy" ProjectAnatomy (isAnatomyScene state.scene)
+  , navButton "Projects" ProjectSetup (isProjectScene state.scene)
   -- Sync is visually separated from nav buttons
   , HH.span
       [ HP.style "border-left: 1px solid rgba(0,0,0,0.15); padding-left: 8px; margin-left: 4px;" ]
@@ -101,75 +101,33 @@ hasRow2 = case _ of
   PkgModuleBeeswarm _ -> true
   ModuleSignatureMap _ _ -> true
   ModuleOverview _ _ -> true
-  ModuleAnatomy _ _ -> true
-  DeclarationDetail _ _ _ -> true
   _ -> false
 
--- | Contextual controls — returns empty array when nothing applies
+-- | Contextual controls — only view-transforming controls, no scene links
 renderRow2 :: forall w i. Row2State -> Row2Actions i -> Array (HH.HTML w i)
 renderRow2 state actions =
   case state.scene of
-    -- Galaxy: layout toggle + overlays
-    GalaxyTreemap -> concat
-      [ galaxyLayoutGroup
-      , colorGroup [ gitToggle, tidyToggle ]
-      , peekGroup [ reachPeek, couplingPeek ]
-      ]
+    -- Galaxy: reachability peek only (coupling is module-level, no-op here)
+    GalaxyTreemap ->
+      peekGroup [ reachPeek ]
 
-    GalaxyBeeswarm -> concat
-      [ galaxyLayoutGroup
-      , colorGroup [ gitToggle, tidyToggle ]
-      ]
+    GalaxyBeeswarm -> []
 
-    -- SolarSwarm: layout toggle + view modes + Git, Tidy (only for Primary view)
-    SolarSwarm -> concat
-      [ galaxyLayoutGroup
-      , viewModeGroup
-      , if state.viewMode == PrimaryView
-          then colorGroup [ gitToggle, tidyToggle ]
-          else []
-      ]
+    -- SolarSwarm: single overlay
+    SolarSwarm ->
+      overlayGroup [ gitOverlay ]
 
-    -- Package treemap: layout + view modes; color/peek/modifiers only for Primary view
-    PkgTreemap pkg -> concat
-      [ packageLayoutGroup pkg
-      , viewModeGroup
-      , if state.viewMode == PrimaryView
-          then concat
-            [ colorGroup [ gitToggle, clusterToggle, changesToggle, coChgToggle ]
-            , modifierGroup [ tidyToggle, sizeToggle ]
-            , peekGroup [ reachPeek, purityPeek, couplingPeek ]
-            ]
-          else []
-      , sceneLinks (packageSceneLinks pkg)
-      ]
+    -- Package treemap: all overlays, alphabetical
+    PkgTreemap _pkg ->
+      overlayGroup [ changesOverlay, clusterOverlay, coChangeOverlay, couplingOverlay, gitOverlay, purityOverlay, reachOverlay ]
 
-    PkgModuleBeeswarm pkg -> concat
-      [ packageLayoutGroup pkg
-      , colorGroup [ gitToggle, clusterToggle, changesToggle, coChgToggle ]
-      , modifierGroup [ tidyToggle, sizeToggle ]
-      , peekGroup [ reachPeek, purityPeek, couplingPeek ]
-      , sceneLinks (packageSceneLinks pkg)
-      ]
+    PkgModuleBeeswarm _pkg ->
+      overlayGroup [ changesOverlay, clusterOverlay, coChangeOverlay, couplingOverlay, gitOverlay, purityOverlay, reachOverlay ]
 
-    -- Module views: view toggle + context links
-    ModuleSignatureMap pkg mod -> concat
-      [ moduleViewGroup pkg mod
-      , sceneLinks (moduleSceneLinks pkg)
-      ]
+    -- Module views: view toggle only
+    ModuleSignatureMap pkg mod -> moduleViewGroup pkg mod
 
-    ModuleOverview pkg mod -> concat
-      [ moduleViewGroup pkg mod
-      , sceneLinks (moduleSceneLinks pkg)
-      ]
-
-    ModuleAnatomy pkg _ -> concat
-      [ sceneLinks (moduleSceneLinks pkg)
-      ]
-
-    DeclarationDetail pkg _ _ -> concat
-      [ sceneLinks (moduleSceneLinks pkg)
-      ]
+    ModuleOverview pkg mod -> moduleViewGroup pkg mod
 
     _ -> []
 
@@ -177,77 +135,24 @@ renderRow2 state actions =
   concat = Array.concat
 
   -- -------------------------------------------------------------------------
-  -- Control groups (each returns Array (HH.HTML w i))
+  -- Control groups
   -- -------------------------------------------------------------------------
 
-  colorGroup :: Array (HH.HTML w i) -> Array (HH.HTML w i)
-  colorGroup items =
-    [ HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        ( [ groupLabel "Color" ] <> items )
-    ]
-
-  modifierGroup :: Array (HH.HTML w i) -> Array (HH.HTML w i)
-  modifierGroup items =
+  overlayGroup :: Array (HH.HTML w i) -> Array (HH.HTML w i)
+  overlayGroup items =
     [ HH.div
         [ HP.style "display: flex; align-items: center; gap: 4px;" ]
         items
     ]
 
   peekGroup :: Array (HH.HTML w i) -> Array (HH.HTML w i)
-  peekGroup items =
-    [ HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        ( [ groupLabel "Peek" ] <> items )
-    ]
-
-  sceneLinks :: Array (HH.HTML w i) -> Array (HH.HTML w i)
-  sceneLinks items = case items of
-    [] -> []
-    _ ->
-      [ HH.div
-          [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-          items
-      ]
-
-  viewModeGroup :: Array (HH.HTML w i)
-  viewModeGroup =
-    [ HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ groupLabel "View"
-        , viewBtn "Primary" PrimaryView
-        , viewBtn "Chord" ChordView
-        , viewBtn "Matrix" MatrixView
-        ]
-    ]
-
-  -- Galaxy level: Treemap ↔ Bubblepack layout toggle
-  galaxyLayoutGroup :: Array (HH.HTML w i)
-  galaxyLayoutGroup =
-    [ HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ groupLabel "Layout"
-        , layoutBtn "Treemap" GalaxyTreemap (isGalaxyTreemap state.scene)
-        , layoutBtn "Bubblepack" SolarSwarm (isSolarSwarm state.scene)
-        ]
-    ]
-
-  -- Package level: Treemap ↔ Beeswarm layout toggle
-  packageLayoutGroup :: String -> Array (HH.HTML w i)
-  packageLayoutGroup pkg =
-    [ HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ groupLabel "Layout"
-        , layoutBtn "Treemap" (PkgTreemap pkg) (isPkgTreemap state.scene)
-        , layoutBtn "Beeswarm" (PkgModuleBeeswarm pkg) (isPkgBeeswarm state.scene)
-        ]
-    ]
+  peekGroup = overlayGroup
 
   moduleViewGroup :: String -> String -> Array (HH.HTML w i)
   moduleViewGroup pkg mod =
     [ HH.div
         [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ groupLabel "View"
+        [ HH.span [ HP.style "font-size: 8px; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 2px;" ] [ HH.text "View" ]
         , moduleViewBtn "Signatures" (ModuleSignatureMap pkg mod)
             (isSignatureMap state.scene)
         , moduleViewBtn "Overview" (ModuleOverview pkg mod)
@@ -258,105 +163,61 @@ renderRow2 state actions =
     ]
 
   -- -------------------------------------------------------------------------
-  -- Individual controls
+  -- Overlay controls (unified style with hotkeys, alphabetical)
   -- -------------------------------------------------------------------------
 
-  gitToggle :: HH.HTML w i
-  gitToggle = toggleButton "Git" actions.onToggleGit
-    (state.colorMode == GitStatus) Nothing
-
-  tidyToggle :: HH.HTML w i
-  tidyToggle = toggleButton "Tidy" actions.onToggleTidy
-    state.hideInfraLinks Nothing
-
-  clusterToggle :: HH.HTML w i
-  clusterToggle = toggleButton "Cluster" actions.onToggleCluster
-    (state.colorMode == ClusterView)
-    (Just "Cluster: modules colored by dependency cluster")
-
-  changesToggle :: HH.HTML w i
-  changesToggle = toggleButton "Changes" actions.onToggleChangeFreq
+  changesOverlay :: HH.HTML w i
+  changesOverlay = overlayButton "Changes" "H" actions.onToggleChangeFreq
     (state.colorMode == ChangeFrequency)
-    (Just "Changes: heat map by git change frequency (blue=cold, red=hot)")
 
-  coChgToggle :: HH.HTML w i
-  coChgToggle = toggleButton "Co-chg" actions.onToggleCoChange
+  clusterOverlay :: HH.HTML w i
+  clusterOverlay = overlayButton "Cluster" "K" actions.onToggleCluster
+    (state.colorMode == ClusterView)
+
+  coChangeOverlay :: HH.HTML w i
+  coChangeOverlay = overlayButton "Co-change" "X" actions.onToggleCoChange
     (state.colorMode == CoChangeCluster)
-    (Just "Co-change: modules colored by co-change community")
 
-  sizeToggle :: HH.HTML w i
-  sizeToggle = toggleButton "Size" actions.onToggleSizeByFreq
-    state.sizeByChangeFrequency
-    (Just "Size: treemap area proportional to git change frequency instead of LOC")
-
-  reachPeek :: HH.HTML w i
-  reachPeek = peekButton "Reach" "R" actions.onToggleReachability
-    (state.reachabilityPeek || state.colorMode == Reachability)
-
-  purityPeek :: HH.HTML w i
-  purityPeek = peekButton "Purity" "P" actions.onTogglePurity
-    state.purityPeek
-
-  couplingPeek :: HH.HTML w i
-  couplingPeek = peekButton "Coupling" "C" actions.onToggleCoupling
+  couplingOverlay :: HH.HTML w i
+  couplingOverlay = overlayButton "Coupling" "C" actions.onToggleCoupling
     (state.complexityPeek || state.colorMode == StructuralComplexity)
 
-  -- Context-dependent scene links
-  packageSceneLinks :: String -> Array (HH.HTML w i)
-  packageSceneLinks pkg =
-    [ sceneLinkButton "Anatomy" (PackageAnatomy pkg)
-        (isPackageAnatomy state.scene)
-    , sceneLinkButton "Commits" (CommitModuleGrid pkg)
-        (isCommitGrid state.scene)
-    , sceneLinkButton "Cube" (CoChangeCube pkg)
-        (isCube state.scene)
-    ]
+  gitOverlay :: HH.HTML w i
+  gitOverlay = overlayButton "Git" "G" actions.onToggleGit
+    (state.colorMode == GitStatus)
 
-  moduleSceneLinks :: String -> Array (HH.HTML w i)
-  moduleSceneLinks pkg =
-    [ sceneLinkButton "Commits" (CommitModuleGrid pkg)
-        (isCommitGrid state.scene)
-    , sceneLinkButton "Cube" (CoChangeCube pkg)
-        (isCube state.scene)
-    ]
+  purityOverlay :: HH.HTML w i
+  purityOverlay = overlayButton "Purity" "P" actions.onTogglePurity
+    state.purityPeek
+
+  reachOverlay :: HH.HTML w i
+  reachOverlay = overlayButton "Reach" "R" actions.onToggleReachability
+    (state.reachabilityPeek || state.colorMode == Reachability)
+
+  sizeOverlay :: HH.HTML w i
+  sizeOverlay = overlayButton "Size" "S" actions.onToggleSizeByFreq
+    state.sizeByChangeFrequency
+
+  tidyOverlay :: HH.HTML w i
+  tidyOverlay = overlayButton "Tidy" "T" actions.onToggleTidy
+    state.hideInfraLinks
+
+  -- Galaxy-level reach (same as reachOverlay)
+  reachPeek :: HH.HTML w i
+  reachPeek = reachOverlay
 
   -- -------------------------------------------------------------------------
   -- Button renderers
   -- -------------------------------------------------------------------------
 
-  groupLabel :: String -> HH.HTML w i
-  groupLabel text =
-    HH.span
-      [ HP.style "font-size: 8px; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 2px;" ]
-      [ HH.text text ]
-
-  toggleButton :: String -> i -> Boolean -> Maybe String -> HH.HTML w i
-  toggleButton label action isActive mTitle =
-    HH.button
-      ( [ HE.onClick \_ -> action
-        , HP.style (buttonStyle isActive)
-        ] <> case mTitle of
-               Just t -> [ HP.title t ]
-               Nothing -> []
-      )
-      [ HH.text label ]
-
-  peekButton :: String -> String -> i -> Boolean -> HH.HTML w i
-  peekButton label hotkey action isActive =
+  overlayButton :: String -> String -> i -> Boolean -> HH.HTML w i
+  overlayButton label hotkey action isActive =
     HH.button
       [ HE.onClick \_ -> action
       , HP.style (buttonStyle isActive)
-      , HP.title $ label <> " (hold " <> hotkey <> " for momentary peek)"
+      , HP.title $ label <> " (" <> hotkey <> ")"
       ]
       [ HH.text $ label <> " (" <> hotkey <> ")" ]
-
-  viewBtn :: String -> ViewMode -> HH.HTML w i
-  viewBtn label mode =
-    HH.button
-      [ HE.onClick \_ -> actions.onSetViewMode mode
-      , HP.style (buttonStyle (state.viewMode == mode))
-      ]
-      [ HH.text label ]
 
   moduleViewBtn :: String -> Scene -> Boolean -> HH.HTML w i
   moduleViewBtn label target isActive =
@@ -366,43 +227,7 @@ renderRow2 state actions =
       ]
       [ HH.text label ]
 
-  layoutBtn :: String -> Scene -> Boolean -> HH.HTML w i
-  layoutBtn label target isActive =
-    HH.button
-      [ HE.onClick \_ -> actions.onNavigateTo target
-      , HP.style (buttonStyle isActive)
-      ]
-      [ HH.text label ]
-
-  sceneLinkButton :: String -> Scene -> Boolean -> HH.HTML w i
-  sceneLinkButton label target isActive =
-    HH.button
-      [ HE.onClick \_ -> actions.onNavigateTo target
-      , HP.style (buttonStyle isActive)
-      ]
-      [ HH.text label ]
-
   -- Scene predicates
-  isGalaxyTreemap :: Scene -> Boolean
-  isGalaxyTreemap GalaxyTreemap = true
-  isGalaxyTreemap _ = false
-
-  isGalaxyBeeswarm :: Scene -> Boolean
-  isGalaxyBeeswarm GalaxyBeeswarm = true
-  isGalaxyBeeswarm _ = false
-
-  isSolarSwarm :: Scene -> Boolean
-  isSolarSwarm SolarSwarm = true
-  isSolarSwarm _ = false
-
-  isPkgTreemap :: Scene -> Boolean
-  isPkgTreemap (PkgTreemap _) = true
-  isPkgTreemap _ = false
-
-  isPkgBeeswarm :: Scene -> Boolean
-  isPkgBeeswarm (PkgModuleBeeswarm _) = true
-  isPkgBeeswarm _ = false
-
   isSignatureMap :: Scene -> Boolean
   isSignatureMap (ModuleSignatureMap _ _) = true
   isSignatureMap _ = false
@@ -414,18 +239,6 @@ renderRow2 state actions =
   isModuleAnatomy :: Scene -> Boolean
   isModuleAnatomy (ModuleAnatomy _ _) = true
   isModuleAnatomy _ = false
-
-  isPackageAnatomy :: Scene -> Boolean
-  isPackageAnatomy (PackageAnatomy _) = true
-  isPackageAnatomy _ = false
-
-  isCommitGrid :: Scene -> Boolean
-  isCommitGrid (CommitModuleGrid _) = true
-  isCommitGrid _ = false
-
-  isCube :: Scene -> Boolean
-  isCube (CoChangeCube _) = true
-  isCube _ = false
 
 -- =============================================================================
 -- Shared

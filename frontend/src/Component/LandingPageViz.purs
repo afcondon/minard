@@ -112,7 +112,7 @@ renderHero state =
     -- Navigation links
     , HH.div
         [ HP.style "display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;" ]
-        [ navLink "Galaxy" Scene.GalaxyTreemap state.dataReady
+        [ navLink "Maps" Scene.GalaxyTreemap state.dataReady
         , navLink "Reports" Scene.PackageReport state.dataReady
         , navLink "Anatomy" Scene.ProjectAnatomy state.dataReady
         , navLink "Projects" Scene.ProjectSetup true  -- always clickable

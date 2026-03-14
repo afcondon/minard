@@ -395,24 +395,20 @@ data Action
   | HandleSlideOutPanelOutput SlideOutPanel.Output
   | OpenModulePanel String String         -- packageName, moduleName
   | OpenPackagePanel String               -- packageName - opens panel with first module
-  | ToggleGitMode                         -- Toggle between GitStatus color mode and previous mode
-  | ToggleTidyMode                        -- Toggle infrastructure link filtering
-  | ToggleReachabilityMode                -- Toggle reachability coloring (dead code detection)
-  | ToggleClusterMode                     -- Toggle cluster coloring (connected components)
-  | ReachabilityPeekOn                    -- R key pressed - show peek overlay
-  | ReachabilityPeekOff                   -- R key released - hide peek overlay
-  | PurityPeekOn                          -- P key pressed - show purity overlay
-  | PurityPeekOff                         -- P key released - hide purity overlay
-  | ToggleComplexityMode                  -- Toggle structural complexity coloring
-  | ComplexityPeekOn                      -- C key pressed - show coupling score overlay
-  | ComplexityPeekOff                     -- C key released - hide coupling score overlay
-  | ToggleChangeFrequencyMode             -- Toggle change frequency heat map coloring
-  | ToggleCoChangeClusterMode             -- Toggle co-change community coloring
-  | ToggleSizeByFrequency                 -- Toggle treemap sizing by change frequency
-  -- Sticky peek toggles (click button = toggle on/off, vs keyboard hold = momentary)
+  | ToggleGitMode                         -- Click toggle: GitStatus color mode
+  | ToggleTidyMode                        -- Click toggle: infrastructure link filtering
+  | ToggleReachabilityMode                -- Click toggle: reachability coloring
+  | ToggleClusterMode                     -- Click toggle: cluster coloring
+  | ToggleComplexityMode                  -- Click toggle: structural complexity coloring
+  | ToggleChangeFrequencyMode             -- Click toggle: change frequency heat map
+  | ToggleCoChangeClusterMode             -- Click toggle: co-change community coloring
+  | ToggleSizeByFrequency                 -- Click toggle: treemap sizing by change frequency
   | ToggleReachabilityPeek               -- Click toggle for reachability peek
   | TogglePurityPeek                     -- Click toggle for purity peek
   | ToggleCouplingPeek                   -- Click toggle for coupling peek
+  -- Momentary keyboard peeks (hold key = show, release = revert)
+  | OverlayPeekOn String                  -- Key pressed — activate overlay by key name
+  | OverlayPeekOff                        -- Any overlay key released — revert to default
   -- Incremental refresh (two-click confirmation)
   | ArmSync                               -- First click: show "Confirm?" + start timeout
   | ConfirmSync                           -- Second click: actually trigger sync
@@ -1200,24 +1196,18 @@ handleAction = case _ of
     doc <- liftEffect $ Win.document =<< window
     let docTarget = HTMLDoc.toEventTarget doc
 
+    let overlayKeys = ["c", "g", "h", "k", "p", "r", "x"]
+
     keydownListener <- liftEffect $ ET.eventListener \e ->
       case KE.fromEvent e of
-        Just ke | key ke == "r" && not (repeat ke) ->
-          HS.notify keyListener ReachabilityPeekOn
-        Just ke | key ke == "p" && not (repeat ke) ->
-          HS.notify keyListener PurityPeekOn
-        Just ke | key ke == "c" && not (repeat ke) ->
-          HS.notify keyListener ComplexityPeekOn
+        Just ke | Array.elem (key ke) overlayKeys && not (repeat ke) ->
+          HS.notify keyListener (OverlayPeekOn (key ke))
         _ -> pure unit
 
     keyupListener <- liftEffect $ ET.eventListener \e ->
       case KE.fromEvent e of
-        Just ke | key ke == "r" ->
-          HS.notify keyListener ReachabilityPeekOff
-        Just ke | key ke == "p" ->
-          HS.notify keyListener PurityPeekOff
-        Just ke | key ke == "c" ->
-          HS.notify keyListener ComplexityPeekOff
+        Just ke | Array.elem (key ke) overlayKeys ->
+          HS.notify keyListener OverlayPeekOff
         _ -> pure unit
 
     liftEffect do
@@ -1774,33 +1764,6 @@ handleAction = case _ of
           PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
           _ -> pure unit
 
-  ReachabilityPeekOn -> do
-    state <- H.get
-    -- Only activate peek when not typing in search
-    when (not state.searchOpen) do
-      H.modify_ _ { reachabilityPeek = true }
-      -- Compute reachability if not cached
-      when (state.reachabilityData == Nothing) $ case state.scene of
-        PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
-        PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
-        GalaxyTreemap -> computeAndStoreGlobalReachability
-        _ -> pure unit
-
-  ReachabilityPeekOff -> do
-    H.modify_ _ { reachabilityPeek = false }
-
-  PurityPeekOn -> do
-    state <- H.get
-    when (not state.searchOpen) do
-      H.modify_ _ { purityPeek = true }
-      when (state.purityData == Nothing) $ case state.scene of
-        PkgTreemap pkg -> computeAndStorePurityForPeek pkg
-        PkgModuleBeeswarm pkg -> computeAndStorePurityForPeek pkg
-        _ -> pure unit
-
-  PurityPeekOff -> do
-    H.modify_ _ { purityPeek = false }
-
   ToggleComplexityMode -> do
     state <- H.get
     if state.colorMode == StructuralComplexity
@@ -1811,15 +1774,6 @@ handleAction = case _ of
         log "[SceneCoordinator] Structural complexity mode ON"
         H.modify_ _ { colorMode = StructuralComplexity }
         when (state.complexityData == Nothing) loadComplexityData
-
-  ComplexityPeekOn -> do
-    state <- H.get
-    when (not state.searchOpen) do
-      H.modify_ _ { complexityPeek = true }
-      when (state.complexityData == Nothing) loadComplexityData
-
-  ComplexityPeekOff -> do
-    H.modify_ _ { complexityPeek = false }
 
   ToggleChangeFrequencyMode -> do
     state <- H.get
@@ -1891,6 +1845,63 @@ handleAction = case _ of
     let newVal = not state.complexityPeek
     H.modify_ _ { complexityPeek = newVal }
     when (newVal && state.complexityData == Nothing) loadComplexityData
+
+  -- =========================================================================
+  -- Momentary Keyboard Peeks (hold key = show overlay, release = revert)
+  -- Radio behavior: activating one clears all others
+  -- =========================================================================
+
+  OverlayPeekOn k -> do
+    state <- H.get
+    when (not state.searchOpen) do
+      -- Clear all peeks and reset colorMode, then activate the requested one
+      H.modify_ _ { reachabilityPeek = false, purityPeek = false, complexityPeek = false, colorMode = DefaultUniform }
+      case k of
+        "c" -> do
+          H.modify_ _ { complexityPeek = true }
+          when (state.complexityData == Nothing) loadComplexityData
+        "g" -> do
+          H.modify_ _ { colorMode = GitStatus }
+          when (state.gitStatus == Nothing) do
+            result <- liftAff Loader.fetchGitStatus
+            case result of
+              Right gitData -> H.modify_ _ { gitStatus = Just gitData }
+              Left _ -> pure unit
+        "h" -> do
+          H.modify_ _ { colorMode = ChangeFrequency }
+          when (state.changeFrequencyData == Nothing) $ case state.scene of
+            PkgTreemap pkg -> loadChangeFrequencyData pkg
+            PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+            _ -> pure unit
+        "k" -> do
+          H.modify_ _ { colorMode = ClusterView }
+          case state.scene of
+            PkgTreemap pkg -> computeAndStoreClusters pkg
+            PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
+            _ -> pure unit
+        "p" -> do
+          H.modify_ _ { purityPeek = true }
+          when (state.purityData == Nothing) $ case state.scene of
+            PkgTreemap pkg -> computeAndStorePurityForPeek pkg
+            PkgModuleBeeswarm pkg -> computeAndStorePurityForPeek pkg
+            _ -> pure unit
+        "r" -> do
+          H.modify_ _ { reachabilityPeek = true }
+          when (state.reachabilityData == Nothing) $ case state.scene of
+            PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
+            PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
+            GalaxyTreemap -> computeAndStoreGlobalReachability
+            _ -> pure unit
+        "x" -> do
+          H.modify_ _ { colorMode = CoChangeCluster }
+          when (state.coChangeClusterData == Nothing) $ case state.scene of
+            PkgTreemap pkg -> loadCoChangeClusterData pkg
+            PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
+            _ -> pure unit
+        _ -> pure unit
+
+  OverlayPeekOff -> do
+    H.modify_ _ { reachabilityPeek = false, purityPeek = false, complexityPeek = false, colorMode = DefaultUniform }
 
   -- =========================================================================
   -- Search Typeahead Actions
