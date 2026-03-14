@@ -530,7 +530,16 @@ renderLayerLabel state _layout node =
       Nothing -> true
       Just hovered -> hovered == node.name || layerNodeConnected hovered node.name state.layerLayout
     opacity = if isConnected then "1" else "0.15"
-    label = if SCU.length node.name > 18 then SCU.take 17 node.name <> "\x2026" else node.name
+    -- Look up source line from declarations
+    declLine = Array.findMap (\d ->
+      if d.name == node.name then d.sourceSpan >>= \s -> Array.head s.start
+      else Nothing
+    ) state.lastInput.declarations
+    lineTag = case declLine of
+      Just l | l > 0 -> ":" <> show l
+      _ -> ""
+    baseName = if SCU.length node.name > 18 then SCU.take 17 node.name <> "\x2026" else node.name
+    label = baseName <> lineTag
     labelY = node.y + node.r + 12.0
     labelColor = case concernGroupForDecl node.name state.subDeclAnalysis of
       Just gi -> StructViz.blockColor gi
@@ -701,6 +710,7 @@ renderBridgeAnalysis state =
   case state.declDecomp, state.declGraph of
     Just info, Just graph ->
       let
+        allCalls = foldMap identity state.lastInput.functionCalls
         bridgeList = Set.toUnfoldable info.bridgeSet :: Array (Tuple String String)
         apCount = Set.size info.aps
         bridgeCount = Array.length bridgeList
@@ -713,7 +723,7 @@ renderBridgeAnalysis state =
                        [ HH.text $ show bridgeCount <> " bridge" <> (if bridgeCount > 1 then "s" else "") <> " \x2014 cut points where this module could split" ]
                    ]
                 <> (Array.take 8 bridgeList <#> \(Tuple from to) ->
-                  renderBridgeCard from to info graph
+                  renderBridgeCard from to info graph allCalls
                 )
               else [])
             <> (if apCount > 0
@@ -743,21 +753,26 @@ renderBridgeAnalysis state =
             )
     _, _ -> HH.text ""
 
-renderBridgeCard :: forall m. String -> String -> Dec.DecompInfo -> Dec.SimpleGraph String -> H.ComponentHTML Action () m
-renderBridgeCard from to info graph =
+renderBridgeCard :: forall m. String -> String -> Dec.DecompInfo -> Dec.SimpleGraph String -> Array Loader.V2FunctionCall -> H.ComponentHTML Action () m
+renderBridgeCard from to info graph allCalls =
   let
-    -- Find which side of the bridge each node belongs to
-    -- by collecting nodes reachable without crossing this bridge
     sideA = reachableWithout from to graph
     sideB = reachableWithout to from graph
     sideACount = Set.size sideA
     sideBCount = Set.size sideB
 
-    -- The "call direction" — which function calls which?
-    -- In an undirected graph both are in each other's edge set,
-    -- but the name `from < to` is just alphabetical. Show both directions.
     fromIsAP = Set.member from info.aps
     toIsAP = Set.member to info.aps
+
+    -- Find the actual function call(s) between these two declarations
+    callsFromTo = Array.filter (\c -> c.callerName == from && c.calleeName == to) allCalls
+    callsToFrom = Array.filter (\c -> c.callerName == to && c.calleeName == from) allCalls
+    relevantCalls = callsFromTo <> callsToFrom
+
+    -- Format source location
+    spanText c = case c.sourceSpan of
+      Just s | s.start_line > 0 -> " (line " <> show s.start_line <> ")"
+      _ -> ""
   in
     HH.div [ HP.style "padding: 8px 10px; margin-bottom: 4px; background: #f5f2eb; border-radius: 4px; border-left: 3px solid #d4a017; font-size: 11px; line-height: 1.5;" ]
       [ HH.div [ HP.style "display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px;" ]
@@ -765,13 +780,23 @@ renderBridgeCard from to info graph =
           , HH.span [ HP.style "color: #999;" ] [ HH.text "\x2194" ]
           , HH.span [ HP.style "font-weight: 600; color: #333;" ] [ HH.text to ]
           ]
+      -- Show actual call sites with line numbers
+      , if Array.length relevantCalls > 0
+        then HH.div [ HP.style "color: #555; margin-bottom: 3px;" ]
+          (relevantCalls <#> \c ->
+            HH.div []
+              [ HH.span [ HP.style "color: #2563eb;" ] [ HH.text c.callerName ]
+              , HH.text " calls "
+              , HH.span [ HP.style "color: #2563eb;" ] [ HH.text c.calleeName ]
+              , HH.span [ HP.style "color: #999;" ] [ HH.text $ spanText c ]
+              ]
+          )
+        else HH.text ""
       , HH.div [ HP.style "color: #666;" ]
-          [ HH.text $ "Separates " <> show sideACount <> " declarations from " <> show sideBCount
-              <> ". Cutting this means " <> from <> " can no longer call " <> to <> " directly."
-          ]
+          [ HH.text $ "Separates " <> show sideACount <> " declarations from " <> show sideBCount <> "." ]
       , if fromIsAP || toIsAP
         then HH.div [ HP.style "color: #8b6914; margin-top: 2px;" ]
-          [ HH.text $ (if fromIsAP then from else to) <> " is an articulation point \x2014 it connects other groups too. Consider extracting it to a shared utility." ]
+          [ HH.text $ (if fromIsAP then from else to) <> " is an articulation point \x2014 it connects other groups too." ]
         else HH.text ""
       ]
 
