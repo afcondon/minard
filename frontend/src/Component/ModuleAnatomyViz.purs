@@ -1215,7 +1215,7 @@ concernClusteredTree graph caseExprs =
       [ staticStr "viewBox" $ "0 0 " <> show width <> " " <> show height
       , staticStr "width" "100%"
       , staticStr "preserveAspectRatio" "xMidYMid meet"
-      , staticStr "style" "background: #fafafa; border-radius: 4px;"
+      , staticStr "style" "background: transparent; border-radius: 4px;"
       ]
       (groupBgs <> edgeElems <> nodeElems <> groupLabels)
 
@@ -1317,6 +1317,6 @@ callGraphTree graph info kindMap =
       [ staticStr "viewBox" $ "0 0 " <> show width <> " " <> show height
       , staticStr "width" "100%"
       , staticStr "preserveAspectRatio" "xMidYMid meet"
-      , staticStr "style" "background: #fafafa; border-radius: 4px;"
+      , staticStr "style" "background: transparent; border-radius: 4px;"
       ]
       (blockBgs <> edgeElems <> nodeElems)

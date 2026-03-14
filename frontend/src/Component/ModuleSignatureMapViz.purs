@@ -327,9 +327,9 @@ renderDiagramSection state =
             LayerView -> renderLayerDiagram state
             ArcView -> renderLayerDiagram state
             DeclStructureView ->
-              HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px;" ] []
+              HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
             ConcernClusterView ->
-              HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px;" ] []
+              HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
         , renderCtaBar declCount
         ]
 
@@ -389,7 +389,7 @@ renderLayerDiagram state = case state.layerLayout of
               [ sa "viewBox" ("0 0 " <> show layout.width <> " " <> show layout.height)
               , sa "width" "100%"
               , sa "preserveAspectRatio" "xMidYMid meet"
-              , HP.style "display: block; border: 1px solid #ddd; border-radius: 4px; background: #fafaf8;"
+              , HP.style "display: block; border: 1px solid #d5d0c4; border-radius: 4px; background: #f0ede6;"
               ]
               ( renderLayerBands layout
               <> (layout.edges <#> renderLayerEdge state layout)
@@ -408,12 +408,12 @@ renderLayerBands layout =
     in [ svgElem "rect"
            [ sa "x" "0", sa "y" (show y)
            , sa "width" (show layout.width), sa "height" "60"
-           , sa "fill" (if isEven then "#f4f4f2" else "#fafaf8")
+           , sa "fill" (if isEven then "#eae7df" else "#f0ede6")
            , sa "stroke" "none"
            ] []
        , svgElem "text"
            [ sa "x" "4", sa "y" (show (y + 12.0))
-           , sa "font-size" "8", sa "fill" "#ccc"
+           , sa "font-size" "8", sa "fill" "#b8b0a0"
            , sa "font-family" "system-ui, sans-serif"
            ] [ HH.text $ "L" <> show l.layer ]
        ]
@@ -430,15 +430,34 @@ renderLayerEdge state _layout edge =
       Just hovered -> edge.fromName == hovered || edge.toName == hovered
     opacity = if isConnected then (if isHoverActive then "0.7" else "0.2") else "0.04"
     width = if isConnected && isHoverActive then "1.5" else "0.8"
-    color = if edge.crossesLayers > 1 then "#c05a4e" else "#94a3b8"
-  in svgElem "line"
-    [ sa "x1" (show edge.fromX), sa "y1" (show edge.fromY)
-    , sa "x2" (show edge.toX), sa "y2" (show edge.toY)
-    , sa "stroke" color
-    , sa "stroke-width" width
-    , sa "stroke-opacity" opacity
-    , HP.style "transition: stroke-opacity 150ms ease, stroke-width 150ms ease;"
-    ] []
+    isViolation = edge.crossesLayers > 1
+    color = if isViolation then "#c05a4e" else "#94a3b8"
+    -- Bezier for normal downward links, straight line for violations
+    midY = (edge.fromY + edge.toY) / 2.0
+    pathD = "M" <> show edge.fromX <> "," <> show edge.fromY
+         <> " C" <> show edge.fromX <> "," <> show midY
+         <> " " <> show edge.toX <> "," <> show midY
+         <> " " <> show edge.toX <> "," <> show edge.toY
+  in
+    if isViolation then
+      svgElem "line"
+        [ sa "x1" (show edge.fromX), sa "y1" (show edge.fromY)
+        , sa "x2" (show edge.toX), sa "y2" (show edge.toY)
+        , sa "stroke" color
+        , sa "stroke-width" width
+        , sa "stroke-opacity" opacity
+        , sa "stroke-dasharray" "4,2"
+        , HP.style "transition: stroke-opacity 150ms ease, stroke-width 150ms ease;"
+        ] []
+    else
+      svgElem "path"
+        [ sa "d" pathD
+        , sa "stroke" color
+        , sa "stroke-width" width
+        , sa "stroke-opacity" opacity
+        , sa "fill" "none"
+        , HP.style "transition: stroke-opacity 150ms ease, stroke-width 150ms ease;"
+        ] []
 
 renderLayerNode :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action () m
 renderLayerNode state _layout node =
