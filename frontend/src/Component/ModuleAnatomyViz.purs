@@ -922,6 +922,13 @@ shortModuleName :: String -> String
 shortModuleName name =
   fromMaybe name $ Array.last (String.split (String.Pattern ".") name)
 
+-- | Filter out compiler-generated names from do-notation desugaring
+isCompilerGenerated :: String -> Boolean
+isCompilerGenerated name =
+  String.take 7 name == "discard"
+  || String.take 4 name == "bind"
+  || String.take 2 name == "$$"
+
 -- =============================================================================
 -- Actions
 -- =============================================================================
@@ -1025,8 +1032,8 @@ buildCallGraph input =
     -- Internal calls: both caller and callee are in this module
     internalCalls = Array.filter (not <<< _.isCrossModule) input.functionCalls
 
-    -- All declaration names in this module
-    declNames = Set.fromFoldable $ input.declarations <#> _.name
+    -- All declaration names in this module (filter compiler-generated noise)
+    declNames = Set.filter (not <<< isCompilerGenerated) $ Set.fromFoldable $ input.declarations <#> _.name
 
     -- Build undirected edges from internal calls
     edges = foldl (\acc call ->

@@ -118,6 +118,7 @@ type State =
   , collapsedThreads :: Set Int
   , sparklineBars :: Array Spark.SparklineBar
   , focusedSection :: Maybe FocusedSection
+  , helpSection :: Maybe FocusedSection
   }
 
 data Action
@@ -141,6 +142,7 @@ data Action
   | ToggleThreadCollapse Int
   | CompareSnapshots
   | FocusSection (Maybe FocusedSection)
+  | ToggleHelp FocusedSection
 
 -- =============================================================================
 -- Component
@@ -183,6 +185,7 @@ initialState input =
   , collapsedThreads: Set.empty
   , sparklineBars: []
   , focusedSection: Nothing
+  , helpSection: Nothing
   }
 
 -- =============================================================================
@@ -235,31 +238,65 @@ renderSignaturesSection state =
   else
     HH.div [] (state.lanes <#> renderLane)
 
--- | Wrapper that adds a focus/unfocus click target to a section
+-- | Wrapper that adds a focus/unfocus click target and help toggle to a section
 renderFocusableSection :: forall m. FocusedSection -> State -> H.ComponentHTML Action () m -> H.ComponentHTML Action () m
 renderFocusableSection section state content =
   let
     isFocused = state.focusedSection == Just section
+    isHelpOpen = state.helpSection == Just section
     sectionLabel = case section of
       FocusAnnotations -> "Report"
       FocusDiagrams -> "Diagrams"
       FocusSignatures -> "Signatures"
-    headerStyle = "display: flex; align-items: center; justify-content: space-between; padding: 2px 0; margin-bottom: 4px; cursor: pointer;"
-    iconBtn = HH.span
-      [ HP.style "cursor: pointer; display: flex;"
-      , HE.onClick \_ -> FocusSection (Just section)
-      ]
-      [ if isFocused then collapseIcon else expandIcon ]
+    headerStyle = "display: flex; align-items: center; justify-content: space-between; padding: 2px 0; margin-bottom: 4px;"
   in
     HH.div [ HP.style "margin-bottom: 12px;" ]
       [ HH.div
           [ HP.style headerStyle ]
           [ HH.span [ HP.style "font-size: 9px; color: #999; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;" ]
               [ HH.text sectionLabel ]
-          , iconBtn
+          , HH.div [ HP.style "display: flex; align-items: center; gap: 6px;" ]
+              [ HH.span
+                  [ HP.style $ "cursor: pointer; display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-size: 13px; font-weight: 700; "
+                      <> (if isHelpOpen then "background: #333; color: #fff;" else "background: #e8e5dd; color: #555;")
+                  , HE.onClick \_ -> ToggleHelp section
+                  , HP.title "What is this?"
+                  ]
+                  [ HH.text "?" ]
+              , HH.span
+                  [ HP.style "cursor: pointer; display: flex;"
+                  , HE.onClick \_ -> FocusSection (Just section)
+                  ]
+                  [ if isFocused then collapseIcon else expandIcon ]
+              ]
           ]
+      , if isHelpOpen then renderSectionHelp section else HH.text ""
       , content
       ]
+
+-- | Help content for each section
+renderSectionHelp :: forall m. FocusedSection -> H.ComponentHTML Action () m
+renderSectionHelp = case _ of
+  FocusAnnotations -> helpPanel
+    [ "AI-generated report cards summarizing this module's architecture, quality issues, and role in the codebase."
+    , "Each card can be Confirmed (agree), Disputed (disagree), or Replied to with additional context. This builds a conversation between you and the AI about the code's intent and health."
+    , "Use this to capture decisions, flag technical debt, or record why something is the way it is."
+    ]
+  FocusDiagrams -> helpPanel
+    [ "Three views of this module's internal structure, each revealing different refactoring opportunities:"
+    , "Layers \x2014 Call hierarchy from top-level orchestrators down to leaf utilities. Red dashed lines are violations (upward calls). Hover any node to trace its dependencies."
+    , "Declarations \x2014 Biconnected component decomposition. Circles in the same colored cluster are tightly coupled. Diamond nodes (\x25C7) are articulation points: the only connection between groups. Dashed lines are bridges: cut one and two groups separate. Hover to see what each function connects to."
+    , "Concerns \x2014 Declarations grouped by shared sub-expressions (case branches, state fields). Each bubble is a potential standalone module. Cross-group edges show the coupling cost of extraction."
+    ]
+  FocusSignatures -> helpPanel
+    [ "Every exported declaration in this module, grouped by kind (data types, type aliases, values, type classes, foreign imports)."
+    , "Each card shows the type signature rendered as an SVG. Click any declaration to drill into its detail view with source code and cross-references."
+    , "The grouping and count gives you a quick sense of the module's API surface area and responsibility."
+    ]
+  where
+  helpPanel items =
+    HH.div [ HP.style "padding: 10px 12px; margin-bottom: 8px; background: #f5f2eb; border: 1px solid #d5d0c4; border-radius: 4px; font-size: 12px; color: #555; line-height: 1.6;" ]
+      (items <#> \text -> HH.p [ HP.style "margin: 0 0 6px 0;" ] [ HH.text text ])
 
 -- | Expand icon: four outward arrows (fullscreen)
 expandIcon :: forall w i. HH.HTML w i
@@ -327,7 +364,10 @@ renderDiagramSection state =
             LayerView -> renderLayerDiagram state
             ArcView -> renderLayerDiagram state
             DeclStructureView ->
-              HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
+              HH.div []
+                [ HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
+                , renderBridgeAnalysis state
+                ]
             ConcernClusterView ->
               HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
         , renderCtaBar declCount
@@ -651,6 +691,115 @@ nodeConnected a b = case _ of
   Just layout -> Array.any (\e ->
     (e.fromName == a && e.toName == b) || (e.fromName == b && e.toName == a)
     ) layout.edges
+
+-- =============================================================================
+-- Bridge Analysis Panel (below Declarations diagram)
+-- =============================================================================
+
+renderBridgeAnalysis :: forall m. State -> H.ComponentHTML Action () m
+renderBridgeAnalysis state =
+  case state.declDecomp, state.declGraph of
+    Just info, Just graph ->
+      let
+        bridgeList = Set.toUnfoldable info.bridgeSet :: Array (Tuple String String)
+        apCount = Set.size info.aps
+        bridgeCount = Array.length bridgeList
+      in
+        if bridgeCount == 0 && apCount == 0 then HH.text ""
+        else
+          HH.div [ HP.style "margin-top: 8px;" ]
+            ( (if bridgeCount > 0
+              then [ HH.div [ HP.style "font-size: 11px; font-weight: 600; color: #8b6914; margin-bottom: 6px;" ]
+                       [ HH.text $ show bridgeCount <> " bridge" <> (if bridgeCount > 1 then "s" else "") <> " \x2014 cut points where this module could split" ]
+                   ]
+                <> (Array.take 8 bridgeList <#> \(Tuple from to) ->
+                  renderBridgeCard from to info graph
+                )
+              else [])
+            <> (if apCount > 0
+              then
+                let apList = Array.sort (Set.toUnfoldable info.aps :: Array String)
+                    -- Only show APs that are in non-trivial blocks (genuinely connecting groups)
+                    tangledAPs = Array.filter (\name ->
+                      case Map.lookup name info.nodeBlock of
+                        Just blockIdx ->
+                          case Array.find (\b -> b.index == blockIdx) info.blocks of
+                            Just block -> not block.isBridge && Set.size block.nodes > 2
+                            Nothing -> false
+                        Nothing -> false
+                    ) apList
+                in if Array.length tangledAPs == 0 then []
+                else [ HH.div [ HP.style "font-size: 11px; font-weight: 600; color: #c62828; margin: 8px 0 4px;" ]
+                         [ HH.text $ show (Array.length tangledAPs) <> " tangled hub" <> (if Array.length tangledAPs > 1 then "s" else "") <> " \x2014 embedded in cycles, harder to extract" ]
+                     , HH.div [ HP.style "font-size: 11px; color: #555; line-height: 1.6; padding: 6px 8px; background: #f5f2eb; border-radius: 3px;" ]
+                         (tangledAPs <#> \name ->
+                           HH.div [ HP.style "padding: 1px 0;" ]
+                             [ HH.span [ HP.style "font-weight: 500; color: #c62828;" ] [ HH.text name ]
+                             , HH.span [ HP.style "color: #888;" ] [ HH.text $ " \x2014 removing this breaks cycles in its cluster" ]
+                             ]
+                         )
+                     ]
+              else [])
+            )
+    _, _ -> HH.text ""
+
+renderBridgeCard :: forall m. String -> String -> Dec.DecompInfo -> Dec.SimpleGraph String -> H.ComponentHTML Action () m
+renderBridgeCard from to info graph =
+  let
+    -- Find which side of the bridge each node belongs to
+    -- by collecting nodes reachable without crossing this bridge
+    sideA = reachableWithout from to graph
+    sideB = reachableWithout to from graph
+    sideACount = Set.size sideA
+    sideBCount = Set.size sideB
+
+    -- The "call direction" — which function calls which?
+    -- In an undirected graph both are in each other's edge set,
+    -- but the name `from < to` is just alphabetical. Show both directions.
+    fromIsAP = Set.member from info.aps
+    toIsAP = Set.member to info.aps
+  in
+    HH.div [ HP.style "padding: 8px 10px; margin-bottom: 4px; background: #f5f2eb; border-radius: 4px; border-left: 3px solid #d4a017; font-size: 11px; line-height: 1.5;" ]
+      [ HH.div [ HP.style "display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px;" ]
+          [ HH.span [ HP.style "font-weight: 600; color: #333;" ] [ HH.text from ]
+          , HH.span [ HP.style "color: #999;" ] [ HH.text "\x2194" ]
+          , HH.span [ HP.style "font-weight: 600; color: #333;" ] [ HH.text to ]
+          ]
+      , HH.div [ HP.style "color: #666;" ]
+          [ HH.text $ "Separates " <> show sideACount <> " declarations from " <> show sideBCount
+              <> ". Cutting this means " <> from <> " can no longer call " <> to <> " directly."
+          ]
+      , if fromIsAP || toIsAP
+        then HH.div [ HP.style "color: #8b6914; margin-top: 2px;" ]
+          [ HH.text $ (if fromIsAP then from else to) <> " is an articulation point \x2014 it connects other groups too. Consider extracting it to a shared utility." ]
+        else HH.text ""
+      ]
+
+-- | Find all nodes reachable from `start` without crossing the edge to `excluded`
+reachableWithout :: String -> String -> Dec.SimpleGraph String -> Set String
+reachableWithout start excluded graph =
+  go (Set.singleton start) [start]
+  where
+  go visited queue =
+    case Array.uncons queue of
+      Nothing -> visited
+      Just { head, tail } ->
+        let
+          neighbors = fromMaybe Set.empty (Map.lookup head graph.edges)
+          -- Exclude the specific bridge edge
+          filtered = Set.delete excluded neighbors
+          newNodes = Set.difference filtered visited
+          newList = Set.toUnfoldable newNodes :: Array String
+        in go (Set.union visited newNodes) (tail <> newList)
+
+-- | Filter out compiler-generated declaration names (discard, bind, etc.)
+-- | These are PureScript compiler artifacts from do-notation desugaring
+-- | that add noise to structural analysis.
+isCompilerGenerated :: String -> Boolean
+isCompilerGenerated name =
+  SCU.take 7 name == "discard"
+  || SCU.take 4 name == "bind"
+  || SCU.take 2 name == "$$"
 
 -- =============================================================================
 -- Commit Sparkline
@@ -1260,11 +1409,15 @@ handleAction = case _ of
 
   FocusSection mSection -> do
     state <- H.get
-    -- Toggle: if already focused on this section, unfocus; otherwise focus
     let newFocus = case mSection of
           Just s | state.focusedSection == Just s -> Nothing
           _ -> mSection
     H.modify_ _ { focusedSection = newFocus }
+
+  ToggleHelp section -> do
+    state <- H.get
+    let newHelp = if state.helpSection == Just section then Nothing else Just section
+    H.modify_ _ { helpSection = newHelp }
 
 -- | Fetch numstat data for sparkline (pure SVG render happens via Halogen re-render)
 loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit
@@ -1307,7 +1460,7 @@ renderSignatureMap input = do
       -- Start with exported declarations, then add any names from call graph edges
       exportedNames = Set.fromFoldable $ input.declarations <#> _.name
       callNames = foldl (\acc c -> Set.insert c.callerName (Set.insert c.calleeName acc)) Set.empty internalCalls
-      declNames = Set.union exportedNames callNames
+      declNames = Set.filter (not <<< isCompilerGenerated) (Set.union exportedNames callNames)
       edges = foldl (\acc call ->
         if Set.member call.callerName declNames && Set.member call.calleeName declNames
         then
