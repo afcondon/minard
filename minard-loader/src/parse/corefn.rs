@@ -44,6 +44,15 @@ pub struct CoreFnSourceSpan {
     pub end: [u32; 2],
 }
 
+/// Source span from corefn.json (line, column)
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct SourceSpan {
+    pub start_line: u32,
+    pub start_col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
+}
+
 /// A function call extracted from corefn
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct FunctionCall {
@@ -51,6 +60,7 @@ pub struct FunctionCall {
     pub callee_module: String,
     pub callee_name: String,
     pub is_cross_module: bool,
+    pub source_span: Option<SourceSpan>,
 }
 
 impl CoreFn {
@@ -120,6 +130,20 @@ impl CoreFn {
     }
 }
 
+/// Extract source span from a corefn annotation object
+fn extract_source_span(obj: &serde_json::Map<String, Value>) -> Option<SourceSpan> {
+    let ann = obj.get("annotation")?.as_object()?;
+    let span = ann.get("sourceSpan")?.as_object()?;
+    let start = span.get("start")?.as_array()?;
+    let end = span.get("end")?.as_array()?;
+    Some(SourceSpan {
+        start_line: start.first()?.as_u64()? as u32,
+        start_col: start.get(1)?.as_u64()? as u32,
+        end_line: end.first()?.as_u64()? as u32,
+        end_col: end.get(1)?.as_u64()? as u32,
+    })
+}
+
 /// Recursively extract function calls from a CoreFn expression
 fn extract_calls_from_expr(
     caller_name: &str,
@@ -145,11 +169,13 @@ fn extract_calls_from_expr(
                             // Skip self-calls (same function calling itself)
                             if !(callee_module == self_module && id == caller_name) {
                                 let is_cross_module = callee_module != self_module;
+                                let source_span = extract_source_span(obj);
                                 calls.insert(FunctionCall {
                                     caller_name: caller_name.to_string(),
                                     callee_module,
                                     callee_name: id.clone(),
                                     is_cross_module,
+                                    source_span,
                                 });
                             }
                         }

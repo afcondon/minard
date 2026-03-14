@@ -287,7 +287,8 @@ CREATE TABLE IF NOT EXISTS function_calls (
     callee_name         VARCHAR NOT NULL,      -- Target function
 
     is_cross_module     BOOLEAN DEFAULT TRUE,
-    call_count          INTEGER DEFAULT 1      -- How many times called
+    call_count          INTEGER DEFAULT 1,     -- How many times called
+    source_span         JSON                   -- {start_line, start_col, end_line, end_col} in PureScript source
 );
 
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON function_calls(caller_module_id, caller_name);

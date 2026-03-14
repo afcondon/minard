@@ -211,7 +211,7 @@ pub fn insert_function_calls(
 
     // Collect all calls, dedup via HashSet on (caller_module_id, caller_name, callee_module, callee_name)
     let mut seen: HashSet<(i64, String, String, String)> = HashSet::new();
-    let mut all_calls: Vec<(i64, i64, String, String, String, bool)> = Vec::new();
+    let mut all_calls: Vec<(i64, i64, String, String, String, bool, Option<String>)> = Vec::new();
     let mut parse_time = std::time::Duration::ZERO;
     let mut files_parsed = 0usize;
 
@@ -236,6 +236,12 @@ pub fn insert_function_calls(
                         call.callee_name.clone(),
                     );
                     if seen.insert(key) {
+                        let span_json = call.source_span.as_ref().map(|s| {
+                            format!(
+                                "{{\"start_line\":{},\"start_col\":{},\"end_line\":{},\"end_col\":{}}}",
+                                s.start_line, s.start_col, s.end_line, s.end_col
+                            )
+                        });
                         all_calls.push((
                             next_id,
                             *module_id,
@@ -243,6 +249,7 @@ pub fn insert_function_calls(
                             call.callee_module,
                             call.callee_name,
                             call.is_cross_module,
+                            span_json,
                         ));
                         next_id += 1;
                     }

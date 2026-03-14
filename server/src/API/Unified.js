@@ -218,7 +218,8 @@ export const buildCallsJson = (rows) => {
     calleeModule: row.callee_module,
     calleeName: row.callee_name,
     isCrossModule: Boolean(row.is_cross_module),
-    callCount: Number(row.call_count) || 1
+    callCount: Number(row.call_count) || 1,
+    sourceSpan: row.source_span ? (typeof row.source_span === 'string' ? JSON.parse(row.source_span) : row.source_span) : null
   }));
   return JSON.stringify({ calls, count: calls.length });
 };
@@ -455,7 +456,8 @@ export const buildAllCallsJson = (rows) => {
         calleeModule: row.callee_module,
         calleeName: row.callee_name,
         isCrossModule: Boolean(row.is_cross_module),
-        callCount: Number(row.call_count) || 1
+        callCount: Number(row.call_count) || 1,
+        sourceSpan: row.source_span ? (typeof row.source_span === 'string' ? JSON.parse(row.source_span) : row.source_span) : null
       });
     }
   }

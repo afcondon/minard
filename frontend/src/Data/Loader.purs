@@ -25,6 +25,7 @@ module CE2.Data.Loader
   , V2ChildDeclaration
   , V2Namespace
   , V2SearchResult
+  , SourceSpan
   , V2FunctionCall
   , V2Import
     -- Polyglot types
@@ -1009,6 +1010,14 @@ type V2Import =
   , packageVersion :: Maybe String
   }
 
+-- | Source span from PureScript source (via corefn.json)
+type SourceSpan =
+  { start_line :: Int
+  , start_col :: Int
+  , end_line :: Int
+  , end_col :: Int
+  }
+
 -- | Function call from v2 API
 type V2FunctionCall =
   { callerName :: String
@@ -1016,6 +1025,7 @@ type V2FunctionCall =
   , calleeName :: String
   , isCrossModule :: Boolean
   , callCount :: Int
+  , sourceSpan :: Maybe SourceSpan
   }
 
 -- | Namespace from unified schema
@@ -1081,7 +1091,7 @@ type V2ModuleImports =
 type V2ModuleCalls =
   { moduleId :: Int
   , moduleName :: String
-  , calls :: Array { callerName :: String, calleeModule :: String, calleeName :: String, isCrossModule :: Boolean, callCount :: Int }
+  , calls :: Array { callerName :: String, calleeModule :: String, calleeName :: String, isCrossModule :: Boolean, callCount :: Int, sourceSpan :: Maybe SourceSpan }
   }
 
 -- Response wrappers for JSON decoding

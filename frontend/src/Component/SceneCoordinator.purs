@@ -2217,6 +2217,7 @@ prepareSceneData state = case state.scene of
                           , calleeName: c.calleeName
                           , isCrossModule: c.isCrossModule
                           , callCount: c.callCount
+                          , sourceSpan: c.sourceSpan
                           })
                   H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
                 Left err ->
@@ -2382,6 +2383,7 @@ prepareSceneData state = case state.scene of
                           , calleeName: c.calleeName
                           , isCrossModule: c.isCrossModule
                           , callCount: c.callCount
+                          , sourceSpan: c.sourceSpan
                           })
                   H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
                 Left err ->
@@ -2417,6 +2419,7 @@ prepareSceneData state = case state.scene of
                       , calleeName: c.calleeName
                       , isCrossModule: c.isCrossModule
                       , callCount: c.callCount
+                      , sourceSpan: c.sourceSpan
                       })
               H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
             Left err ->
@@ -2446,6 +2449,7 @@ prepareSceneData state = case state.scene of
                       , calleeName: c.calleeName
                       , isCrossModule: c.isCrossModule
                       , callCount: c.callCount
+                      , sourceSpan: c.sourceSpan
                       })
               H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
             Left err ->
@@ -2544,6 +2548,7 @@ ensurePackageDeclarationsLoaded state pkgName =
                     , calleeName: c.calleeName
                     , isCrossModule: c.isCrossModule
                     , callCount: c.callCount
+                    , sourceSpan: c.sourceSpan
                     })
             H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
           Left err ->

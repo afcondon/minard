@@ -75,6 +75,7 @@ type FunctionCall =
   , calleeName :: String
   , isCrossModule :: Boolean
   , callCount :: Int
+  , sourceSpan :: Maybe Loader.SourceSpan
   }
 
 data Output

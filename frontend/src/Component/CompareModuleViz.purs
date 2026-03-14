@@ -464,6 +464,7 @@ computeColumnFromSnapshot snapshotId pkgName modName = do
             , calleeName: c.calleeName
             , isCrossModule: c.isCrossModule
             , callCount: c.callCount
+            , sourceSpan: Nothing
             })
         Left _ -> Map.empty
 

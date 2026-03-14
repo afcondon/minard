@@ -433,7 +433,8 @@ getModuleCalls db moduleId = do
       fc.callee_module,
       fc.callee_name,
       fc.is_cross_module,
-      fc.call_count
+      fc.call_count,
+      fc.source_span
     FROM function_calls fc
     WHERE fc.caller_module_id = ?
     ORDER BY fc.caller_name, fc.callee_module, fc.callee_name
@@ -816,7 +817,7 @@ getAllCalls db mProject mSnapshot = do
       GROUP BY m.name
     )
     SELECT bm.module_id, bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name,
-           fc.is_cross_module, fc.call_count
+           fc.is_cross_module, fc.call_count, fc.source_span
     FROM best_modules bm
     LEFT JOIN function_calls fc ON fc.caller_module_id = bm.module_id
     ORDER BY bm.module_name, fc.caller_name, fc.callee_module, fc.callee_name
