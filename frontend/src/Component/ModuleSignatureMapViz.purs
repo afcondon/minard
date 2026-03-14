@@ -91,6 +91,10 @@ data DiagramMode = LayerView | ArcView | DeclStructureView | ConcernClusterView
 
 derive instance eqDiagramMode :: Eq DiagramMode
 
+data FocusedSection = FocusAnnotations | FocusDiagrams | FocusSignatures
+
+derive instance eqFocusedSection :: Eq FocusedSection
+
 type State =
   { initialized :: Boolean
   , actionListener :: Maybe (HS.Listener Action)
@@ -113,6 +117,7 @@ type State =
   , replyText :: String
   , collapsedThreads :: Set Int
   , sparklineBars :: Array Spark.SparklineBar
+  , focusedSection :: Maybe FocusedSection
   }
 
 data Action
@@ -135,6 +140,7 @@ data Action
   | SubmitReply
   | ToggleThreadCollapse Int
   | CompareSnapshots
+  | FocusSection (Maybe FocusedSection)
 
 -- =============================================================================
 -- Component
@@ -176,6 +182,7 @@ initialState input =
   , replyText: ""
   , collapsedThreads: Set.empty
   , sparklineBars: []
+  , focusedSection: Nothing
   }
 
 -- =============================================================================
@@ -188,19 +195,96 @@ render state =
     [ HP.class_ (HH.ClassName "module-signature-map")
     , HP.style "overflow-y: auto; padding: 12px 16px; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
     ]
-    -- Stable child structure: annotation container + sparkline + arc diagram + lanes container.
-    -- This prevents Halogen's index-based VDOM diff from patching lane cells
-    -- (which use innerHTML prop) into annotation columns when annotations
-    -- arrive asynchronously and shift the children array.
-    [ HH.div [] (renderAnnotationHeader state)
-    , renderSparklineRow state
-    , renderDiagramSection state
-    , if Array.null state.lanes && state.initialized then
-        HH.div
-          [ HP.style "display:flex;align-items:center;justify-content:center;height:100%;color:#999;font-size:14px;" ]
-          [ HH.text "No declarations" ]
-      else
-        HH.div [] (state.lanes <#> renderLane)
+    [ renderSparklineRow state
+    , case state.focusedSection of
+        -- Focused mode: single section fills the area
+        Just FocusAnnotations ->
+          renderFocusableSection FocusAnnotations state $
+            HH.div [] (renderAnnotationHeader state)
+        Just FocusDiagrams ->
+          renderFocusableSection FocusDiagrams state $
+            renderDiagramSection state
+        Just FocusSignatures ->
+          renderFocusableSection FocusSignatures state $
+            renderSignaturesSection state
+        -- Normal mode: two-column layout
+        Nothing ->
+          HH.div [ HP.style "display: flex; gap: 16px; min-height: 0;" ]
+            [ -- Left column (1/3): annotations
+              HH.div [ HP.style "width: 33%; flex-shrink: 0; overflow-y: auto;" ]
+                [ renderFocusableSection FocusAnnotations state $
+                    HH.div [] (renderAnnotationHeader state)
+                ]
+            -- Right column (2/3): diagrams + signatures
+            , HH.div [ HP.style "flex: 1; min-width: 0; overflow-y: auto;" ]
+                [ renderFocusableSection FocusDiagrams state $
+                    renderDiagramSection state
+                , renderFocusableSection FocusSignatures state $
+                    renderSignaturesSection state
+                ]
+            ]
+    ]
+
+-- | Signatures section (lanes)
+renderSignaturesSection :: forall m. State -> H.ComponentHTML Action () m
+renderSignaturesSection state =
+  if Array.null state.lanes && state.initialized then
+    HH.div
+      [ HP.style "display:flex;align-items:center;justify-content:center;height:100px;color:#999;font-size:14px;" ]
+      [ HH.text "No declarations" ]
+  else
+    HH.div [] (state.lanes <#> renderLane)
+
+-- | Wrapper that adds a focus/unfocus click target to a section
+renderFocusableSection :: forall m. FocusedSection -> State -> H.ComponentHTML Action () m -> H.ComponentHTML Action () m
+renderFocusableSection section state content =
+  let
+    isFocused = state.focusedSection == Just section
+    sectionLabel = case section of
+      FocusAnnotations -> "Report"
+      FocusDiagrams -> "Diagrams"
+      FocusSignatures -> "Signatures"
+    headerStyle = "display: flex; align-items: center; justify-content: space-between; padding: 2px 0; margin-bottom: 4px; cursor: pointer;"
+    iconBtn = HH.span
+      [ HP.style "cursor: pointer; display: flex;"
+      , HE.onClick \_ -> FocusSection (Just section)
+      ]
+      [ if isFocused then collapseIcon else expandIcon ]
+  in
+    HH.div [ HP.style "margin-bottom: 12px;" ]
+      [ HH.div
+          [ HP.style headerStyle ]
+          [ HH.span [ HP.style "font-size: 9px; color: #999; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;" ]
+              [ HH.text sectionLabel ]
+          , iconBtn
+          ]
+      , content
+      ]
+
+-- | Expand icon: four outward arrows (fullscreen)
+expandIcon :: forall w i. HH.HTML w i
+expandIcon =
+  svgElem "svg"
+    [ sa "viewBox" "0 0 16 16", HP.style "width: 14px; height: 14px;" ]
+    [ -- Top-left arrow
+      svgElem "path" [ sa "d" "M1 6V1h5M1 1l4.5 4.5", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
+    -- Top-right arrow
+    , svgElem "path" [ sa "d" "M15 6V1h-5M15 1l-4.5 4.5", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
+    -- Bottom-left arrow
+    , svgElem "path" [ sa "d" "M1 10v5h5M1 15l4.5-4.5", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
+    -- Bottom-right arrow
+    , svgElem "path" [ sa "d" "M15 10v5h-5M15 15l-4.5-4.5", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
+    ]
+
+-- | Collapse icon: four inward arrows (exit fullscreen)
+collapseIcon :: forall w i. HH.HTML w i
+collapseIcon =
+  svgElem "svg"
+    [ sa "viewBox" "0 0 16 16", HP.style "width: 14px; height: 14px;" ]
+    [ svgElem "path" [ sa "d" "M5.5 1v4.5H1M5.5 5.5L1 1", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
+    , svgElem "path" [ sa "d" "M10.5 1v4.5H15M10.5 5.5L15 1", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
+    , svgElem "path" [ sa "d" "M5.5 15v-4.5H1M5.5 10.5L1 15", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
+    , svgElem "path" [ sa "d" "M10.5 15v-4.5H15M10.5 10.5L15 15", sa "stroke" "#222", sa "stroke-width" "1.8", sa "fill" "none", sa "stroke-linecap" "round" ] []
     ]
 
 -- =============================================================================
@@ -223,20 +307,25 @@ renderDiagramSection state =
       HH.div [] []  -- placeholder for stable child structure
     else
       HH.div [ HP.style "margin: 8px 0 12px 0;" ]
-        [ -- Tab bar + reason
-          HH.div [ HP.style "display: flex; align-items: baseline; gap: 0; margin-bottom: 8px; border-bottom: 1px solid #ddd;" ]
+        [ -- Tab bar
+          HH.div [ HP.style "display: flex; align-items: baseline; gap: 0; margin-bottom: 0; border-bottom: 1px solid #ddd;" ]
             [ renderDiagramTab "Layers" LayerView state.diagramMode
             , renderDiagramTab "Declarations" DeclStructureView state.diagramMode
             , renderDiagramTab "Concerns" ConcernClusterView state.diagramMode
-            , if state.diagramReason /= "" then
-                HH.span [ HP.style "margin-left: 12px; font-size: 10px; color: #999; font-style: italic;" ]
-                  [ HH.text state.diagramReason ]
-              else HH.text ""
+            ]
+        -- Subtitle explaining the active diagram
+        , HH.div [ HP.style "padding: 6px 0 4px; font-size: 10px; color: #888; line-height: 1.4;" ]
+            [ HH.text $ case state.diagramMode of
+                LayerView -> "Call hierarchy \x2014 top declarations call those below. Hover to trace dependencies. "
+                  <> (if state.diagramReason /= "" then state.diagramReason else "")
+                DeclStructureView -> "Biconnected components of the internal call graph. Tightly coupled clusters share a color."
+                ConcernClusterView -> "Declarations grouped by shared sub-expressions. Each group is a potential concern or responsibility."
+                ArcView -> ""
             ]
         , -- Active diagram
           case state.diagramMode of
             LayerView -> renderLayerDiagram state
-            ArcView -> renderLayerDiagram state  -- Arc tab removed; fall back to layers
+            ArcView -> renderLayerDiagram state
             DeclStructureView ->
               HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px;" ] []
             ConcernClusterView ->
@@ -300,7 +389,7 @@ renderLayerDiagram state = case state.layerLayout of
               [ sa "viewBox" ("0 0 " <> show layout.width <> " " <> show layout.height)
               , sa "width" "100%"
               , sa "preserveAspectRatio" "xMidYMid meet"
-              , HP.style "display: block; border: 1px solid #e5e5e5; border-radius: 4px; background: #fafafa;"
+              , HP.style "display: block; border: 1px solid #ddd; border-radius: 4px; background: #fafaf8;"
               ]
               ( renderLayerBands layout
               <> (layout.edges <#> renderLayerEdge state layout)
@@ -312,31 +401,43 @@ renderLayerDiagram state = case state.layerLayout of
 -- | Background bands for each layer
 renderLayerBands :: forall m w. LayerDiagram.LayerLayout -> Array (HH.HTML w m)
 renderLayerBands layout =
-  layout.layers <#> \l ->
+  Array.concatMap (\l ->
     let
       y = 30.0 + Int.toNumber (layout.maxLayer - l.layer) * 60.0
       isEven = l.layer `mod` 2 == 0
-    in svgElem "rect"
-      [ sa "x" "0", sa "y" (show y)
-      , sa "width" (show layout.width), sa "height" "60"
-      , sa "fill" (if isEven then "#f8f8f8" else "#fff")
-      , sa "stroke" "none"
-      ] []
+    in [ svgElem "rect"
+           [ sa "x" "0", sa "y" (show y)
+           , sa "width" (show layout.width), sa "height" "60"
+           , sa "fill" (if isEven then "#f4f4f2" else "#fafaf8")
+           , sa "stroke" "none"
+           ] []
+       , svgElem "text"
+           [ sa "x" "4", sa "y" (show (y + 12.0))
+           , sa "font-size" "8", sa "fill" "#ccc"
+           , sa "font-family" "system-ui, sans-serif"
+           ] [ HH.text $ "L" <> show l.layer ]
+       ]
+  ) layout.layers
 
 renderLayerEdge :: forall m w. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerEdge -> HH.HTML w m
 renderLayerEdge state _layout edge =
   let
+    isHoverActive = case state.hoveredLayerNode of
+      Nothing -> false
+      Just _ -> true
     isConnected = case state.hoveredLayerNode of
       Nothing -> true
       Just hovered -> edge.fromName == hovered || edge.toName == hovered
-    opacity = if isConnected then "0.3" else "0.05"
+    opacity = if isConnected then (if isHoverActive then "0.7" else "0.2") else "0.04"
+    width = if isConnected && isHoverActive then "1.5" else "0.8"
     color = if edge.crossesLayers > 1 then "#c05a4e" else "#94a3b8"
   in svgElem "line"
     [ sa "x1" (show edge.fromX), sa "y1" (show edge.fromY)
     , sa "x2" (show edge.toX), sa "y2" (show edge.toY)
     , sa "stroke" color
-    , sa "stroke-width" "0.8"
+    , sa "stroke-width" width
     , sa "stroke-opacity" opacity
+    , HP.style "transition: stroke-opacity 150ms ease, stroke-width 150ms ease;"
     ] []
 
 renderLayerNode :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action () m
@@ -544,22 +645,14 @@ renderSparklineRow state =
       hasSparkline = nBars > 0
       hasBubblepack = not (Array.null state.lastInput.declarations)
   in HH.div
-    [ HP.style "margin: 0 0 12px 0; padding: 8px 0; border-bottom: 1px solid #e8e8e8;" ]
-    [ HH.div
-        [ HP.style "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;" ]
-        [ HH.span
-            [ HP.style "font-size: 9px; color: #aaa; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;" ]
+    [ HP.style "margin: -12px -16px 12px -16px; padding: 6px 16px; background: #D4C9A8; border-bottom: 1px solid #999; display: flex; align-items: center; gap: 12px; height: 52px;" ]
+    ( (if hasBubblepack then [ renderModuleBubblepack state ] else [])
+    <> (if hasSparkline then [ renderSparklineSvg state ] else [])
+    <> [ HH.span
+            [ HP.style "font-size: 9px; color: #665; font-weight: 500; white-space: nowrap;" ]
             [ HH.text (if hasSparkline then show nBars <> " commits" else "") ]
-        , HH.span
-            [ HP.style "font-size: 9px; color: #bbb;" ]
-            [ HH.text (if hasSparkline then "green = additions, red = deletions, gray = rest of commit" else "") ]
-        ]
-    , HH.div
-        [ HP.style "display: flex; align-items: center; gap: 12px;" ]
-        ( (if hasBubblepack then [ renderModuleBubblepack state ] else [])
-        <> (if hasSparkline then [ renderSparklineSvg state ] else [])
-        )
-    ]
+       ]
+    )
 
 -- | Inline SVG sparkline — pure Halogen, no Canvas FFI
 renderSparklineSvg :: forall m. State -> H.ComponentHTML Action () m
@@ -573,7 +666,7 @@ renderSparklineSvg state =
        [ svgElem "svg"
            [ sa "viewBox" ("0 0 " <> show vbWidth <> " " <> show vbHeight)
            , sa "preserveAspectRatio" "none"
-           , HP.style "width: 100%; height: 72px; display: block; border-radius: 3px; border: 1px solid #e0ddd5; background: #f5f2eb;"
+           , HP.style "width: 100%; height: 44px; display: block; border-radius: 3px; border: 1px solid #b8ad90; background: #e8e0cf;"
            ]
            ( rects <#> \r ->
                svgElem "rect"
@@ -604,7 +697,7 @@ renderModuleBubblepack state =
        in
          svgElem "svg"
            [ sa "viewBox" viewBox
-           , HP.style "width: 72px; height: 72px; flex-shrink: 0; overflow: visible; display: block;"
+           , HP.style "width: 44px; height: 44px; flex-shrink: 0; overflow: visible; display: block;"
            ]
            (Array.concatMap renderDeclCircle declarations)
   where
@@ -1145,6 +1238,14 @@ handleAction = case _ of
 
   CompareSnapshots ->
     H.raise CompareSnapshotsClicked
+
+  FocusSection mSection -> do
+    state <- H.get
+    -- Toggle: if already focused on this section, unfocus; otherwise focus
+    let newFocus = case mSection of
+          Just s | state.focusedSection == Just s -> Nothing
+          _ -> mSection
+    H.modify_ _ { focusedSection = newFocus }
 
 -- | Fetch numstat data for sparkline (pure SVG render happens via Halogen re-render)
 loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit

@@ -99,8 +99,6 @@ hasRow2 = case _ of
   SolarSwarm -> true
   PkgTreemap _ -> true
   PkgModuleBeeswarm _ -> true
-  ModuleSignatureMap _ _ -> true
-  ModuleOverview _ _ -> true
   _ -> false
 
 -- | Contextual controls — only view-transforming controls, no scene links
@@ -124,11 +122,6 @@ renderRow2 state actions =
     PkgModuleBeeswarm _pkg ->
       overlayGroup [ changesOverlay, clusterOverlay, coChangeOverlay, couplingOverlay, gitOverlay, purityOverlay, reachOverlay ]
 
-    -- Module views: view toggle only
-    ModuleSignatureMap pkg mod -> moduleViewGroup pkg mod
-
-    ModuleOverview pkg mod -> moduleViewGroup pkg mod
-
     _ -> []
 
   where
@@ -147,20 +140,6 @@ renderRow2 state actions =
 
   peekGroup :: Array (HH.HTML w i) -> Array (HH.HTML w i)
   peekGroup = overlayGroup
-
-  moduleViewGroup :: String -> String -> Array (HH.HTML w i)
-  moduleViewGroup pkg mod =
-    [ HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ HH.span [ HP.style "font-size: 8px; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 2px;" ] [ HH.text "View" ]
-        , moduleViewBtn "Signatures" (ModuleSignatureMap pkg mod)
-            (isSignatureMap state.scene)
-        , moduleViewBtn "Overview" (ModuleOverview pkg mod)
-            (isOverview state.scene)
-        , moduleViewBtn "Anatomy" (ModuleAnatomy pkg mod)
-            (isModuleAnatomy state.scene)
-        ]
-    ]
 
   -- -------------------------------------------------------------------------
   -- Overlay controls (unified style with hotkeys, alphabetical)
@@ -219,26 +198,6 @@ renderRow2 state actions =
       ]
       [ HH.text $ label <> " (" <> hotkey <> ")" ]
 
-  moduleViewBtn :: String -> Scene -> Boolean -> HH.HTML w i
-  moduleViewBtn label target isActive =
-    HH.button
-      [ HE.onClick \_ -> actions.onNavigateTo target
-      , HP.style (buttonStyle isActive)
-      ]
-      [ HH.text label ]
-
-  -- Scene predicates
-  isSignatureMap :: Scene -> Boolean
-  isSignatureMap (ModuleSignatureMap _ _) = true
-  isSignatureMap _ = false
-
-  isOverview :: Scene -> Boolean
-  isOverview (ModuleOverview _ _) = true
-  isOverview _ = false
-
-  isModuleAnatomy :: Scene -> Boolean
-  isModuleAnatomy (ModuleAnatomy _ _) = true
-  isModuleAnatomy _ = false
 
 -- =============================================================================
 -- Shared
