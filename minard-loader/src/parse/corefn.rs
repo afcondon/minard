@@ -115,18 +115,106 @@ impl CoreFn {
     }
 
     /// Extract function calls from declarations
-    /// Returns both intra-module and cross-module calls
+    /// Returns both intra-module and cross-module calls.
+    /// Skips:
+    /// - Compiler-generated bindings (bind, discard, numbered slots)
+    /// - Type class dictionary bindings (local re-bindings of cross-module methods)
+    /// - Simple Var re-bindings (Proxy labels, etc.)
     pub fn extract_function_calls(&self) -> Vec<FunctionCall> {
         let mut calls = HashSet::new();
         let self_module = self.module_name_str();
 
+        // Pass 1: identify trivial/compiler-generated declaration names
+        // These should be excluded as both callers AND callees
+        let mut skip_names: HashSet<String> = HashSet::new();
         for decl in &self.decls {
             if let (Some(identifier), Some(expr)) = (&decl.identifier, &decl.expression) {
-                extract_calls_from_expr(identifier, &self_module, expr, &mut calls);
+                if identifier.starts_with("bind")
+                    || identifier.starts_with("discard")
+                    || (identifier.starts_with("slot") && identifier.len() < 7)
+                    || is_trivial_binding(expr, &self_module)
+                {
+                    skip_names.insert(identifier.clone());
+                }
+            }
+        }
+
+        // Pass 2: extract calls, skipping trivial callers and callees
+        for decl in &self.decls {
+            if let (Some(identifier), Some(expr)) = (&decl.identifier, &decl.expression) {
+                if skip_names.contains(identifier) {
+                    continue;
+                }
+                extract_calls_from_expr(identifier, &self_module, expr, &mut calls, &skip_names);
             }
         }
 
         calls.into_iter().collect()
+    }
+}
+
+/// Check if a declaration's expression is a trivial binding:
+/// - Simple Var re-binding (e.g. `_fooViz = Proxy`)
+/// - Dictionary application (e.g. `eq = Data.Eq.eq(eqInstance)`)
+/// These are compiler-generated plumbing, not user-written functions.
+fn is_trivial_binding(expr: &Value, self_module: &str) -> bool {
+    match expr {
+        Value::Object(obj) => {
+            let expr_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+            // Simple Var re-binding
+            if expr_type == "Var" {
+                return true;
+            }
+
+            // App of a cross-module Var (dictionary application)
+            if expr_type == "App" {
+                if let Some(Value::Object(fn_obj)) = obj.get("abstraction") {
+                    let fn_type = fn_obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    if fn_type == "Var" {
+                        let fn_mod = fn_obj
+                            .get("value")
+                            .and_then(|v| v.get("moduleName"))
+                            .and_then(|m| m.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(".")
+                            })
+                            .unwrap_or_default();
+                        if fn_mod != self_module {
+                            return true;
+                        }
+                    }
+                    // Nested App(App(Var, ...), ...) for multi-arg dictionary applications
+                    if fn_type == "App" {
+                        if let Some(Value::Object(inner_fn)) = fn_obj.get("abstraction") {
+                            let inner_type =
+                                inner_fn.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            if inner_type == "Var" {
+                                let inner_mod = inner_fn
+                                    .get("value")
+                                    .and_then(|v| v.get("moduleName"))
+                                    .and_then(|m| m.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join(".")
+                                    })
+                                    .unwrap_or_default();
+                                if inner_mod != self_module {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
     }
 }
 
@@ -150,33 +238,51 @@ fn extract_calls_from_expr(
     self_module: &str,
     expr: &Value,
     calls: &mut HashSet<FunctionCall>,
+    skip_names: &HashSet<String>,
 ) {
     match expr {
         Value::Object(obj) => {
             // Check if this is a Var reference
             if let (Some(Value::String(typ)), Some(value)) = (obj.get("type"), obj.get("value")) {
                 if typ == "Var" {
-                    if let Value::Object(val_obj) = value {
-                        if let (Some(Value::String(id)), Some(Value::Array(mod_name))) =
-                            (val_obj.get("identifier"), val_obj.get("moduleName"))
-                        {
-                            let callee_module: String = mod_name
-                                .iter()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join(".");
+                    // Check meta type — skip constructors and newtypes (not real function calls)
+                    let meta_type = obj
+                        .get("annotation")
+                        .and_then(|a| a.get("meta"))
+                        .and_then(|m| m.get("metaType"))
+                        .and_then(|mt| mt.as_str())
+                        .unwrap_or("");
 
-                            // Skip self-calls (same function calling itself)
-                            if !(callee_module == self_module && id == caller_name) {
-                                let is_cross_module = callee_module != self_module;
-                                let source_span = extract_source_span(obj);
-                                calls.insert(FunctionCall {
-                                    caller_name: caller_name.to_string(),
-                                    callee_module,
-                                    callee_name: id.clone(),
-                                    is_cross_module,
-                                    source_span,
-                                });
+                    if meta_type != "IsConstructor" && meta_type != "IsNewtype" {
+                        if let Value::Object(val_obj) = value {
+                            if let (Some(Value::String(id)), Some(Value::Array(mod_name))) =
+                                (val_obj.get("identifier"), val_obj.get("moduleName"))
+                            {
+                                let callee_module: String = mod_name
+                                    .iter()
+                                    .filter_map(|v| v.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(".");
+
+                                // Skip calls to trivial/compiler-generated declarations
+                                // (within same module — cross-module trivials don't affect structure)
+                                let is_trivial_callee = callee_module == self_module
+                                    && skip_names.contains(id.as_str());
+
+                                if !is_trivial_callee {
+                                    // Skip self-calls (same function calling itself)
+                                    if !(callee_module == self_module && id == caller_name) {
+                                        let is_cross_module = callee_module != self_module;
+                                        let source_span = extract_source_span(obj);
+                                        calls.insert(FunctionCall {
+                                            caller_name: caller_name.to_string(),
+                                            callee_module,
+                                            callee_name: id.clone(),
+                                            is_cross_module,
+                                            source_span,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
@@ -185,12 +291,12 @@ fn extract_calls_from_expr(
 
             // Recurse into all object values
             for (_, v) in obj {
-                extract_calls_from_expr(caller_name, self_module, v, calls);
+                extract_calls_from_expr(caller_name, self_module, v, calls, skip_names);
             }
         }
         Value::Array(arr) => {
             for v in arr {
-                extract_calls_from_expr(caller_name, self_module, v, calls);
+                extract_calls_from_expr(caller_name, self_module, v, calls, skip_names);
             }
         }
         _ => {}

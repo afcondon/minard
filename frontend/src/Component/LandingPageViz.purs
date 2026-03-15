@@ -107,7 +107,7 @@ renderHero state =
         [ HH.text "Code cartography for PureScript" ]
     , HH.p
         [ HP.style "font-size: 12px; color: #AAA; margin: 0 0 24px 0; font-style: italic;" ]
-        [ HH.text "Lifting the fog of war since 2026" ]
+        [ HH.text "build: 2026-03-15 10:00" ]
 
     -- Navigation links
     , HH.div
