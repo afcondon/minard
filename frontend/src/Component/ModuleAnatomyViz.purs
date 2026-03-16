@@ -38,7 +38,8 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 
-import Hylograph.HATS (Tree, elem, staticStr, staticNum, withBehaviors, onCoordinatedHighlight)
+import Effect (Effect)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, withBehaviors, onCoordinatedHighlight, onClick)
 import Hylograph.HATS.InterpreterTick (clearContainer, rerender)
 import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Internal.Behavior.Types (HighlightClass(..))
@@ -999,7 +1000,7 @@ renderSubDeclGraph analysis = do
     Just graph -> do
       liftEffect do
         clearContainer "#module-structure-graph"
-        _ <- rerender "#module-structure-graph" (concernClusteredTree graph analysis.caseExpressions)
+        _ <- rerender "#module-structure-graph" (concernClusteredTree graph analysis.caseExpressions Nothing)
         pure unit
     _ -> pure unit
 
@@ -1020,7 +1021,7 @@ computeAndRender = do
   liftEffect do
     clearContainer "#module-structure-graph"
     let kindMap = foldl (\acc d -> Map.insert d.name d.kind acc) Map.empty state.input.declarations
-    _ <- rerender "#module-structure-graph" (callGraphTree graph info kindMap)
+    _ <- rerender "#module-structure-graph" (callGraphTree graph info kindMap Nothing)
     pure unit
 
 -- =============================================================================
@@ -1067,8 +1068,8 @@ buildCallGraph input =
 
 -- | Render branches clustered by parent case expression.
 -- | Each case expression gets a circle of nodes; cross-group edges show the seams.
-concernClusteredTree :: Dec.SimpleGraph String -> Array SDA.CaseExprInfo -> Tree
-concernClusteredTree graph caseExprs =
+concernClusteredTree :: Dec.SimpleGraph String -> Array SDA.CaseExprInfo -> Maybe (String -> Effect Unit) -> Tree
+concernClusteredTree graph caseExprs mClickCb =
   let
     nGroups = Array.length caseExprs
     width = 900.0
@@ -1230,7 +1231,10 @@ concernClusteredTree graph caseExprs =
                   else Dimmed
               , group: Just "concern-graph"
               }
-          in Just $ withBehaviors [ nodeHl ] $
+            clickBehaviors = case mClickCb of
+              Just cb -> [ onClick (cb name) ]
+              Nothing -> []
+          in Just $ withBehaviors ([ nodeHl ] <> clickBehaviors) $
             elem Group [ staticStr "class" "concern-node", staticStr "cursor" "pointer" ]
               [ elem Circle
                   [ staticNum "cx" pos.x, staticNum "cy" pos.y, staticNum "r" 5.0
@@ -1281,8 +1285,8 @@ concernClusteredTree graph caseExprs =
 -- HATS Rendering: Call Graph (Declaration view)
 -- =============================================================================
 
-callGraphTree :: Dec.SimpleGraph String -> Dec.DecompInfo -> Map.Map String String -> Tree
-callGraphTree graph info kindMap =
+callGraphTree :: Dec.SimpleGraph String -> Dec.DecompInfo -> Map.Map String String -> Maybe (String -> Effect Unit) -> Tree
+callGraphTree graph info kindMap mClickCb =
   let
     -- Layout: pure computation from hylograph-layout
     bctLayout = BCT.layout BCT.defaultConfig graph
@@ -1358,9 +1362,12 @@ callGraphTree graph info kindMap =
                   else Dimmed
               , group: Just "decl-graph"
               }
+            clickBehaviors = case mClickCb of
+              Just cb -> [ onClick (cb name) ]
+              Nothing -> []
           in Just $
             if nl.isArticulationPoint then
-              withBehaviors [ hlBehavior ] $
+              withBehaviors ([ hlBehavior ] <> clickBehaviors) $
               elem Group [ staticStr "class" "decl-node", staticStr "cursor" "pointer" ]
                 [ elem Rect
                     [ staticNum "x" (nl.x - r), staticNum "y" (nl.y - r)
@@ -1378,7 +1385,7 @@ callGraphTree graph info kindMap =
                     ] []
                 ]
             else
-              withBehaviors [ hlBehavior ] $
+              withBehaviors ([ hlBehavior ] <> clickBehaviors) $
               elem Group [ staticStr "class" "decl-node", staticStr "cursor" "pointer" ]
                 [ elem Circle
                     [ staticNum "cx" nl.x, staticNum "cy" nl.y, staticNum "r" r

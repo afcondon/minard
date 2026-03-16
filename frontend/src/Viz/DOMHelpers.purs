@@ -1,7 +1,8 @@
-module CE2.Viz.DOMHelpers (scrollElementIntoView, setInnerHTML) where
+module CE2.Viz.DOMHelpers (scrollElementIntoView, scrollChildIntoView, setInnerHTML) where
 
 import Prelude (Unit)
 import Effect (Effect)
 
 foreign import scrollElementIntoView :: String -> Effect Unit
+foreign import scrollChildIntoView :: String -> String -> Effect Unit
 foreign import setInnerHTML :: String -> String -> Effect Unit

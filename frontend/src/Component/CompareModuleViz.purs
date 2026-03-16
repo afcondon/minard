@@ -548,7 +548,7 @@ renderDeclPanel cid (Just col) =
           let kindMap = foldl (\acc d -> Map.insert d.name d.kind acc) Map.empty col.decls
           liftEffect do
             clearContainer cid
-            _ <- rerender cid (StructViz.callGraphTree graph info kindMap)
+            _ <- rerender cid (StructViz.callGraphTree graph info kindMap Nothing)
             pure unit
     _, _ -> liftEffect do
       clearContainer cid
@@ -566,7 +566,7 @@ renderConcernPanel cid (Just col) =
           case col.subDeclGraph of
             Just graph -> liftEffect do
               clearContainer cid
-              _ <- rerender cid (StructViz.concernClusteredTree graph analysis.caseExpressions)
+              _ <- rerender cid (StructViz.concernClusteredTree graph analysis.caseExpressions Nothing)
               pure unit
             Nothing -> liftEffect do
               clearContainer cid

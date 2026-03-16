@@ -26,6 +26,7 @@ import Data.Number (min) as Num
 import Data.Set (Set)
 import Data.Set as Set
 import Data.Tuple (Tuple(..))
+import Data.String as String
 import Data.String.Common as SC
 import Data.String.CodeUnits as SCU
 import Data.String.Pattern (Pattern(..))
@@ -53,6 +54,7 @@ import CE2.Viz.DeclarationLayerDiagram as LayerDiagram
 import CE2.Viz.DOMHelpers as DOMHelpers
 import CE2.Viz.ModuleSignatureMap as MSM
 import CE2.Viz.SignatureTree as SigTree
+import CE2.Viz.SourceCode as SourceCode
 
 import Hylograph.HATS.InterpreterTick (clearContainer, rerender)
 
@@ -119,6 +121,8 @@ type State =
   , sparklineBars :: Array Spark.SparklineBar
   , focusedSection :: Maybe FocusedSection
   , helpSection :: Maybe FocusedSection
+  , sourcePreview :: Maybe { declarationName :: String }
+  , cachedModuleSource :: Maybe String
   }
 
 data Action
@@ -143,6 +147,10 @@ data Action
   | CompareSnapshots
   | FocusSection (Maybe FocusedSection)
   | ToggleHelp FocusedSection
+  | DiagramNodeClicked String
+  | ClosePreview
+  | OpenPreviewInEditor
+  | PreviewFullDetail
 
 -- =============================================================================
 -- Component
@@ -186,6 +194,8 @@ initialState input =
   , sparklineBars: []
   , focusedSection: Nothing
   , helpSection: Nothing
+  , sourcePreview: Nothing
+  , cachedModuleSource: Nothing
   }
 
 -- =============================================================================
@@ -213,9 +223,10 @@ render state =
         -- Normal mode: two-column layout
         Nothing ->
           HH.div [ HP.style "display: flex; gap: 16px; min-height: 0;" ]
-            [ -- Left column (1/3): annotations
+            [ -- Left column (1/3): annotations + source preview
               HH.div [ HP.style "width: 33%; flex-shrink: 0; overflow-y: auto;" ]
-                [ renderFocusableSection FocusAnnotations state $
+                [ renderSourcePreview state
+                , renderFocusableSection FocusAnnotations state $
                     HH.div [] (renderAnnotationHeader state)
                 ]
             -- Right column (2/3): diagrams + signatures
@@ -521,6 +532,7 @@ renderLayerNode state _layout node =
     , sa "cursor" "pointer"
     , HE.onMouseEnter \_ -> LayerNodeHovered (Just node.name)
     , HE.onMouseLeave \_ -> LayerNodeHovered Nothing
+    , HE.onClick \_ -> DiagramNodeClicked node.name
     ] []
 
 renderLayerLabel :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action () m
@@ -702,6 +714,105 @@ nodeConnected a b = case _ of
     ) layout.edges
 
 -- =============================================================================
+-- Source Preview Panel (below active diagram, above CTA bar)
+-- =============================================================================
+
+-- | Find the start line (1-indexed) for a declaration by name.
+-- | First tries sourceSpan from declaration data, then falls back to searching source text.
+findDeclStartLine :: String -> Array Loader.V2Declaration -> Maybe String -> Maybe Int
+findDeclStartLine declName decls mSource =
+  -- Try sourceSpan first
+  case Array.findMap (\d ->
+    if d.name == declName then d.sourceSpan >>= \s -> Array.head s.start
+    else Nothing
+  ) decls of
+    Just l -> Just l
+    -- Fall back to searching source text for "declName " at start of line
+    Nothing -> case mSource of
+      Nothing -> Nothing
+      Just source ->
+        let lines = String.split (String.Pattern "\n") source
+        in map (_ + 1) $ Array.findIndex (\line ->
+             SCU.take (SCU.length declName) line == declName
+               && case SCU.charAt (SCU.length declName) line of
+                    Just c -> c == ' ' || c == '\n'
+                    Nothing -> true  -- name is entire line
+           ) lines
+
+-- | Find the end line (1-indexed) for a declaration by name
+findDeclEndLine :: String -> Array Loader.V2Declaration -> Maybe Int
+findDeclEndLine declName decls =
+  Array.findMap (\d ->
+    if d.name == declName then d.sourceSpan >>= \s -> Array.head s.end
+    else Nothing
+  ) decls
+
+-- | Find the start line for a case branch or case expression function from sub-declaration analysis
+findBranchStartLine :: String -> Maybe SDA.SubDeclAnalysis -> Maybe Int
+findBranchStartLine name mAnalysis = case mAnalysis of
+  Nothing -> Nothing
+  Just analysis ->
+    -- Try matching a branch name first
+    case Array.findMap (\ce ->
+      Array.findMap (\b -> if b.name == name then Just b.lineStart else Nothing) ce.branches
+    ) analysis.caseExpressions of
+      Just l -> Just l
+      -- Try matching a case expression function name
+      Nothing -> Array.findMap (\ce ->
+        if ce.functionName == name then Just ce.lineStart else Nothing
+      ) analysis.caseExpressions
+
+-- | Find the kind for a declaration by name
+findDeclKind :: String -> Array Loader.V2Declaration -> String
+findDeclKind declName decls =
+  fromMaybe "value" $ Array.findMap (\d ->
+    if d.name == declName then Just d.kind
+    else Nothing
+  ) decls
+
+renderSourcePreview :: forall m. State -> H.ComponentHTML Action () m
+renderSourcePreview state = case state.sourcePreview of
+  Nothing -> HH.text ""
+  Just sp ->
+    let
+      declName = sp.declarationName
+      mStartLine = findDeclStartLine declName state.lastInput.declarations state.cachedModuleSource
+      mEndLine = findDeclEndLine declName state.lastInput.declarations
+      focusRange = case mStartLine, mEndLine of
+        Just s, Just e -> Just { startLine: s, endLine: e }
+        _, _ -> Nothing
+      kind = findDeclKind declName state.lastInput.declarations
+      headerStyle = "display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #e8e0cf; border-bottom: 1px solid #c5b99b; border-radius: 4px 4px 0 0;"
+      bodyStyle = "max-height: 400px; overflow-y: auto; padding: 0; background: #faf8f3; border: 1px solid #d5d0c4; border-top: none; border-radius: 0 0 4px 4px; font-size: 12px;"
+      linkStyle = "font-size: 10px; color: #2563eb; cursor: pointer; text-decoration: none; margin-left: 10px;"
+      closeStyle = "font-size: 14px; color: #888; cursor: pointer; margin-left: 8px; line-height: 1;"
+      lineTag = case mStartLine of
+        Just l -> ":" <> show l
+        Nothing -> ""
+    in
+      HH.div [ HP.style "margin: 8px 0;" ]
+        [ HH.div [ HP.style headerStyle ]
+            [ HH.div [ HP.style "display: flex; align-items: baseline; gap: 4px;" ]
+                [ HH.span [ HP.style "font-weight: 600; font-size: 12px; color: #333; font-family: 'Fira Code', 'Courier New', monospace;" ]
+                    [ HH.text (declName <> lineTag) ]
+                , HH.span [ HP.style linkStyle, HE.onClick \_ -> OpenPreviewInEditor ] [ HH.text "Open in editor" ]
+                , HH.span [ HP.style linkStyle, HE.onClick \_ -> PreviewFullDetail ] [ HH.text "Full detail" ]
+                ]
+            , HH.span [ HP.style closeStyle, HE.onClick \_ -> ClosePreview ] [ HH.text "\x00D7" ]
+            ]
+        , HH.div [ HP.id "source-preview-body", HP.style bodyStyle ]
+            ( case state.cachedModuleSource of
+                Just source ->
+                  SourceCode.renderSource source [] focusRange kind
+                    (\_ _ _ -> ClosePreview)  -- ident click is a no-op in preview context
+                Nothing ->
+                  [ HH.div [ HP.style "padding: 16px; color: #999; font-size: 12px; text-align: center;" ]
+                      [ HH.text "Source not available" ]
+                  ]
+            )
+        ]
+
+-- =============================================================================
 -- Bridge Analysis Panel (below Declarations diagram)
 -- =============================================================================
 
@@ -754,7 +865,7 @@ renderBridgeAnalysis state =
     _, _ -> HH.text ""
 
 renderBridgeCard :: forall m. String -> String -> Dec.DecompInfo -> Dec.SimpleGraph String -> Array Loader.V2FunctionCall -> H.ComponentHTML Action () m
-renderBridgeCard from to info graph allCalls =
+renderBridgeCard from to info graph _allCalls =
   let
     sideA = reachableWithout from to graph
     sideB = reachableWithout to from graph
@@ -763,41 +874,15 @@ renderBridgeCard from to info graph allCalls =
 
     fromIsAP = Set.member from info.aps
     toIsAP = Set.member to info.aps
-
-    -- Find the actual function call(s) between these two declarations
-    callsFromTo = Array.filter (\c -> c.callerName == from && c.calleeName == to) allCalls
-    callsToFrom = Array.filter (\c -> c.callerName == to && c.calleeName == from) allCalls
-    relevantCalls = callsFromTo <> callsToFrom
-
-    -- Format source location
-    spanText c = case c.sourceSpan of
-      Just s | s.start_line > 0 -> " (line " <> show s.start_line <> ")"
-      _ -> ""
   in
-    HH.div [ HP.style "padding: 8px 10px; margin-bottom: 4px; background: #f5f2eb; border-radius: 4px; border-left: 3px solid #d4a017; font-size: 11px; line-height: 1.5;" ]
-      [ HH.div [ HP.style "display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px;" ]
-          [ HH.span [ HP.style "font-weight: 600; color: #333;" ] [ HH.text from ]
-          , HH.span [ HP.style "color: #999;" ] [ HH.text "\x2194" ]
-          , HH.span [ HP.style "font-weight: 600; color: #333;" ] [ HH.text to ]
+    HH.div [ HP.style "display: flex; align-items: baseline; gap: 6px; padding: 4px 10px; margin-bottom: 2px; background: #f5f2eb; border-radius: 4px; border-left: 3px solid #d4a017; font-size: 11px; line-height: 1.5;" ]
+      [ HH.span [ HP.style "font-weight: 600; color: #2563eb; cursor: pointer;", HE.onClick \_ -> DiagramNodeClicked from ] [ HH.text from ]
+      , HH.span [ HP.style "color: #999;" ] [ HH.text "\x2194" ]
+      , HH.span [ HP.style "font-weight: 600; color: #2563eb; cursor: pointer;", HE.onClick \_ -> DiagramNodeClicked to ] [ HH.text to ]
+      , HH.span [ HP.style "color: #888;" ]
+          [ HH.text $ show sideACount <> " | " <> show sideBCount
+              <> (if fromIsAP || toIsAP then " \x00B7 " <> (if fromIsAP then from else to) <> " is a hub" else "")
           ]
-      -- Show actual call sites with line numbers
-      , if Array.length relevantCalls > 0
-        then HH.div [ HP.style "color: #555; margin-bottom: 3px;" ]
-          (relevantCalls <#> \c ->
-            HH.div []
-              [ HH.span [ HP.style "color: #2563eb;" ] [ HH.text c.callerName ]
-              , HH.text " calls "
-              , HH.span [ HP.style "color: #2563eb;" ] [ HH.text c.calleeName ]
-              , HH.span [ HP.style "color: #999;" ] [ HH.text $ spanText c ]
-              ]
-          )
-        else HH.text ""
-      , HH.div [ HP.style "color: #666;" ]
-          [ HH.text $ "Separates " <> show sideACount <> " declarations from " <> show sideBCount <> "." ]
-      , if fromIsAP || toIsAP
-        then HH.div [ HP.style "color: #8b6914; margin-top: 2px;" ]
-          [ HH.text $ (if fromIsAP then from else to) <> " is an articulation point \x2014 it connects other groups too." ]
-        else HH.text ""
       ]
 
 -- | Find all nodes reachable from `start` without crossing the edge to `excluded`
@@ -1207,7 +1292,7 @@ renderInlineRef _annIdx _refIdx cell =
         <> " background: " <> MSM.kindBackground cell.kind <> ";"
         <> " border: 1px solid " <> MSM.kindBorder cell.kind <> ";"
         <> " cursor: pointer; font-family: 'Fira Code','SF Mono', monospace; font-size: 10px;"
-    , HE.onClick \_ -> CellClicked cell.onClick
+    , HE.onClick \_ -> DiagramNodeClicked cell.name
     ]
     [ HH.text cell.name ]
 
@@ -1256,7 +1341,7 @@ renderFullCell cell =
           <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
           <> " border-radius:3px;"
           <> " cursor:pointer;"
-      , HE.onClick \_ -> CellClicked cell.onClick
+      , HE.onClick \_ -> DiagramNodeClicked cell.name
       ]
   in case cellHtml cell of
     Just html ->
@@ -1444,6 +1529,59 @@ handleAction = case _ of
     let newHelp = if state.helpSection == Just section then Nothing else Just section
     H.modify_ _ { helpSection = newHelp }
 
+  DiagramNodeClicked declName -> do
+    state <- H.get
+    log $ "[DiagramClick] " <> declName <> " clicked, opening in VS Code"
+    result <- liftAff $ Loader.fetchSourceLocation state.lastInput.moduleName
+    case result of
+      Right loc -> do
+        let startLine = case findDeclStartLine declName state.lastInput.declarations state.cachedModuleSource of
+              Just l -> Just l
+              Nothing -> findBranchStartLine declName state.subDeclAnalysis
+        log $ "[DiagramClick] path=" <> loc.filePath <> " line=" <> show startLine
+        let uri = "vscode://file/" <> loc.filePath <> case startLine of
+              Just l -> ":" <> show l
+              Nothing -> ""
+        log $ "[DiagramClick] URI: " <> uri
+        liftEffect $ openUri uri
+      Left err -> do
+        log $ "[DiagramClick] fetchSourceLocation failed: " <> err <> ", falling back to preview"
+        H.modify_ _ { sourcePreview = Just { declarationName: declName } }
+        liftEffect $ DOMHelpers.scrollChildIntoView "source-preview-body" ".ps-focused"
+
+  ClosePreview ->
+    H.modify_ _ { sourcePreview = Nothing }
+
+  OpenPreviewInEditor -> do
+    log "[SourcePreview] OpenPreviewInEditor fired"
+    state <- H.get
+    case state.sourcePreview of
+      Nothing -> log "[SourcePreview] No preview open, nothing to do"
+      Just sp -> do
+        log $ "[SourcePreview] Opening " <> sp.declarationName <> " in editor"
+        result <- liftAff $ Loader.fetchSourceLocation state.lastInput.moduleName
+        case result of
+          Right loc -> do
+            let startLine = case findDeclStartLine sp.declarationName state.lastInput.declarations state.cachedModuleSource of
+                  Just l -> Just l
+                  Nothing -> findBranchStartLine sp.declarationName state.subDeclAnalysis
+            let lineArg = case startLine of
+                  Just l -> ":" <> show l
+                  Nothing -> ""
+            let uri = "vscode://file/" <> loc.filePath <> lineArg
+            log $ "[SourcePreview] Opening URI: " <> uri
+            liftEffect $ openUri uri
+          Left err ->
+            log $ "[SourcePreview] Could not resolve path: " <> err
+
+  PreviewFullDetail -> do
+    state <- H.get
+    case state.sourcePreview of
+      Nothing -> pure unit
+      Just sp -> do
+        H.modify_ _ { sourcePreview = Nothing }
+        H.raise (DeclarationClicked state.lastInput.packageName state.lastInput.moduleName sp.declarationName)
+
 -- | Fetch numstat data for sparkline (pure SVG render happens via Halogen re-render)
 loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit
 loadSparkline pkgName modName = do
@@ -1496,10 +1634,10 @@ renderSignatureMap input = do
       declGraph = { nodes: Set.toUnfoldable declNames :: Array String, edges }
       declDecomp = Dec.analyzeGraph declGraph
   -- Eagerly fetch source and compute concern analysis (for color linkage across tabs)
-  { mAnalysis, mSubDeclGraph } <- do
+  { mAnalysis, mSubDeclGraph, mSource } <- do
     result <- liftAff $ Loader.fetchModuleSource input.moduleName
     case result of
-      Left _ -> pure { mAnalysis: Nothing, mSubDeclGraph: Nothing }
+      Left _ -> pure { mAnalysis: Nothing, mSubDeclGraph: Nothing, mSource: Nothing }
       Right src -> do
         let analysis = SDA.analyzeModuleSource src.source
         let { declarations: subDecls, internalCalls: subCalls } = SDA.branchesToDeclGraph analysis.allBranches
@@ -1512,7 +1650,7 @@ renderSignatureMap input = do
               else acc
             ) Map.empty subCalls
         let subGraph = { nodes: Set.toUnfoldable subNames :: Array String, edges: subEdges }
-        pure { mAnalysis: Just analysis, mSubDeclGraph: Just subGraph }
+        pure { mAnalysis: Just analysis, mSubDeclGraph: Just subGraph, mSource: Just src.source }
   -- Heuristic: choose default tab based on what's most informative
   let hasConcerns = case mAnalysis of
         Just a -> Array.length a.caseExpressions > 0
@@ -1522,7 +1660,8 @@ renderSignatureMap input = do
                , arcLayout = mArcLayout, layerLayout = mLayerLayout
                , declGraph = Just declGraph, declDecomp = Just declDecomp
                , subDeclAnalysis = mAnalysis, subDeclGraph = mSubDeclGraph
-               , diagramMode = defaultMode, diagramReason = reason }
+               , diagramMode = defaultMode, diagramReason = reason
+               , cachedModuleSource = mSource }
 
 -- =============================================================================
 -- Diagram mode heuristic
@@ -1579,9 +1718,11 @@ renderDeclStructure = do
             "<div style=\"padding: 24px; color: #999; font-size: 12px; text-align: center;\">No internal call graph — declarations do not call each other</div>"
       | otherwise -> do
           let kindMap = foldl (\acc d -> Map.insert d.name d.kind acc) Map.empty state.lastInput.declarations
+          let mClickCb = state.actionListener <#> \listener name ->
+                HS.notify listener (DiagramNodeClicked name)
           liftEffect do
             clearContainer "#decl-structure-container"
-            _ <- rerender "#decl-structure-container" (StructViz.callGraphTree graph info kindMap)
+            _ <- rerender "#decl-structure-container" (StructViz.callGraphTree graph info kindMap mClickCb)
             pure unit
     _, _ -> liftEffect do
       DOMHelpers.setInnerHTML "#decl-structure-container"
@@ -1628,11 +1769,13 @@ renderConcernGraph analysis = do
       DOMHelpers.setInnerHTML "#concern-cluster-container"
         "<div style=\"padding: 24px; color: #999; font-size: 12px; text-align: center;\">No case expressions found — concern clustering requires pattern-matching branches (e.g. handleAction)</div>"
   else case state.subDeclGraph of
-    Just graph ->
+    Just graph -> do
+      let mClickCb = state.actionListener <#> \listener name ->
+            HS.notify listener (DiagramNodeClicked name)
       liftEffect do
         clearContainer "#concern-cluster-container"
         _ <- rerender "#concern-cluster-container"
-               (StructViz.concernClusteredTree graph analysis.caseExpressions)
+               (StructViz.concernClusteredTree graph analysis.caseExpressions mClickCb)
         pure unit
     Nothing -> pure unit
 
