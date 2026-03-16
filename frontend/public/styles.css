@@ -3442,9 +3442,9 @@ a.ps-clickable:hover {
 .cmg-freq-bar {
   height: 40px;
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: center;
-  padding-bottom: 2px;
+  padding-top: 2px;
   cursor: default;
 }
 
@@ -3455,7 +3455,7 @@ a.ps-clickable:hover {
 .cmg-freq-bar-fill {
   width: 8px;
   background: #0E4C8A;
-  border-radius: 1px 1px 0 0;
+  border-radius: 0 0 1px 1px;
   opacity: 0.6;
   min-height: 1px;
 }
@@ -3483,4 +3483,24 @@ a.ps-clickable:hover {
 /* Sparkline link hover effect */
 .sparkline-link:hover {
   background: #f0ede6 !important;
+}
+
+/* =============================================================================
+   Git Blame View
+   ============================================================================= */
+
+.ps-blame-line {
+  display: flex;
+  min-height: 1.7em;
+  padding: 0 12px 0 0;
+  cursor: pointer;
+  transition: filter 100ms ease;
+}
+
+.ps-blame-line:hover {
+  filter: brightness(0.92);
+}
+
+.ps-blame-group-start {
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
 }

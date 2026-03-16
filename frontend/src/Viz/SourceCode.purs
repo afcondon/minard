@@ -6,6 +6,12 @@
 module CE2.Viz.SourceCode
   ( KnownDeclaration
   , renderSource
+  , collectTokens
+  , buildKnownDeclLookup
+  , buildAnnotationsByLine
+  , buildLineSegments
+  , renderSegments
+  , LineSegment(..)
   ) where
 
 import Prelude

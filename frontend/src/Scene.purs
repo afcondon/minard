@@ -40,7 +40,7 @@ data Scene
   | PkgModuleBeeswarm String        -- Module beeswarm overlay on treemap
   | ModuleOverview String String    -- Module overview: bubble pack + declaration listing (pkg, module)
   | DeclarationDetail String String String  -- Single declaration detail (pkg, module, decl)
-  | ModuleSignatureMap String String -- Full-screen signature treemap (pkg, module)
+  | ModuleStructure String String -- Module structure view: diagrams + annotations (pkg, module)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
   | NamespaceTree                   -- Horizontal tidy tree of module namespace hierarchy
   | PackageReport                   -- Package-level report cards with metrics + annotations
@@ -66,7 +66,7 @@ instance showScene :: Show Scene where
   show (PkgModuleBeeswarm pkg) = "PkgModuleBeeswarm(" <> pkg <> ")"
   show (ModuleOverview pkg mod) = "ModuleOverview(" <> pkg <> "," <> mod <> ")"
   show (DeclarationDetail pkg mod decl) = "DeclarationDetail(" <> pkg <> "," <> mod <> "," <> decl <> ")"
-  show (ModuleSignatureMap pkg mod) = "ModuleSignatureMap(" <> pkg <> "," <> mod <> ")"
+  show (ModuleStructure pkg mod) = "ModuleStructure(" <> pkg <> "," <> mod <> ")"
   show TypeClassGrid = "TypeClassGrid"
   show NamespaceTree = "NamespaceTree"
   show PackageReport = "PackageReport"
@@ -91,8 +91,8 @@ parentScene = case _ of
   PkgTreemap _pkg -> SolarSwarm            -- Back to SolarSwarm (may have focal set)
   PkgModuleBeeswarm pkg -> PkgTreemap pkg  -- Back to same package's treemap
   ModuleOverview pkg _ -> PkgTreemap pkg   -- Back to package treemap
-  DeclarationDetail pkg mod _ -> ModuleSignatureMap pkg mod  -- Back to signature map (primary module view)
-  ModuleSignatureMap pkg _ -> PkgTreemap pkg                -- Back to package treemap
+  DeclarationDetail pkg mod _ -> ModuleStructure pkg mod  -- Back to signature map (primary module view)
+  ModuleStructure pkg _ -> PkgTreemap pkg                -- Back to package treemap
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
   NamespaceTree -> GalaxyTreemap           -- Namespace tree returns to galaxy
   PackageReport -> ProjectManagement        -- Package report returns to landing
@@ -103,7 +103,7 @@ parentScene = case _ of
   PackageAnatomy _ -> ProjectAnatomy     -- Back to project anatomy
   ModuleAnatomy pkg _ -> PackageAnatomy pkg  -- Back to package anatomy
   CompareModules _ _ _ _ -> GalaxyTreemap               -- Compare view returns to galaxy
-  CompareSnapshots p m _ -> ModuleSignatureMap p m      -- Back to the module being compared
+  CompareSnapshots p m _ -> ModuleStructure p m      -- Back to the module being compared
   SnapshotManagement -> ProjectSetup                   -- Back to project setup
   CommitModuleGrid pkg -> PkgTreemap pkg              -- Back to package treemap
   CoChangeCube pkg -> CommitModuleGrid pkg            -- Back to 2D commit grid
@@ -122,7 +122,7 @@ sceneBreadcrumbs = case _ of
   SolarSwarm          -> [mapsSeg, galaxySeg]
   PkgTreemap pkg      -> [mapsSeg, galaxySeg, solarSeg pkg]
   PkgModuleBeeswarm p -> [mapsSeg, galaxySeg, solarSeg p]
-  ModuleSignatureMap p m -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m]
+  ModuleStructure p m -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m]
   ModuleOverview p m  -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
                                   , { kind: "", label: "Overview", scene: ModuleOverview p m }]
   DeclarationDetail p m d -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
@@ -156,7 +156,7 @@ sceneBreadcrumbs = case _ of
     reportsSeg = { kind: "", label: "Reports", scene: PackageReport }
     projectsSeg = { kind: "", label: "Projects", scene: ProjectSetup }
     solarSeg pkg = { kind: "SolarSystem", label: pkg, scene: PkgTreemap pkg }
-    planetSeg p m = { kind: "Planet", label: shortModuleName m, scene: ModuleSignatureMap p m }
+    planetSeg p m = { kind: "Planet", label: shortModuleName m, scene: ModuleStructure p m }
 
 -- | Human-readable label for display in navigation UI
 sceneLabel :: Scene -> String
@@ -168,7 +168,7 @@ sceneLabel = case _ of
   PkgModuleBeeswarm pkg -> pkg <> " Module Flow"
   ModuleOverview _ mod -> shortModuleName mod
   DeclarationDetail _ _ decl -> decl
-  ModuleSignatureMap _ mod -> shortModuleName mod
+  ModuleStructure _ mod -> shortModuleName mod
   TypeClassGrid -> "Type Classes"
   NamespaceTree -> "Namespace Tree"
   PackageReport -> "Package Report"
@@ -208,7 +208,7 @@ isModuleScene :: Scene -> Boolean
 isModuleScene (PkgModuleBeeswarm _) = true
 isModuleScene (ModuleOverview _ _) = true
 isModuleScene (DeclarationDetail _ _ _) = true
-isModuleScene (ModuleSignatureMap _ _) = true
+isModuleScene (ModuleStructure _ _) = true
 isModuleScene _ = false
 
 -- | Check if scene belongs to the Maps family (treemap / powers-of-ten drill chain)
@@ -220,7 +220,7 @@ isMapScene = case _ of
   PkgTreemap _ -> true
   PkgModuleBeeswarm _ -> true
   ModuleOverview _ _ -> true
-  ModuleSignatureMap _ _ -> true
+  ModuleStructure _ _ -> true
   DeclarationDetail _ _ _ -> true
   CompareModules _ _ _ _ -> true
   CompareSnapshots _ _ _ -> true
@@ -321,14 +321,14 @@ sceneFromString str
                   in Just (DeclarationDetail pkg mod decl)
                 Nothing -> Nothing
           Nothing -> Nothing
-  | String.take 19 str == "ModuleSignatureMap(" =
-      let inner = String.drop 19 str
+  | String.take 16 str == "ModuleStructure(" =
+      let inner = String.drop 16 str
           content = String.take (String.length inner - 1) inner
       in case String.indexOf (String.Pattern ",") content of
           Just idx ->
             let pkg = String.take idx content
                 mod = String.drop (idx + 1) content
-            in Just (ModuleSignatureMap pkg mod)
+            in Just (ModuleStructure pkg mod)
           Nothing -> Nothing
   | otherwise = Nothing
 

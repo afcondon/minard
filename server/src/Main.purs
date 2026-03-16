@@ -77,6 +77,7 @@ data Route
   | V2GitLog              -- GET /api/v2/git/log?count=30&offset=0
   | V2CommitFiles         -- GET /api/v2/git/commit-files?count=50&package=name
   | V2ModuleNumstat       -- GET /api/v2/git/module-numstat?count=200&package=name
+  | V2GitBlame            -- GET /api/v2/git/blame?module=name
   | V2SnapshotDetails     -- GET /api/v2/snapshots/details
   | V2CreateSnapshot      -- POST /api/v2/snapshots/create
   | V2DeleteSnapshots     -- POST /api/v2/snapshots/delete
@@ -124,6 +125,7 @@ route = root $ sum
   , "V2GitLog": path "api/v2/git/log" noArgs
   , "V2CommitFiles": path "api/v2/git/commit-files" noArgs
   , "V2ModuleNumstat": path "api/v2/git/module-numstat" noArgs
+  , "V2GitBlame": path "api/v2/git/blame" noArgs
   , "V2SnapshotDetails": path "api/v2/snapshots/details" noArgs
   , "V2CreateSnapshot": path "api/v2/snapshots/create" noArgs
   , "V2DeleteSnapshots": path "api/v2/snapshots/delete" noArgs
@@ -217,6 +219,7 @@ main = launchAff_ do
     log "  GET /api/v2/git/log?count=30&offset=0      - Git commit log"
     log "  GET /api/v2/git/commit-files?count=50&package= - Commit-module grid data"
     log "  GET /api/v2/git/module-numstat?count=200&package= - Per-commit line stats by module"
+    log "  GET /api/v2/git/blame?module=                - Per-line git blame for a module"
     log "  POST /api/v2/snapshots/create              - Create snapshot from ref"
     log "  POST /api/v2/snapshots/delete              - Delete snapshots + worktrees"
     log "  GET /api/v2/projects                     - List loaded projects"
@@ -319,6 +322,10 @@ main = launchAff_ do
         let count = fromMaybe 200 (Object.lookup "count" query >>= Int.fromString)
             pkg = fromMaybe "" (Object.lookup "package" query)
         in Snapshots.getModuleNumstat db count pkg
+      V2GitBlame ->
+        case Object.lookup "module" query of
+          Just moduleName -> Unified.getModuleBlame db moduleName
+          Nothing -> ok "{ \"error\": \"module query param required\" }"
       V2SnapshotDetails -> Snapshots.listSnapshotDetails db
       V2CreateSnapshot -> case method of
         Post -> do

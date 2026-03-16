@@ -1,12 +1,9 @@
--- | Module Signature Map Visualization Component
+-- | Module Structure Visualization Component
 -- |
--- | A Halogen component that renders a category-lane layout of a module's
--- | type signatures. SVGs are pre-rendered and measured, then placed into
--- | a Halogen HTML layout with CSS flexbox shelf packing.
--- |
--- | Includes an arc diagram of intra-module function calls between the
--- | annotation header and the lane cards.
-module CE2.Component.ModuleSignatureMapViz
+-- | A Halogen component that renders a module's internal structure:
+-- | layer diagrams, biconnected component decomposition, concern clustering,
+-- | git blame view, annotations, and signature cards.
+module CE2.Component.ModuleStructureViz
   ( component
   , Input
   , Output(..)
@@ -52,14 +49,18 @@ import CE2.Viz.DeclarationArcDiagram as ArcDiagram
 import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, ChildCircle, kindColor, childKindColor, packDeclarations)
 import CE2.Viz.DeclarationLayerDiagram as LayerDiagram
 import CE2.Viz.DOMHelpers as DOMHelpers
-import CE2.Viz.ModuleSignatureMap as MSM
+import CE2.Viz.ModuleStructure as MSM
 import CE2.Viz.SignatureTree as SigTree
 import CE2.Viz.SourceCode as SourceCode
+import PureScript.CST.Lexer (lexModule)
 
 import Hylograph.HATS.InterpreterTick (clearContainer, rerender)
 
 -- | Open a URI in the browser (used for vscode:// links)
 foreign import openUri :: String -> Effect Unit
+
+-- | Format a unix timestamp as a relative time string (e.g. "3 days ago")
+foreign import formatRelativeTime :: Int -> String
 
 -- =============================================================================
 -- Types
@@ -89,7 +90,7 @@ type Slot = H.Slot Query Output
 
 data Query a = NoQuery a
 
-data DiagramMode = LayerView | ArcView | DeclStructureView | ConcernClusterView
+data DiagramMode = LayerView | ArcView | DeclStructureView | ConcernClusterView | GitBlameView
 
 derive instance eqDiagramMode :: Eq DiagramMode
 
@@ -123,6 +124,8 @@ type State =
   , helpSection :: Maybe FocusedSection
   , sourcePreview :: Maybe { declarationName :: String }
   , cachedModuleSource :: Maybe String
+  , gitBlameData :: Maybe Loader.BlameResult
+  , gitBlameLoading :: Boolean
   }
 
 data Action
@@ -151,6 +154,7 @@ data Action
   | ClosePreview
   | OpenPreviewInEditor
   | PreviewFullDetail
+  | BlameLineClicked Int
 
 -- =============================================================================
 -- Component
@@ -196,6 +200,8 @@ initialState input =
   , helpSection: Nothing
   , sourcePreview: Nothing
   , cachedModuleSource: Nothing
+  , gitBlameData: Nothing
+  , gitBlameLoading: false
   }
 
 -- =============================================================================
@@ -205,7 +211,7 @@ initialState input =
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
   HH.div
-    [ HP.class_ (HH.ClassName "module-signature-map")
+    [ HP.class_ (HH.ClassName "module-structure")
     , HP.style "overflow-y: auto; padding: 12px 16px; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
     ]
     [ renderSparklineRow state
@@ -351,38 +357,41 @@ renderDiagramSection state =
     hasCalls = hasArc || hasLayer  -- module has internal call structure
     declCount = Array.length state.lastInput.declarations
   in
-    if not hasCalls then
-      HH.div [] []  -- placeholder for stable child structure
-    else
-      HH.div [ HP.style "margin: 8px 0 12px 0;" ]
-        [ -- Tab bar
-          HH.div [ HP.style "display: flex; align-items: baseline; gap: 0; margin-bottom: 0; border-bottom: 1px solid #ddd;" ]
-            [ renderDiagramTab "Layers" LayerView state.diagramMode
-            , renderDiagramTab "Declarations" DeclStructureView state.diagramMode
-            , renderDiagramTab "Concerns" ConcernClusterView state.diagramMode
-            ]
-        -- Subtitle explaining the active diagram
-        , HH.div [ HP.style "padding: 6px 0 4px; font-size: 10px; color: #888; line-height: 1.4;" ]
-            [ HH.text $ case state.diagramMode of
-                LayerView -> "Call hierarchy \x2014 top declarations call those below. Hover to trace dependencies. "
-                  <> (if state.diagramReason /= "" then state.diagramReason else "")
-                DeclStructureView -> "Biconnected components of the internal call graph. Tightly coupled clusters share a color."
-                ConcernClusterView -> "Declarations grouped by shared sub-expressions. Each group is a potential concern or responsibility."
-                ArcView -> ""
-            ]
-        , -- Active diagram
-          case state.diagramMode of
-            LayerView -> renderLayerDiagram state
-            ArcView -> renderLayerDiagram state
-            DeclStructureView ->
-              HH.div []
-                [ HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
-                , renderBridgeAnalysis state
-                ]
-            ConcernClusterView ->
-              HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
-        , renderCtaBar declCount
-        ]
+    HH.div [ HP.style "margin: 8px 0 12px 0;" ]
+      [ -- Tab bar
+        HH.div [ HP.style "display: flex; align-items: baseline; gap: 0; margin-bottom: 0; border-bottom: 1px solid #ddd;" ]
+          ( (if hasCalls then
+              [ renderDiagramTab "Layers" LayerView state.diagramMode
+              , renderDiagramTab "Declarations" DeclStructureView state.diagramMode
+              , renderDiagramTab "Concerns" ConcernClusterView state.diagramMode
+              ]
+            else [])
+          <> [ renderDiagramTab "Git" GitBlameView state.diagramMode ]
+          )
+      -- Subtitle explaining the active diagram
+      , HH.div [ HP.style "padding: 6px 0 4px; font-size: 10px; color: #888; line-height: 1.4;" ]
+          [ HH.text $ case state.diagramMode of
+              LayerView -> "Call hierarchy \x2014 top declarations call those below. Hover to trace dependencies. "
+                <> (if state.diagramReason /= "" then state.diagramReason else "")
+              DeclStructureView -> "Biconnected components of the internal call graph. Tightly coupled clusters share a color."
+              ConcernClusterView -> "Declarations grouped by shared sub-expressions. Each group is a potential concern or responsibility."
+              GitBlameView -> "Source colored by recency of last change. Click any line to open in VS Code."
+              ArcView -> ""
+          ]
+      , -- Active diagram
+        case state.diagramMode of
+          LayerView -> renderLayerDiagram state
+          ArcView -> renderLayerDiagram state
+          DeclStructureView ->
+            HH.div []
+              [ HH.div [ HP.id "decl-structure-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
+              , renderBridgeAnalysis state
+              ]
+          ConcernClusterView ->
+            HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
+          GitBlameView -> renderGitBlameDiagram state
+      , if state.diagramMode /= GitBlameView then renderCtaBar declCount else HH.text ""
+      ]
 
 renderDiagramTab :: forall m. String -> DiagramMode -> DiagramMode -> H.ComponentHTML Action () m
 renderDiagramTab label mode activeMode =
@@ -679,6 +688,88 @@ renderArcLabel state layout node =
       , HE.onClick \_ -> ArcNodeClicked node.name
       ]
       [ HH.text label ]
+
+-- =============================================================================
+-- Git Blame renderer
+-- =============================================================================
+
+renderGitBlameDiagram :: forall m. State -> H.ComponentHTML Action () m
+renderGitBlameDiagram state
+  | state.gitBlameLoading =
+      HH.div [ HP.style "padding: 24px; color: #999; font-size: 12px; text-align: center;" ]
+        [ HH.text "Loading blame data..." ]
+  | otherwise = case state.gitBlameData of
+      Nothing ->
+        HH.div [ HP.style "padding: 24px; color: #999; font-size: 12px; text-align: center;" ]
+          [ HH.text "Git history not available" ]
+      Just blame ->
+        let
+          sourceLines = case state.cachedModuleSource of
+            Just src -> String.split (String.Pattern "\n") src
+            Nothing -> []
+          tokens = case state.cachedModuleSource of
+            Just src -> SourceCode.collectTokens (lexModule src)
+            Nothing -> []
+          knownDeclLookup = SourceCode.buildKnownDeclLookup []
+          annotationsByLine = SourceCode.buildAnnotationsByLine tokens knownDeclLookup
+          lineCount = Array.length blame.lines
+          gutterWidth = if lineCount >= 1000 then "4.5em" else if lineCount >= 100 then "3.5em" else "2.5em"
+        in
+          HH.div
+            [ HP.class_ (HH.ClassName "ps-source")
+            , HP.style "max-height: 600px; overflow-y: auto;"
+            ]
+            (Array.mapWithIndex (\idx blameLine ->
+              let
+                lineText = fromMaybe "" (Array.index sourceLines (blameLine.lineNum - 1))
+                annotations = case Map.lookup (blameLine.lineNum - 1) annotationsByLine of
+                  Just anns -> anns
+                  Nothing -> []
+                segments = SourceCode.buildLineSegments lineText annotations
+                -- Age gradient: oldest=#f0f4f8 (pale grey), newest=#e8a87c (warm amber)
+                age = blameLineAge blame.oldestTime blame.newestTime blameLine.authorTime
+                bgColor = blameAgeColor age
+                -- Commit group boundary: top border where hash differs from previous line
+                prevHash = Array.index blame.lines (idx - 1) <#> _.hash
+                isGroupStart = prevHash /= Just blameLine.hash
+                tooltip = blameLine.shortHash <> " \x00B7 " <> blameLine.author
+                  <> " \x00B7 " <> formatRelativeTime blameLine.authorTime
+                  <> "\n" <> blameLine.summary
+              in
+                HH.div
+                  [ HP.classes $
+                      [ HH.ClassName "ps-blame-line" ]
+                      <> (if isGroupStart then [ HH.ClassName "ps-blame-group-start" ] else [])
+                  , HP.style $ "background: " <> bgColor <> ";"
+                  , HP.title tooltip
+                  , HE.onClick \_ -> BlameLineClicked blameLine.lineNum
+                  ]
+                  [ HH.span
+                      [ HP.class_ (HH.ClassName "ps-linenum")
+                      , HP.style $ "width: " <> gutterWidth <> ";"
+                      ]
+                      [ HH.text (show blameLine.lineNum) ]
+                  , HH.span
+                      [ HP.class_ (HH.ClassName "ps-code") ]
+                      (SourceCode.renderSegments (\_ _ _ -> BlameLineClicked blameLine.lineNum) segments)
+                  ]
+            ) blame.lines)
+
+-- | Compute age as 0.0 (oldest) to 1.0 (newest)
+blameLineAge :: Int -> Int -> Int -> Number
+blameLineAge oldest newest t =
+  if newest <= oldest then 0.5
+  else Int.toNumber (t - oldest) / Int.toNumber (newest - oldest)
+
+-- | Map age (0..1) to a background color: oldest=#f0f4f8 (pale grey) → newest=#e8a87c (warm amber)
+-- | 5-stop interpolation
+blameAgeColor :: Number -> String
+blameAgeColor age
+  | age < 0.25 = "rgb(240,244,248)"  -- pale grey-blue
+  | age < 0.5  = "rgb(238,236,228)"  -- warm grey
+  | age < 0.75 = "rgb(240,224,200)"  -- light tan
+  | age < 0.9  = "rgb(238,196,160)"  -- warm peach
+  | otherwise  = "rgb(232,168,124)"  -- warm amber
 
 -- | CTA bar shown below the arc diagram with scroll hint and editor stub.
 renderCtaBar :: forall m. Int -> H.ComponentHTML Action () m
@@ -1388,7 +1479,7 @@ handleAction = case _ of
   Initialize -> do
     state <- H.get
     let input = state.lastInput
-    log $ "[ModuleSignatureMapViz] Initializing: " <> input.moduleName
+    log $ "[ModuleStructureViz] Initializing: " <> input.moduleName
         <> ", " <> show (Array.length input.declarations) <> " declarations"
 
     { emitter, listener } <- liftEffect HS.create
@@ -1415,7 +1506,8 @@ handleAction = case _ of
     when ((changed || callsChanged) && state.initialized) do
       H.modify_ _ { lanes = [], measuredCells = [], arcLayout = Nothing, layerLayout = Nothing
                    , declGraph = Nothing, declDecomp = Nothing
-                   , subDeclAnalysis = Nothing, subDeclGraph = Nothing }
+                   , subDeclAnalysis = Nothing, subDeclGraph = Nothing
+                   , gitBlameData = Nothing, gitBlameLoading = false }
       renderSignatureMap input
       afterState' <- H.get
       case afterState'.diagramMode of
@@ -1426,10 +1518,10 @@ handleAction = case _ of
       loadSparkline input.packageName input.moduleName
 
   Finalize -> do
-    log "[ModuleSignatureMapViz] Finalizing"
+    log "[ModuleStructureViz] Finalizing"
 
   HandleDeclarationClick pkgName modName declName -> do
-    log $ "[ModuleSignatureMapViz] Declaration clicked: " <> declName
+    log $ "[ModuleStructureViz] Declaration clicked: " <> declName
     H.raise (DeclarationClicked pkgName modName declName)
 
   CellClicked handler -> do
@@ -1453,6 +1545,18 @@ handleAction = case _ of
     case mode of
       DeclStructureView -> renderDeclStructure
       ConcernClusterView -> renderConcernClusters
+      GitBlameView -> do
+        st <- H.get
+        case st.gitBlameData of
+          Just _ -> pure unit  -- cached
+          Nothing -> do
+            H.modify_ _ { gitBlameLoading = true }
+            result <- liftAff $ Loader.fetchModuleBlame st.lastInput.moduleName
+            case result of
+              Right blame -> H.modify_ _ { gitBlameData = Just blame, gitBlameLoading = false }
+              Left err -> do
+                log $ "[GitBlame] Error: " <> err
+                H.modify_ _ { gitBlameLoading = false }
       _ -> pure unit
 
   ScrollToLanes -> do
@@ -1464,14 +1568,14 @@ handleAction = case _ of
 
   OpenInEditor -> do
     state <- H.get
-    log $ "[ModuleSignatureMapViz] Opening in VS Code: " <> state.lastInput.moduleName
+    log $ "[ModuleStructureViz] Opening in VS Code: " <> state.lastInput.moduleName
     result <- liftAff $ Loader.fetchSourceLocation state.lastInput.moduleName
     case result of
       Right loc -> do
-        log $ "[ModuleSignatureMapViz] Resolved path: " <> loc.filePath
+        log $ "[ModuleStructureViz] Resolved path: " <> loc.filePath
         liftEffect $ openUri ("vscode://file/" <> loc.filePath)
       Left err ->
-        log $ "[ModuleSignatureMapViz] Could not resolve path: " <> err
+        log $ "[ModuleStructureViz] Could not resolve path: " <> err
 
   ConfirmAnnotation annId -> do
     H.raise (AnnotationStatusChanged annId "confirmed")
@@ -1581,6 +1685,14 @@ handleAction = case _ of
       Just sp -> do
         H.modify_ _ { sourcePreview = Nothing }
         H.raise (DeclarationClicked state.lastInput.packageName state.lastInput.moduleName sp.declarationName)
+
+  BlameLineClicked lineNum -> do
+    state <- H.get
+    case state.gitBlameData of
+      Just blame -> do
+        let uri = "vscode://file/" <> blame.filePath <> ":" <> show lineNum
+        liftEffect $ openUri uri
+      Nothing -> pure unit
 
 -- | Fetch numstat data for sparkline (pure SVG render happens via Halogen re-render)
 loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit
@@ -1787,7 +1899,7 @@ renderConcernGraph analysis = do
 makeDeclarationClickCallback :: Maybe (HS.Listener Action) -> String -> String -> String -> Effect Unit
 makeDeclarationClickCallback mListener pkgName modName declName = case mListener of
   Just listener -> HS.notify listener (HandleDeclarationClick pkgName modName declName)
-  Nothing -> log $ "[ModuleSignatureMapViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
+  Nothing -> log $ "[ModuleStructureViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
 
 -- | Build HTML for the instances section of a class card.
 renderInstancesHtml :: Array { name :: String, sig :: Maybe String } -> String

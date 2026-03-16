@@ -145,15 +145,10 @@ renderControls state =
     , orderButton CoChange.ByCosimilarity "Co-change" state.orderMode
     , HH.span [ HP.class_ (HH.ClassName "cmg-control-sep") ] []
     , HH.button
-        [ HP.class_ (HH.ClassName $ "cmg-control-btn" <> if state.showBars then " active" else "")
-        , HE.onClick \_ -> ToggleBars
-        ]
-        [ HH.text "Bars" ]
-    , HH.button
         [ HP.class_ (HH.ClassName $ "cmg-control-btn" <> if state.colorByOp then " active" else "")
         , HE.onClick \_ -> ToggleColorByOp
         ]
-        [ HH.text "A/M/D" ]
+        [ HH.text "Color by op" ]
     ]
   where
   orderButton mode label current =
@@ -178,22 +173,19 @@ renderGrid state =
         [ HP.class_ (HH.ClassName "cmg-grid")
         , HP.style $ "grid-template-columns: " <> gridTemplate <> ";"
         ]
-        ( -- Frequency bars row (optional)
-          ( if state.showBars
-              then [ HH.div [ HP.class_ (HH.ClassName "cmg-corner cmg-bar-row") ] []
-                   , HH.div [ HP.class_ (HH.ClassName "cmg-corner cmg-bar-row") ] []
-                   ]
-                   <> map (renderFrequencyBar freqs maxFreq state) modules
-                   <> [ HH.div [ HP.class_ (HH.ClassName "cmg-corner cmg-bar-row") ] [] ]
-              else []
-          )
-          -- Header row: empty cells for commit info + module name headers
-          <> [ HH.div [ HP.class_ (HH.ClassName "cmg-corner") ] []
-             , HH.div [ HP.class_ (HH.ClassName "cmg-corner") ] []
-             ]
+        ( -- Header row: module name headers
+          [ HH.div [ HP.class_ (HH.ClassName "cmg-corner") ] []
+          , HH.div [ HP.class_ (HH.ClassName "cmg-corner") ] []
+          ]
           <> map (renderModuleHeader state) modules
           <> [ HH.div [ HP.class_ (HH.ClassName "cmg-corner cmg-breadth-header") ]
                  [ HH.text "#" ] ]
+          -- Frequency bars row (below headers, bars point downward)
+          <> [ HH.div [ HP.class_ (HH.ClassName "cmg-corner cmg-bar-row") ] []
+             , HH.div [ HP.class_ (HH.ClassName "cmg-corner cmg-bar-row") ] []
+             ]
+          <> map (renderFrequencyBar freqs maxFreq state) modules
+          <> [ HH.div [ HP.class_ (HH.ClassName "cmg-corner cmg-bar-row") ] [] ]
           -- Data rows
           <> Array.concatMap (renderCommitRow state modules) state.commits
         )
@@ -333,7 +325,7 @@ handleAction = case _ of
 
   ClickModule modName -> do
     state <- H.get
-    H.raise (NavigateToScene (Scene.ModuleSignatureMap state.packageName modName))
+    H.raise (NavigateToScene (Scene.ModuleStructure state.packageName modName))
 
   LoadMore -> do
     state <- H.get

@@ -1,9 +1,9 @@
--- | Module Signature Map — Pure Data Preparation
+-- | Module Structure — Pure Data Preparation
 -- |
 -- | Category-lane layout of a module's type signatures.
 -- | Each declaration is prepared as structured rendering data
 -- | for HTML output via sigil's HTML renderers.
-module CE2.Viz.ModuleSignatureMap
+module CE2.Viz.ModuleStructure
   ( Config
   , Lane
   , MeasuredCell

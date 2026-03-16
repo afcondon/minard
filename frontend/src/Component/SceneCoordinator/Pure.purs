@@ -58,7 +58,7 @@ themeForScene = case _ of
   PkgModuleBeeswarm _ -> SteelTheme
   ModuleOverview _ _ -> MistTheme
   DeclarationDetail _ _ _ -> DaylightTheme
-  ModuleSignatureMap _ _ -> MistTheme
+  ModuleStructure _ _ -> MistTheme
   TypeClassGrid -> MidnightTheme
   NamespaceTree -> DaylightTheme
   PackageReport -> DaylightTheme
@@ -101,7 +101,7 @@ canonicalStateCode state = case state.scene of
 
   DeclarationDetail pkg mod decl -> "H(" <> pkg <> "," <> mod <> "," <> decl <> ")"
 
-  ModuleSignatureMap pkg mod -> "S(" <> pkg <> "," <> mod <> ")"
+  ModuleStructure pkg mod -> "S(" <> pkg <> "," <> mod <> ")"
 
   TypeClassGrid -> "T"
   NamespaceTree -> "N"
@@ -410,6 +410,6 @@ solarSwarmScopedPackages state allPackages =
 sceneForResult :: Loader.UnifiedSearchResult -> Scene
 sceneForResult r = case r.entityType of
   "package" -> PkgTreemap r.packageName
-  "module" -> ModuleSignatureMap r.packageName (fromMaybe r.name r.moduleName)
+  "module" -> ModuleStructure r.packageName (fromMaybe r.name r.moduleName)
   "declaration" -> DeclarationDetail r.packageName (fromMaybe "" r.moduleName) r.name
   _ -> GalaxyTreemap

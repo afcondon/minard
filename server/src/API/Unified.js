@@ -888,6 +888,126 @@ export const buildSnapshotsJson = (rows) => {
 // Source Location (file path only, for editor integration)
 // =============================================================================
 
+// =============================================================================
+// Module Blame (per-line git blame)
+// =============================================================================
+
+/**
+ * Run `git blame --porcelain` on a module's source file and return per-line
+ * blame info as JSON.
+ *
+ * Returns: { lines: [{lineNum, hash, shortHash, author, authorTime, summary}],
+ *            filePath, oldestTime, newestTime }
+ * or null if the file cannot be found / git blame fails.
+ *
+ * PureScript FFI: Foreign -> Effect (Nullable String)
+ */
+export const buildModuleBlameJson = (row) => () => {
+  try {
+    const sourceSpan = typeof row.source_span === 'string'
+      ? JSON.parse(row.source_span) : row.source_span;
+
+    if (!sourceSpan || !sourceSpan.name) {
+      return null;
+    }
+
+    const filePath = sourceSpan.name;
+    const repoPath = row.repo_path || '.';
+    const projectRoot = process.cwd().replace(/\/server$/, '');
+    let fullPath = resolve(projectRoot, repoPath, filePath);
+
+    if (!existsSync(fullPath)) {
+      const altPath = resolve(projectRoot, filePath);
+      if (!existsSync(altPath)) {
+        return null;
+      }
+      fullPath = altPath;
+    }
+
+    // Determine git repo root and relative path for blame
+    const repoRoot = resolve(projectRoot, repoPath);
+    const relativePath = fullPath.startsWith(repoRoot)
+      ? fullPath.slice(repoRoot.length + 1)
+      : fullPath;
+
+    const raw = execSync(`git blame --porcelain "${relativePath}"`, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024
+    });
+
+    // Parse porcelain format
+    const commitInfo = {};   // hash -> { author, authorTime, summary }
+    const lines = [];
+    const porcelainLines = raw.split('\n');
+    let i = 0;
+
+    while (i < porcelainLines.length) {
+      const headerLine = porcelainLines[i];
+      if (!headerLine) { i++; continue; }
+
+      // Header: <40-char hash> <orig-line> <final-line> [<num-lines>]
+      const headerMatch = headerLine.match(/^([0-9a-f]{40})\s+(\d+)\s+(\d+)/);
+      if (!headerMatch) { i++; continue; }
+
+      const hash = headerMatch[1];
+      const lineNum = parseInt(headerMatch[3], 10);
+      i++;
+
+      // Read header fields until we hit the content line (starts with \t)
+      while (i < porcelainLines.length && !porcelainLines[i].startsWith('\t')) {
+        const line = porcelainLines[i];
+        if (!commitInfo[hash]) {
+          commitInfo[hash] = { author: '', authorTime: 0, summary: '' };
+        }
+        if (line.startsWith('author ')) {
+          commitInfo[hash].author = line.slice(7);
+        } else if (line.startsWith('author-time ')) {
+          commitInfo[hash].authorTime = parseInt(line.slice(12), 10);
+        } else if (line.startsWith('summary ')) {
+          commitInfo[hash].summary = line.slice(8);
+        }
+        i++;
+      }
+
+      // Skip the content line (starts with \t)
+      if (i < porcelainLines.length && porcelainLines[i].startsWith('\t')) {
+        i++;
+      }
+
+      const info = commitInfo[hash] || { author: '', authorTime: 0, summary: '' };
+      lines.push({
+        lineNum,
+        hash,
+        shortHash: hash.slice(0, 7),
+        author: info.author,
+        authorTime: info.authorTime,
+        summary: info.summary
+      });
+    }
+
+    if (lines.length === 0) {
+      return null;
+    }
+
+    let oldestTime = Infinity;
+    let newestTime = 0;
+    for (const l of lines) {
+      if (l.authorTime > 0 && l.authorTime < oldestTime) oldestTime = l.authorTime;
+      if (l.authorTime > newestTime) newestTime = l.authorTime;
+    }
+
+    return JSON.stringify({
+      lines,
+      filePath: fullPath,
+      oldestTime: oldestTime === Infinity ? 0 : oldestTime,
+      newestTime
+    });
+  } catch (error) {
+    return null;
+  }
+};
+
 export const buildSourceLocationJson = (row) => () => {
   try {
     const sourceSpan = typeof row.source_span === 'string'

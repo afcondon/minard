@@ -87,6 +87,10 @@ module CE2.Data.Loader
     -- Source Location (editor integration)
   , SourceLocation
   , fetchSourceLocation
+    -- Git Blame
+  , BlameLineInfo
+  , BlameResult
+  , fetchModuleBlame
     -- Project Management (V2)
   , ProjectInfo
   , ProjectStats
@@ -1638,6 +1642,34 @@ type SourceLocation =
 fetchSourceLocation :: String -> Aff (Either String SourceLocation)
 fetchSourceLocation moduleName = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/source-location?module=" <> moduleName)
+  pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
+
+-- =============================================================================
+-- Git Blame (per-line)
+-- =============================================================================
+
+-- | Per-line blame info from git
+type BlameLineInfo =
+  { lineNum :: Int
+  , hash :: String
+  , shortHash :: String
+  , author :: String
+  , authorTime :: Int
+  , summary :: String
+  }
+
+-- | Full blame result for a module
+type BlameResult =
+  { lines :: Array BlameLineInfo
+  , filePath :: String
+  , oldestTime :: Int
+  , newestTime :: Int
+  }
+
+-- | Fetch per-line git blame for a module
+fetchModuleBlame :: String -> Aff (Either String BlameResult)
+fetchModuleBlame moduleName = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/git/blame?module=" <> moduleName)
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
 
 -- =============================================================================

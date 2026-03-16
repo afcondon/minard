@@ -64,7 +64,7 @@ import CE2.Component.DeclarationDetailViz as DeclarationDetailViz
 import CE2.Component.GalaxyTreemapViz as GalaxyTreemapViz
 import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
-import CE2.Component.ModuleSignatureMapViz as ModuleSignatureMapViz
+import CE2.Component.ModuleStructureViz as ModuleStructureViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.PackageReportViz as PackageReportViz
 import CE2.Component.LandingPageViz as LandingPageViz
@@ -176,7 +176,7 @@ type Slots =
   , declarationDetailViz :: DeclarationDetailViz.Slot Unit
   , pkgModuleBeeswarmViz :: PkgModuleBeeswarmViz.Slot Unit
   , typeClassGridViz :: H.Slot TypeClassGridViz.Query TypeClassGridViz.Output Unit
-  , moduleSignatureMapViz :: ModuleSignatureMapViz.Slot Unit
+  , moduleStructureViz :: ModuleStructureViz.Slot Unit
   , dependencyChordViz :: DependencyChordViz.Slot String
   , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
   , slideOutPanel :: SlideOutPanel.Slot Unit
@@ -218,8 +218,8 @@ _pkgModuleBeeswarmViz = Proxy
 _typeClassGridViz :: Proxy "typeClassGridViz"
 _typeClassGridViz = Proxy
 
-_moduleSignatureMapViz :: Proxy "moduleSignatureMapViz"
-_moduleSignatureMapViz = Proxy
+_moduleStructureViz :: Proxy "moduleStructureViz"
+_moduleStructureViz = Proxy
 
 _dependencyChordViz :: Proxy "dependencyChordViz"
 _dependencyChordViz = Proxy
@@ -401,7 +401,7 @@ data Action
   | HandleModuleTreemapOutput ModuleTreemapEnrichedViz.Output
   | HandleModuleOverviewOutput ModuleOverviewViz.Output
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
-  | HandleModuleSignatureMapOutput ModuleSignatureMapViz.Output
+  | HandleModuleStructureOutput ModuleStructureViz.Output
   | HandlePackageReportOutput PackageReportViz.Output
   | HandleTypeClassGridOutput TypeClassGridViz.Output
   | HandleNamespaceTreeOutput NamespaceTreeViz.Output
@@ -693,7 +693,7 @@ renderSelectionInfo state =
     PkgTreemap _ -> renderDeclarationLegend
     ModuleOverview _ _ -> renderDeclarationLegend
     DeclarationDetail _ _ _ -> renderDeclarationLegend
-    ModuleSignatureMap _ _ -> renderDeclarationLegend
+    ModuleStructure _ _ -> renderDeclarationLegend
     _ -> renderHoverInfo state
 
 -- | Default hover info display
@@ -985,18 +985,18 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading declaration data..." ]
 
-  ModuleSignatureMap pkgName modName ->
+  ModuleStructure pkgName modName ->
     case Pure.lookupModuleDeclarations state pkgName modName of
       Just decls ->
         let anns = fromMaybe [] (Map.lookup modName state.moduleAnnotations)
-        in HH.slot _moduleSignatureMapViz unit ModuleSignatureMapViz.component
+        in HH.slot _moduleStructureViz unit ModuleStructureViz.component
           { packageName: pkgName
           , moduleName: modName
           , declarations: decls
           , annotations: anns
           , functionCalls: state.packageCalls
           }
-          HandleModuleSignatureMapOutput
+          HandleModuleStructureOutput
       Nothing ->
         HH.div
           [ HP.class_ (HH.ClassName "loading") ]
@@ -1143,7 +1143,7 @@ renderScene state =
               Nothing -> []
           , beforeSnapshotId: Just beforeSnapshotId
           }
-          (\_ -> NavigateTo (ModuleSignatureMap pkg mod))
+          (\_ -> NavigateTo (ModuleStructure pkg mod))
       Nothing ->
         HH.div [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading snapshot data..." ]
@@ -1482,7 +1482,7 @@ handleAction = case _ of
   HandleModuleTreemapOutput output -> case output of
     ModuleTreemapEnrichedViz.ModuleClicked pkgName modName -> do
       log $ "[SceneCoordinator] Module treemap clicked: " <> pkgName <> "/" <> modName
-      handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     ModuleTreemapEnrichedViz.ModuleHovered _mModName ->
       pure unit  -- Future: coordinated hover
     ModuleTreemapEnrichedViz.DeclarationClicked pkgName modName declName -> do
@@ -1496,11 +1496,11 @@ handleAction = case _ of
     ModuleOverviewViz.DeclarationHovered _ ->
       pure unit
 
-  HandleModuleSignatureMapOutput output -> case output of
-    ModuleSignatureMapViz.DeclarationClicked pkgName modName declName -> do
+  HandleModuleStructureOutput output -> case output of
+    ModuleStructureViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in signature map: " <> declName
       handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
-    ModuleSignatureMapViz.AnnotationStatusChanged annId newStatus -> do
+    ModuleStructureViz.AnnotationStatusChanged annId newStatus -> do
       log $ "[SceneCoordinator] Annotation " <> show annId <> " -> " <> newStatus
       void $ liftAff $ Loader.patchAnnotationStatus annId newStatus
       -- Optimistically update cached annotations
@@ -1508,7 +1508,7 @@ handleAction = case _ of
       let updated = map (map (\a -> if a.id == annId then a { status = newStatus } else a))
                         state.moduleAnnotations
       H.modify_ _ { moduleAnnotations = updated }
-    ModuleSignatureMapViz.AnnotationReplyCreated reply -> do
+    ModuleStructureViz.AnnotationReplyCreated reply -> do
       log $ "[SceneCoordinator] Creating reply annotation on " <> reply.targetId <> " supersedes=" <> show reply.supersedes
       result <- liftAff $ Loader.createAnnotation
         { targetType: reply.targetType
@@ -1527,11 +1527,11 @@ handleAction = case _ of
         Left err ->
           log $ "[SceneCoordinator] Failed to create reply: " <> err
 
-    ModuleSignatureMapViz.CompareSnapshotsClicked -> do
+    ModuleStructureViz.CompareSnapshotsClicked -> do
       log "[SceneCoordinator] Compare snapshots requested"
       state <- H.get
       case state.scene of
-        ModuleSignatureMap pkg mod -> do
+        ModuleStructure pkg mod -> do
           snapshotsResult <- liftAff Loader.fetchSnapshots
           case snapshotsResult of
             Right snapshots | Array.length snapshots > 1 -> do
@@ -1573,7 +1573,7 @@ handleAction = case _ of
   HandleTypeClassGridOutput output -> case output of
     TypeClassGridViz.NavigateToModule pkgName modName -> do
       log $ "[SceneCoordinator] Type class grid → module: " <> pkgName <> "/" <> modName
-      handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
 
   HandleNamespaceTreeOutput output -> case output of
     NamespaceTreeViz.NavigateToPackage pkgName -> do
@@ -1583,7 +1583,7 @@ handleAction = case _ of
   HandleAnnotationReportOutput output -> case output of
     AnnotationReportViz.NavigateToModule pkgName modName -> do
       log $ "[SceneCoordinator] Report navigation to: " <> pkgName <> "/" <> modName
-      handleAction (NavigateTo (ModuleSignatureMap pkgName modName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
 
   HandleLandingPageOutput output -> case output of
     LandingPageViz.NavigateToScene scene -> do
@@ -1672,7 +1672,7 @@ handleAction = case _ of
       state <- H.get
       case state.scene of
         DeclarationDetail pkg mod _ ->
-          handleAction (NavigateTo (ModuleSignatureMap pkg mod))
+          handleAction (NavigateTo (ModuleStructure pkg mod))
         _ ->
           pure unit  -- Shouldn't happen
     DeclarationDetailViz.DeclarationClicked pkgName modName declName -> do
@@ -2244,7 +2244,7 @@ prepareSceneData state = case state.scene of
     ensurePackageDeclarationsLoaded state pkgName
     log "[SceneCoordinator] DeclarationDetail: rendering handled by slot"
 
-  ModuleSignatureMap pkgName modName -> do
+  ModuleStructure pkgName modName -> do
     -- Ensure declarations are loaded for this package
     ensurePackageDeclarationsLoaded state pkgName
     -- Fetch annotations for this module if not cached
@@ -2253,7 +2253,7 @@ prepareSceneData state = case state.scene of
       case result of
         Right anns -> H.modify_ _ { moduleAnnotations = Map.insert modName anns state.moduleAnnotations }
         Left _err -> pure unit  -- Annotations are optional; silent fail
-    log "[SceneCoordinator] ModuleSignatureMap: rendering handled by slot"
+    log "[SceneCoordinator] ModuleStructure: rendering handled by slot"
 
   PkgModuleBeeswarm pkgName -> do
     case state.v2Data of

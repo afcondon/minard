@@ -45,6 +45,8 @@ module API.Unified
   , getModuleSourceFromSnapshot
   -- Source location (file path only, for editor integration)
   , getSourceLocation
+  -- Git blame (per-line)
+  , getModuleBlame
   -- Namespace packages mapping
   , getNamespacePackages
   -- Snapshots
@@ -1189,6 +1191,35 @@ getSourceLocation db moduleName = do
         Just j -> ok' jsonHeaders j
 
 foreign import buildSourceLocationJson :: Foreign -> Effect (Nullable String)
+
+-- =============================================================================
+-- GET /api/v2/git/blame?module=<name>
+-- =============================================================================
+
+-- | Per-line git blame for a module's source file
+-- | Returns: { lines: [{lineNum, hash, shortHash, author, authorTime, summary}], filePath, oldestTime, newestTime }
+getModuleBlame :: Database -> String -> Aff Response
+getModuleBlame db moduleName = do
+  rows <- queryAllParams db """
+    SELECT d.source_span, pr.repo_path
+    FROM declarations d
+    JOIN modules m ON d.module_id = m.id
+    JOIN package_versions pv ON m.package_version_id = pv.id
+    JOIN snapshot_packages sp ON sp.package_version_id = pv.id
+    JOIN snapshots s ON s.id = sp.snapshot_id
+    JOIN projects pr ON pr.id = s.project_id
+    WHERE m.name = ? AND d.source_span IS NOT NULL
+    LIMIT 1
+  """ [unsafeToForeign moduleName]
+  case firstRow rows of
+    Nothing -> notFound
+    Just row -> do
+      json <- liftEffect $ buildModuleBlameJson row
+      case toMaybe json of
+        Nothing -> notFound
+        Just j -> ok' jsonHeaders j
+
+foreign import buildModuleBlameJson :: Foreign -> Effect (Nullable String)
 
 -- =============================================================================
 -- GET /api/v2/namespace-packages

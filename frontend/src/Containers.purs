@@ -97,8 +97,8 @@ module CE2.Containers
   , dependencyNeighborhoodContainerId
   , dependencyNeighborhoodContainer
     -- Module Signature Map (full-screen signature treemap)
-  , moduleSignatureMapContainerId
-  , moduleSignatureMapContainer
+  , moduleStructureContainerId
+  , moduleStructureContainer
     -- Type Signature Visualization
   , typeSigContainerId
   , typeSigContainer
@@ -396,14 +396,14 @@ dependencyNeighborhoodContainer :: Selector
 dependencyNeighborhoodContainer = toSelector dependencyNeighborhoodContainerId
 
 -- =============================================================================
--- Module Signature Map (full-screen signature treemap)
+-- Module Structure (diagrams + annotations)
 -- =============================================================================
 
-moduleSignatureMapContainerId :: ElementId
-moduleSignatureMapContainerId = "module-signature-map-container"
+moduleStructureContainerId :: ElementId
+moduleStructureContainerId = "module-structure-container"
 
-moduleSignatureMapContainer :: Selector
-moduleSignatureMapContainer = toSelector moduleSignatureMapContainerId
+moduleStructureContainer :: Selector
+moduleStructureContainer = toSelector moduleStructureContainerId
 
 -- =============================================================================
 -- Type Signature Visualization
