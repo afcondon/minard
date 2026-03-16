@@ -14,9 +14,11 @@ import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
+import Data.Int as Data.Int
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Number as Number
 import Data.String as String
 import Data.Traversable (for_)
 import Data.Tuple (Tuple(..))
@@ -27,11 +29,10 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 
-import Data.Int as Data.Int
-
 import CE2.Data.Loader as Loader
 import CE2.Util.SVG (svgElem, sa)
 import CE2.Viz.CommitSparkline as Spark
+import DataViz.Layout.Hierarchy.Pack (packSiblingsMap)
 
 -- =============================================================================
 -- Types
@@ -205,11 +206,11 @@ render state =
     [ HP.class_ (HH.ClassName "package-report")
     , HP.style "width: 100%; height: 100%; overflow-y: auto; background: #FAFAF8; font-family: -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333;"
     ]
-    [ HH.div
-        [ HP.style "max-width: 960px; margin: 0 auto; padding: 40px 24px 80px;" ]
-        [ renderHeader totalPackages totalAnnotations
-        , renderToolbar state
-        , HH.div
+    [ -- Sub-nav bar
+      renderSubNav state totalPackages totalAnnotations
+    , HH.div
+        [ HP.style "max-width: 960px; margin: 0 auto; padding: 24px 24px 80px;" ]
+        [ HH.div
             [ HP.style "display: flex; flex-direction: column; gap: 12px;" ]
             (cards <#> renderCard state)
         , if Array.null cards
@@ -220,70 +221,55 @@ render state =
         ]
     ]
 
-renderHeader :: forall w i. Int -> Int -> HH.HTML w i
-renderHeader totalPkgs totalAnns =
+-- | Sub-navigation bar with title, counts, and filter/sort controls
+renderSubNav :: forall m. State -> Int -> Int -> H.ComponentHTML Action () m
+renderSubNav state totalPkgs totalAnns =
   HH.div
-    [ HP.style "margin-bottom: 32px;" ]
-    [ HH.h1
-        [ HP.style "font-size: 24px; font-weight: 700; letter-spacing: -0.5px; color: #2C2C2C; margin: 0 0 8px 0;" ]
-        [ HH.text "Package Report" ]
-    , HH.p
-        [ HP.style "font-size: 13px; color: #888; margin: 0;" ]
-        [ HH.text $ show totalPkgs <> " packages \x00B7 " <> show totalAnns <> " annotations" ]
-    ]
-
-renderToolbar :: forall m. State -> H.ComponentHTML Action () m
-renderToolbar state =
-  HH.div
-    [ HP.style "display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;" ]
-    [ -- Sort buttons
-      HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ toolbarLabel "Sort"
-        , sortBtn "Annotations" SortByAnnotations
-        , sortBtn "Name" SortByName
-        , sortBtn "Modules" SortByModuleCount
+    [ HP.style "background: #e8e4d8; border-bottom: 1px solid #ccc; padding: 10px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;" ]
+    [ -- Left: title + counts
+      HH.div [ HP.style "display: flex; align-items: baseline; gap: 12px;" ]
+        [ HH.span
+            [ HP.style "font-size: 15px; font-weight: 700; color: #333; letter-spacing: -0.3px;" ]
+            [ HH.text "Package Report" ]
+        , HH.span
+            [ HP.style "font-size: 11px; color: #777;" ]
+            [ HH.text $ show totalPkgs <> " packages \x00B7 " <> show totalAnns <> " annotations" ]
         ]
-    , -- Category filter
-      HH.div
-        [ HP.style "display: flex; align-items: center; gap: 4px;" ]
-        [ toolbarLabel "Show"
-        , catBtn "All" "all"
-        , catBtn "Workspace" "workspace"
-        , catBtn "Registry" "registry"
+    -- Right: sort + filter controls
+    , HH.div [ HP.style "display: flex; align-items: center; gap: 12px;" ]
+        [ HH.div [ HP.style "display: flex; align-items: center; gap: 4px;" ]
+            [ navLabel "Sort"
+            , navBtn "Annotations" (state.sortMode == SortByAnnotations) (SetSortMode SortByAnnotations)
+            , navBtn "Name" (state.sortMode == SortByName) (SetSortMode SortByName)
+            , navBtn "Modules" (state.sortMode == SortByModuleCount) (SetSortMode SortByModuleCount)
+            ]
+        , HH.div [ HP.style "display: flex; align-items: center; gap: 4px;" ]
+            [ navLabel "Show"
+            , navBtn "All" (state.filterCategory == "all") (SetFilterCategory "all")
+            , navBtn "Workspace" (state.filterCategory == "workspace") (SetFilterCategory "workspace")
+            , navBtn "Registry" (state.filterCategory == "registry") (SetFilterCategory "registry")
+            ]
         ]
     ]
   where
-  toolbarLabel :: forall w i. String -> HH.HTML w i
-  toolbarLabel text =
+  navLabel :: forall w i. String -> HH.HTML w i
+  navLabel text =
     HH.span
-      [ HP.style "font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #999; margin-right: 2px;" ]
+      [ HP.style "font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin-right: 2px;" ]
       [ HH.text text ]
 
-  sortBtn :: String -> SortMode -> H.ComponentHTML Action () m
-  sortBtn label mode =
+  navBtn :: String -> Boolean -> Action -> H.ComponentHTML Action () m
+  navBtn label isActive action =
     HH.button
-      [ HE.onClick \_ -> SetSortMode mode
-      , HP.style $ smallBtnStyle (state.sortMode == mode)
+      [ HE.onClick \_ -> action
+      , HP.style $ "padding: 2px 8px; font-size: 10px; border: 1px solid "
+          <> (if isActive then "#999" else "#c5c0b4")
+          <> "; border-radius: 3px; cursor: pointer; background: "
+          <> (if isActive then "#fff" else "transparent")
+          <> "; color: " <> (if isActive then "#333" else "#666")
+          <> "; font-family: 'Courier New', Courier, monospace;"
       ]
       [ HH.text label ]
-
-  catBtn :: String -> String -> H.ComponentHTML Action () m
-  catBtn label cat =
-    HH.button
-      [ HE.onClick \_ -> SetFilterCategory cat
-      , HP.style $ smallBtnStyle (state.filterCategory == cat)
-      ]
-      [ HH.text label ]
-
-smallBtnStyle :: Boolean -> String
-smallBtnStyle isActive =
-  "padding: 3px 10px; font-size: 11px; border: 1px solid "
-    <> (if isActive then "#999" else "#ddd")
-    <> "; border-radius: 3px; cursor: pointer; background: "
-    <> (if isActive then "#e8e4d8" else "#fff")
-    <> "; color: " <> (if isActive then "#333" else "#666")
-    <> "; font-family: 'Courier New', Courier, monospace;"
 
 -- =============================================================================
 -- Package Card
@@ -296,44 +282,46 @@ renderCard state card =
     totalAnnCount = pkgAnnCount + card.moduleAnnotationCount
     hasPkgAnns = pkgAnnCount > 0
     hasModAnns = card.moduleAnnotationCount > 0
+    pkgModules = Array.filter (\m -> m.package.name == card.pkg.name) state.modules
   in
   HH.div
     [ HP.style $ "border: 1px solid #e0dcd2; border-radius: 4px; background: #fff; padding: 16px 20px;"
         <> if totalAnnCount > 0 then " border-left: 3px solid #8b7355;" else ""
     ]
-    [ -- Top row: package name + category + module count
+    [ -- Top row: bubblepack glyph + package name + category + links
       HH.div
-        [ HP.style "display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px;" ]
-        [ HH.div
-            [ HP.style "display: flex; align-items: baseline; gap: 8px;" ]
-            [ HH.span
-                [ HP.style "font-weight: 700; font-size: 14px; color: #333; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; text-decoration: underline; text-decoration-color: #ccc; text-underline-offset: 3px;"
-                , HE.onClick \_ -> ClickPackageName card.pkg.name
+        [ HP.style "display: flex; align-items: center; gap: 12px; margin-bottom: 10px;" ]
+        [ -- Package visual signature (circle-packed modules)
+          renderPackageBubblepack pkgModules
+        , -- Name + category
+          HH.div [ HP.style "flex: 1; min-width: 0;" ]
+            [ HH.div [ HP.style "display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px;" ]
+                [ HH.span
+                    [ HP.style "font-weight: 700; font-size: 14px; color: #333; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; text-decoration: underline; text-decoration-color: #ccc; text-underline-offset: 3px;"
+                    , HE.onClick \_ -> ClickPackageName card.pkg.name
+                    ]
+                    [ HH.text card.pkg.name ]
+                , categoryBadge card.category
                 ]
-                [ HH.text card.pkg.name ]
-            , categoryBadge card.category
+            , -- Metrics + links inline
+              HH.div [ HP.style "display: flex; align-items: center; gap: 8px; font-size: 11px; color: #888;" ]
+                [ metricSpan (show card.depCount <> " deps")
+                , metricSpan (show card.declarationCount <> " decls")
+                , metricSpan ("topo " <> show card.pkg.topoLayer)
+                , HH.span [ HP.style "color: #ccc;" ] [ HH.text "\x00B7" ]
+                , -- "N modules: Details" link
+                  HH.span []
+                    [ HH.text $ show card.moduleCount <> " modules: "
+                    , HH.span
+                        [ HP.style "color: #2563eb; cursor: pointer; font-weight: 500;"
+                        , HE.onClick \_ -> ClickModuleReport card.pkg.name
+                        ]
+                        [ HH.text "Details" ]
+                    ]
+                ]
             ]
-        , HH.span
-            [ HP.style "font-size: 11px; color: #999;" ]
-            [ HH.text $ show card.moduleCount <> " modules" ]
-        ]
-
-    -- Metrics row
-    , HH.div
-        [ HP.style "display: flex; align-items: center; gap: 16px; margin-bottom: 10px; font-size: 11px; color: #777;" ]
-        [ metricSpan (show card.depCount <> " deps")
-        , metricSpan (show card.declarationCount <> " decls")
-        , metricSpan ("topo " <> show card.pkg.topoLayer)
-        , -- Sparkline
-          renderPackageSparkline state card.pkg.name
-        , -- Commits link (workspace packages only)
-          if card.category == "workspace"
-            then HH.button
-              [ HE.onClick \_ -> ClickCommits card.pkg.name
-              , HP.style "font-size: 10px; color: #8b7355; cursor: pointer; background: none; border: 1px solid #d4c9a8; border-radius: 3px; padding: 1px 8px; font-family: inherit; margin-left: auto;"
-              ]
-              [ HH.text "commits" ]
-            else HH.text ""
+        , -- Git history sparkline (right side)
+          renderPackageSparkline state card
         ]
 
     -- Package-level annotations
@@ -343,19 +331,11 @@ renderCard state card =
           (card.packageAnnotations <#> renderAnnotationLine)
         else HH.text ""
 
-    -- Module annotation rollup + click-through
+    -- Module annotation rollup
     , if hasModAnns
         then HH.div
-          [ HP.style "display: flex; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid #f0ede4;" ]
-          [ HH.span
-              [ HP.style "font-size: 11px; color: #777;" ]
-              [ HH.text $ renderStatusRollup card.moduleAnnotationsByStatus ]
-          , HH.button
-              [ HE.onClick \_ -> ClickModuleReport card.pkg.name
-              , HP.style "font-size: 11px; color: #8b7355; cursor: pointer; background: none; border: 1px solid #d4c9a8; border-radius: 3px; padding: 2px 10px; font-family: inherit;"
-              ]
-              [ HH.text "detail \x25b8" ]
-          ]
+          [ HP.style "padding-top: 8px; border-top: 1px solid #f0ede4; font-size: 11px; color: #777;" ]
+          [ HH.text $ renderStatusRollup card.moduleAnnotationsByStatus ]
         else HH.text ""
     ]
 
@@ -421,37 +401,116 @@ statusTextColor = case _ of
   _           -> "#999"
 
 -- =============================================================================
--- Package Sparkline
+-- Package Bubblepack Glyph
 -- =============================================================================
 
-renderPackageSparkline :: forall m. State -> String -> H.ComponentHTML Action () m
-renderPackageSparkline state pkgName =
-  case Map.lookup pkgName state.numstatCommits of
-    Nothing -> HH.text ""
+-- | Render a small circle-packed SVG showing module sizes within a package
+renderPackageBubblepack :: forall w i. Array Loader.V2ModuleListItem -> HH.HTML w i
+renderPackageBubblepack modules =
+  if Array.null modules then HH.text ""
+  else
+    let
+      -- Create circles from module LOC (sqrt scaling)
+      moduleCircles = modules <#> \m ->
+        { x: 0.0, y: 0.0, r: max 2.0 (Number.sqrt (Data.Int.toNumber (fromMaybe 100 m.loc) / 1000.0) * 8.0) }
+      packed = packSiblingsMap moduleCircles
+      pad = 2.0
+      r = packed.radius + pad
+      viewBox = show (-r) <> " " <> show (-r) <> " " <> show (r * 2.0) <> " " <> show (r * 2.0)
+    in
+      svgElem "svg"
+        [ sa "viewBox" viewBox
+        , HP.style "width: 44px; height: 44px; flex-shrink: 0; display: block;"
+        ]
+        ( Array.zipWith (\m c ->
+            svgElem "circle"
+              [ sa "cx" (show c.x)
+              , sa "cy" (show c.y)
+              , sa "r" (show c.r)
+              , sa "fill" "#8b9dc3"
+              , sa "fill-opacity" "0.7"
+              , sa "stroke" "#fff"
+              , sa "stroke-width" "0.5"
+              ]
+              [ svgElem "title" [] [ HH.text m.name ] ]
+          ) modules packed.circles
+        )
+
+-- =============================================================================
+-- Package Sparkline (colored: green additions, red deletions)
+-- =============================================================================
+
+-- | Render sparkline with "Git history:" label as a clickable link to commits
+renderPackageSparkline :: forall m. State -> PackageCard -> H.ComponentHTML Action () m
+renderPackageSparkline state card =
+  case Map.lookup card.pkg.name state.numstatCommits of
+    Nothing
+      | card.category == "workspace" -> HH.text ""  -- will load async
+      | otherwise -> HH.text ""  -- registry packages have no git data
     Just commits ->
       let
-        -- Use empty module name → shows only gray total bars (no module highlight)
         bars = Spark.prepareData "" commits
         nBars = Array.length bars
-        vbW = max 120.0 (Data.Int.toNumber nBars)
-        h = 24.0
-        rects = Spark.toSvgRects { width: vbW, height: h } bars
+        vbW = max 160.0 (Data.Int.toNumber nBars)
+        h = 32.0
+        rects = toColoredRects { width: vbW, height: h } bars
       in if nBars == 0 then HH.text ""
-         else svgElem "svg"
-            [ sa "viewBox" ("0 0 " <> show vbW <> " " <> show h)
-            , sa "preserveAspectRatio" "none"
-            , HP.style "width: 120px; height: 24px; border-radius: 2px; border: 1px solid #e8e8e8; background: #fff; flex-shrink: 0;"
-            ]
-            (rects <#> \r ->
-              svgElem "rect"
-                [ sa "x" (show r.x)
-                , sa "y" (show r.y)
-                , sa "width" (show r.width)
-                , sa "height" (show r.height)
-                , sa "fill" r.fill
-                ]
-                []
-            )
+         else
+           HH.div
+             [ HP.style "display: flex; align-items: center; gap: 6px; flex-shrink: 0; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background 150ms ease;"
+             , HE.onMouseEnter \_ -> SetSortMode state.sortMode  -- no-op, just for hover CSS
+             , HE.onClick \_ -> ClickCommits card.pkg.name
+             , HP.class_ (HH.ClassName "sparkline-link")
+             ]
+             [ HH.span
+                 [ HP.style "font-size: 9px; color: #888; white-space: nowrap; font-family: 'Courier New', monospace;" ]
+                 [ HH.text $ "Git: " <> show nBars ]
+             , svgElem "svg"
+                 [ sa "viewBox" ("0 0 " <> show vbW <> " " <> show h)
+                 , sa "preserveAspectRatio" "none"
+                 , HP.style "width: 160px; height: 32px; border-radius: 3px; border: 1px solid #d5d0c4; background: #f5f2eb; flex-shrink: 0;"
+                 ]
+                 (rects <#> \r ->
+                   svgElem "rect"
+                     [ sa "x" (show r.x)
+                     , sa "y" (show r.y)
+                     , sa "width" (show r.width)
+                     , sa "height" (show r.height)
+                     , sa "fill" r.fill
+                     ]
+                     []
+                 )
+             ]
+
+-- | Produce colored sparkline rects: green for additions (above center), red for deletions (below)
+toColoredRects :: { width :: Number, height :: Number } -> Array Spark.SparklineBar -> Array Spark.SparklineRect
+toColoredRects dims bars =
+  let nBars = Array.length bars
+      n = Data.Int.toNumber nBars
+      pitch = if nBars > 0 then dims.width / n else 1.0
+      barW = max 0.5 (pitch * 0.6)
+      maxVal = Array.foldl (\acc b -> max acc (max b.totalAdded b.totalDeleted)) 1 bars
+      logMax = Number.log (1.0 + Data.Int.toNumber maxVal)
+      halfH = dims.height / 2.0
+      centerY = halfH
+      logScale v = Number.log (1.0 + Data.Int.toNumber v)
+  in
+    -- Center axis
+    [{ x: 0.0, y: centerY - 0.25, width: dims.width, height: 0.5, fill: "#d5d0c4" }]
+    <> Array.concatMap (\{ idx, bar } ->
+      let x = Data.Int.toNumber idx * pitch + (pitch - barW) / 2.0
+      in
+        -- Green additions (above center)
+        (if bar.totalAdded > 0
+          then let barH = halfH * logScale bar.totalAdded / logMax
+               in [{ x, y: centerY - barH, width: barW, height: barH, fill: "#22c55e" }]
+          else [])
+        -- Red deletions (below center)
+        <> (if bar.totalDeleted > 0
+          then let barH = halfH * logScale bar.totalDeleted / logMax
+               in [{ x, y: centerY, width: barW, height: barH, fill: "#ef4444" }]
+          else [])
+    ) (Array.mapWithIndex (\i b -> { idx: i, bar: b }) bars)
 
 -- =============================================================================
 -- Action Handlers

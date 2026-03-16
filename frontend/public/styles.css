@@ -3480,3 +3480,7 @@ a.ps-clickable:hover {
   text-align: center;
   justify-content: center;
 }
+/* Sparkline link hover effect */
+.sparkline-link:hover {
+  background: #f0ede6 !important;
+}
