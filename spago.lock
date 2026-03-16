@@ -1,6 +1,29 @@
 {
   "workspace": {
     "packages": {
+      "cartography-database": {
+        "path": "database",
+        "core": {
+          "dependencies": [
+            "aff",
+            "aff-promise",
+            "argonaut-codecs",
+            "argonaut-core",
+            "arrays",
+            "effect",
+            "either",
+            "foreign",
+            "foreign-object",
+            "maybe",
+            "nullable",
+            "prelude",
+            "transformers"
+          ]
+        },
+        "test": {
+          "dependencies": []
+        }
+      },
       "minard-cst": {
         "path": "minard-cst",
         "core": {
@@ -59,29 +82,6 @@
             {
               "tuples": ">=7.0.0 <8.0.0"
             }
-          ]
-        },
-        "test": {
-          "dependencies": []
-        }
-      },
-      "minard-database": {
-        "path": "database",
-        "core": {
-          "dependencies": [
-            "aff",
-            "aff-promise",
-            "argonaut-codecs",
-            "argonaut-core",
-            "arrays",
-            "effect",
-            "either",
-            "foreign",
-            "foreign-object",
-            "maybe",
-            "nullable",
-            "prelude",
-            "transformers"
           ]
         },
         "test": {
@@ -220,6 +220,9 @@
               "arrays": ">=7.3.0 <8.0.0"
             },
             {
+              "cartography-database": "*"
+            },
+            {
               "console": ">=6.1.0 <7.0.0"
             },
             {
@@ -242,9 +245,6 @@
             },
             {
               "maybe": ">=6.0.0 <7.0.0"
-            },
-            {
-              "minard-database": "*"
             },
             {
               "node-buffer": ">=9.0.0 <10.0.0"

@@ -1,6 +1,6 @@
 package:
-  name: minard-database
-  description: Minard - DuckDB schema and data layer
+  name: cartography-database
+  description: Shared DuckDB data layer for the cartography suite (Minard, Pausanias)
   dependencies:
     - aff
     - aff-promise
