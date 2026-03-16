@@ -18,6 +18,7 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import CE2.Scene (Scene(..)) as Scene
+import CE2.Util.SVG (svgElem, sa)
 import CE2.Viz.SystemSankey as SystemSankey
 import Data.Maybe (Maybe(..))
 
@@ -81,6 +82,7 @@ render state =
         [ renderHero state
         , renderViewMatrix
         , renderSystemDiagram
+        , renderDistillation
         , renderGetStarted
         ]
     ]
@@ -250,6 +252,108 @@ renderSystemDiagram =
         ]
         []
     ]
+
+-- =============================================================================
+-- Distillation Pyramid
+-- =============================================================================
+
+renderDistillation :: forall m. H.ComponentHTML Action () m
+renderDistillation =
+  HH.div
+    [ HP.style "margin-bottom: 48px; display: flex; gap: 32px; align-items: flex-start;" ]
+    [ -- Pyramid SVG
+      HH.div [ HP.style "flex-shrink: 0;" ]
+        [ svgElem "svg"
+            [ sa "viewBox" "0 0 320 280"
+            , HP.style "width: 320px; height: 280px; display: block;"
+            ]
+            [ -- Level 0: Source code (widest)
+              trapezoid 10.0 10.0 310.0 10.0 280.0 60.0 40.0 60.0 "#E8E0CC" "#C9B8A0"
+            , levelLabel 160.0 40.0 "Your Source" "#555"
+            , sizeLabel 300.0 40.0 "~200 KB"
+
+            -- Level 1: Compiled output
+            , trapezoid 40.0 65.0 280.0 65.0 255.0 115.0 65.0 115.0 "#EBF0F5" "#A0B4C8"
+            , levelLabel 160.0 95.0 "Compiled Output" "#555"
+            , sizeLabel 275.0 95.0 "~5 MB"
+
+            -- Level 2: DuckDB
+            , trapezoid 65.0 120.0 255.0 120.0 225.0 170.0 95.0 170.0 "#D5E8E8" "#6B9FA3"
+            , levelLabel 160.0 150.0 "DuckDB" "#555"
+            , sizeLabel 245.0 150.0 "~2 MB"
+
+            -- Level 3: API response
+            , trapezoid 95.0 175.0 225.0 175.0 200.0 225.0 120.0 225.0 "#E0E8F0" "#7A9AB4"
+            , levelLabel 160.0 205.0 "API Response" "#555"
+            , sizeLabel 218.0 205.0 "~50 KB"
+
+            -- Level 4: What you see (narrowest)
+            , trapezoid 120.0 230.0 200.0 230.0 185.0 270.0 135.0 270.0 "#F0E8D8" "#C0A870"
+            , levelLabel 160.0 255.0 "Insight" "#555"
+            , sizeLabel 200.0 255.0 "~5 KB"
+
+            -- Arrow on the right side
+            , svgElem "text"
+                [ sa "x" "310", sa "y" "145"
+                , sa "text-anchor" "middle"
+                , sa "font-size" "11", sa "fill" "#999"
+                , sa "font-family" "-apple-system, sans-serif"
+                , sa "transform" "rotate(90, 310, 145)"
+                ]
+                [ HH.text "1000\x00D7 distillation \x2192" ]
+            ]
+        ]
+    -- Explanation text
+    , HH.div [ HP.style "flex: 1; padding-top: 8px;" ]
+        [ HH.h2
+            [ HP.style sectionHeadingStyle ]
+            [ HH.text "Distillation, Not Dashboard" ]
+        , HH.p
+            [ HP.style $ sectionBodyStyle <> " margin-bottom: 12px;" ]
+            [ HH.text "Minard is a 1,000\x00D7 compression pipeline. Your source code passes through the PureScript compiler, gets loaded into DuckDB, and is served as targeted API responses \x2014 each view shows exactly the structural insight you need, nothing more." ]
+        , HH.p
+            [ HP.style $ sectionBodyStyle <> " margin-bottom: 12px;" ]
+            [ HH.text "The annotations layer works in reverse: AI and human observations flow back into the database, enriching future views. Every confirmed or disputed annotation makes the next report more accurate." ]
+        , HH.p
+            [ HP.style sectionBodyStyle ]
+            [ HH.text "This is why Minard uses a real database, not a cache. The value is in the connections \x2014 cross-module call graphs, dependency layers, commit co-change patterns \x2014 that only emerge when you query across the whole codebase at once." ]
+        ]
+    ]
+  where
+  -- A trapezoid shape (4 corners, filled)
+  trapezoid x1 y1 x2 y2 x3 y3 x4 y4 fill stroke =
+    svgElem "polygon"
+      [ sa "points" (pt x1 y1 <> " " <> pt x2 y2 <> " " <> pt x3 y3 <> " " <> pt x4 y4)
+      , sa "fill" fill
+      , sa "stroke" stroke
+      , sa "stroke-width" "1"
+      ]
+      []
+  pt x y = show x <> "," <> show y
+
+  levelLabel x y text color =
+    svgElem "text"
+      [ sa "x" (show x), sa "y" (show y)
+      , sa "text-anchor" "middle"
+      , sa "dominant-baseline" "middle"
+      , sa "font-size" "11"
+      , sa "font-weight" "600"
+      , sa "fill" color
+      , sa "font-family" "-apple-system, 'Helvetica Neue', sans-serif"
+      ]
+      [ HH.text text ]
+
+  sizeLabel x y text =
+    svgElem "text"
+      [ sa "x" (show x), sa "y" (show y)
+      , sa "text-anchor" "start"
+      , sa "dominant-baseline" "middle"
+      , sa "font-size" "9"
+      , sa "font-weight" "400"
+      , sa "fill" "#999"
+      , sa "font-family" "'Fira Code', monospace"
+      ]
+      [ HH.text text ]
 
 -- =============================================================================
 -- Get Started CTA
