@@ -58,7 +58,6 @@ type State =
   , commitCount :: Int
   , orderMode :: CoChange.OrderMode
   , showBars :: Boolean
-  , colorByOp :: Boolean  -- color dots by add/modify/delete
   }
 
 -- =============================================================================
@@ -73,7 +72,6 @@ data Action
   | LoadMore
   | SetOrderMode CoChange.OrderMode
   | ToggleBars
-  | ToggleColorByOp
 
 -- =============================================================================
 -- Component
@@ -101,7 +99,6 @@ initialState input =
   , commitCount: 80
   , orderMode: CoChange.ByCosimilarity
   , showBars: true
-  , colorByOp: true
   }
 
 -- =============================================================================
@@ -111,10 +108,9 @@ initialState input =
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
   HH.div [ HP.class_ (HH.ClassName "commit-module-grid") ]
-    [ HH.div [ HP.class_ (HH.ClassName "cmg-inner") ]
-        [ renderHeader state
-        , renderControls state
-        , if state.loading
+    [ renderSubNav state
+    , HH.div [ HP.class_ (HH.ClassName "cmg-inner") ]
+        [ if state.loading
             then HH.div [ HP.class_ (HH.ClassName "cmg-loading") ] [ HH.text "Loading commit history..." ]
             else case state.error of
               Just err -> HH.div [ HP.class_ (HH.ClassName "cmg-error") ] [ HH.text err ]
@@ -126,34 +122,29 @@ render state =
         ]
     ]
 
-renderHeader :: forall m. State -> H.ComponentHTML Action () m
-renderHeader state =
-  HH.div [ HP.class_ (HH.ClassName "cmg-header") ]
-    [ HH.h2 [] [ HH.text $ state.packageName <> " Commit History" ]
-    , HH.p [ HP.class_ (HH.ClassName "cmg-subtitle") ]
-        [ HH.text $ show (Array.length state.commits) <> " commits, "
-            <> show (Array.length state.allModules) <> " modules changed"
+renderSubNav :: forall m. State -> H.ComponentHTML Action () m
+renderSubNav state =
+  HH.div
+    [ HP.classes [ HH.ClassName "page-subnav", HH.ClassName "page-subnav--split" ] ]
+    [ HH.div [ HP.style "display: flex; align-items: baseline; gap: 8px;" ]
+        [ HH.span [ HP.class_ (HH.ClassName "page-subnav__title") ]
+            [ HH.text state.packageName ]
+        , HH.span [ HP.class_ (HH.ClassName "page-subnav__stats") ]
+            [ HH.text $ show (Array.length state.commits) <> " commits, "
+                <> show (Array.length state.allModules) <> " modules"
+            ]
         ]
-    ]
-
-renderControls :: forall m. State -> H.ComponentHTML Action () m
-renderControls state =
-  HH.div [ HP.class_ (HH.ClassName "cmg-controls") ]
-    [ HH.span [ HP.class_ (HH.ClassName "cmg-control-label") ] [ HH.text "Order:" ]
-    , orderButton CoChange.Alphabetical "A-Z" state.orderMode
-    , orderButton CoChange.ByFrequency "Frequency" state.orderMode
-    , orderButton CoChange.ByCosimilarity "Co-change" state.orderMode
-    , HH.span [ HP.class_ (HH.ClassName "cmg-control-sep") ] []
-    , HH.button
-        [ HP.class_ (HH.ClassName $ "cmg-control-btn" <> if state.colorByOp then " active" else "")
-        , HE.onClick \_ -> ToggleColorByOp
+    , HH.div [ HP.class_ (HH.ClassName "page-subnav__controls") ]
+        [ HH.span [ HP.class_ (HH.ClassName "page-subnav__label") ] [ HH.text "Order:" ]
+        , orderButton CoChange.Alphabetical "A-Z" state.orderMode
+        , orderButton CoChange.ByFrequency "Frequency" state.orderMode
+        , orderButton CoChange.ByCosimilarity "Co-change" state.orderMode
         ]
-        [ HH.text "Color by op" ]
     ]
   where
   orderButton mode label current =
     HH.button
-      [ HP.class_ (HH.ClassName $ "cmg-control-btn" <> if mode == current then " active" else "")
+      [ HP.class_ (HH.ClassName $ "filter-pill" <> if mode == current then " active" else "")
       , HE.onClick \_ -> SetOrderMode mode
       ]
       [ HH.text label ]
@@ -268,13 +259,11 @@ renderDot state commit changedSet statuses modName =
     isColHovered = state.hoveredModule == Just modName
     isRowHovered = state.hoveredCommit == Just commit.hash
     status = Object.lookup modName statuses
-    statusCls = if state.colorByOp
-      then case status of
-        Just "A" -> " status-add"
-        Just "D" -> " status-delete"
-        Just "R" -> " status-add"
-        _ -> ""
-      else ""
+    statusCls = case status of
+      Just "A" -> " status-add"
+      Just "D" -> " status-delete"
+      Just "R" -> " status-add"
+      _ -> ""
     cls = "cmg-dot"
       <> (if isActive then " active" else "")
       <> (if isColHovered then " col-hovered" else "")
@@ -325,7 +314,7 @@ handleAction = case _ of
 
   ClickModule modName -> do
     state <- H.get
-    H.raise (NavigateToScene (Scene.ModuleStructure state.packageName modName))
+    H.raise (NavigateToScene (Scene.ModuleSignatures state.packageName modName))
 
   LoadMore -> do
     state <- H.get
@@ -337,9 +326,6 @@ handleAction = case _ of
 
   ToggleBars ->
     H.modify_ \s -> s { showBars = not s.showBars }
-
-  ToggleColorByOp ->
-    H.modify_ \s -> s { colorByOp = not s.colorByOp }
 
 -- =============================================================================
 -- Data Loading

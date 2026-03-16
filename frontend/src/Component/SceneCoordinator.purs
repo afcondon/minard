@@ -65,6 +65,8 @@ import CE2.Component.GalaxyTreemapViz as GalaxyTreemapViz
 import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleStructureViz as ModuleStructureViz
+import CE2.Component.ModuleSignaturesViz as ModuleSignaturesViz
+import CE2.Component.GitOverviewViz as GitOverviewViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
 import CE2.Component.PackageReportViz as PackageReportViz
 import CE2.Component.LandingPageViz as LandingPageViz
@@ -177,6 +179,8 @@ type Slots =
   , pkgModuleBeeswarmViz :: PkgModuleBeeswarmViz.Slot Unit
   , typeClassGridViz :: H.Slot TypeClassGridViz.Query TypeClassGridViz.Output Unit
   , moduleStructureViz :: ModuleStructureViz.Slot Unit
+  , moduleSignaturesViz :: ModuleSignaturesViz.Slot Unit
+  , gitOverviewViz :: GitOverviewViz.Slot Unit
   , dependencyChordViz :: DependencyChordViz.Slot String
   , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
   , slideOutPanel :: SlideOutPanel.Slot Unit
@@ -220,6 +224,12 @@ _typeClassGridViz = Proxy
 
 _moduleStructureViz :: Proxy "moduleStructureViz"
 _moduleStructureViz = Proxy
+
+_moduleSignaturesViz :: Proxy "moduleSignaturesViz"
+_moduleSignaturesViz = Proxy
+
+_gitOverviewViz :: Proxy "gitOverviewViz"
+_gitOverviewViz = Proxy
 
 _dependencyChordViz :: Proxy "dependencyChordViz"
 _dependencyChordViz = Proxy
@@ -402,6 +412,8 @@ data Action
   | HandleModuleOverviewOutput ModuleOverviewViz.Output
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
   | HandleModuleStructureOutput ModuleStructureViz.Output
+  | HandleModuleSignaturesOutput ModuleSignaturesViz.Output
+  | HandleGitOverviewOutput GitOverviewViz.Output
   | HandlePackageReportOutput PackageReportViz.Output
   | HandleTypeClassGridOutput TypeClassGridViz.Output
   | HandleNamespaceTreeOutput NamespaceTreeViz.Output
@@ -694,6 +706,7 @@ renderSelectionInfo state =
     ModuleOverview _ _ -> renderDeclarationLegend
     DeclarationDetail _ _ _ -> renderDeclarationLegend
     ModuleStructure _ _ -> renderDeclarationLegend
+    ModuleSignatures _ _ -> renderDeclarationLegend
     _ -> renderHoverInfo state
 
 -- | Default hover info display
@@ -1002,6 +1015,21 @@ renderScene state =
           [ HP.class_ (HH.ClassName "loading") ]
           [ HH.text "Loading module declarations..." ]
 
+  ModuleSignatures pkgName modName ->
+    case Pure.lookupModuleDeclarations state pkgName modName of
+      Just decls ->
+        HH.slot _moduleSignaturesViz unit ModuleSignaturesViz.component
+          { packageName: pkgName
+          , moduleName: modName
+          , declarations: decls
+          , functionCalls: state.packageCalls
+          }
+          HandleModuleSignaturesOutput
+      Nothing ->
+        HH.div
+          [ HP.class_ (HH.ClassName "loading") ]
+          [ HH.text "Loading module declarations..." ]
+
   TypeClassGrid ->
     case state.typeClassStats of
       Just stats ->
@@ -1164,6 +1192,15 @@ renderScene state =
     HH.slot _snapshotManagementViz unit SnapshotManagementViz.component
       { dataReady: state.packageSetData /= Nothing }
       HandleSnapshotManagementOutput
+
+  GitOverview ->
+    case state.v2Data of
+      Just v2 ->
+        HH.slot _gitOverviewViz unit GitOverviewViz.component
+          { packages: v2.packages }
+          HandleGitOverviewOutput
+      Nothing ->
+        HH.div [ HP.class_ (HH.ClassName "loading") ] [ HH.text "Loading packages..." ]
 
   CommitModuleGrid pkg ->
     HH.slot _commitModuleGridViz unit CommitModuleGridViz.component
@@ -1557,6 +1594,23 @@ handleAction = case _ of
             Left err ->
               log $ "[SceneCoordinator] Failed to fetch snapshots: " <> err
         _ -> pure unit
+
+  HandleModuleSignaturesOutput output -> case output of
+    ModuleSignaturesViz.DeclarationClicked pkgName modName declName -> do
+      log $ "[SceneCoordinator] Declaration clicked in signatures: " <> declName
+      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+    ModuleSignaturesViz.NavigateToStructure -> do
+      state <- H.get
+      case state.scene of
+        ModuleSignatures pkg mod ->
+          handleAction (NavigateTo (ModuleStructure pkg mod))
+        _ -> pure unit
+
+  HandleGitOverviewOutput output -> case output of
+    GitOverviewViz.NavigateToCommitGrid pkgName ->
+      handleAction (NavigateTo (CommitModuleGrid pkgName))
+    GitOverviewViz.NavigateToPackage pkgName ->
+      handleAction (NavigateTo (PkgTreemap pkgName))
 
   HandlePackageReportOutput output -> case output of
     PackageReportViz.NavigateToPackage pkgName -> do
@@ -2254,6 +2308,13 @@ prepareSceneData state = case state.scene of
         Right anns -> H.modify_ _ { moduleAnnotations = Map.insert modName anns state.moduleAnnotations }
         Left _err -> pure unit  -- Annotations are optional; silent fail
     log "[SceneCoordinator] ModuleStructure: rendering handled by slot"
+
+  GitOverview ->
+    log "[SceneCoordinator] GitOverview: rendering handled by slot"
+
+  ModuleSignatures pkgName _modName -> do
+    ensurePackageDeclarationsLoaded state pkgName
+    log "[SceneCoordinator] ModuleSignatures: rendering handled by slot"
 
   PkgModuleBeeswarm pkgName -> do
     case state.v2Data of

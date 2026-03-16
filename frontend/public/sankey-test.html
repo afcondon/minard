@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sankey Test — D3 Reference</title>
+<style>
+  body { font-family: -apple-system, 'Helvetica Neue', sans-serif; margin: 40px; background: #fafaf8; }
+  h1 { font-size: 18px; font-weight: 600; color: #333; }
+  p { font-size: 13px; color: #666; }
+  svg { border: 1px solid #e8e6e0; border-radius: 6px; background: #fff; }
+  .node rect { cursor: pointer; }
+  .node text { font-size: 10px; fill: #333; font-weight: 500; }
+  .link { fill: none; }
+  .link:hover { stroke-opacity: 0.5 !important; }
+</style>
+</head>
+<body>
+<h1>D3 Sankey Reference — Same Data as HATS Version</h1>
+<p>This uses d3-sankey to verify the expected layout. Compare with the HATS version on the landing page.</p>
+<div id="chart"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+<script>
+const links = [
+  // Sources → Loader
+  { source: ".purs source",  target: "Rust Loader",  value: 50 },
+  { source: "spago config",  target: "Rust Loader",  value: 12 },
+  { source: "git history",   target: "Rust Loader",  value: 15 },
+
+  // Loader → DB → API
+  { source: "Rust Loader",   target: "DuckDB",       value: 77 },
+  { source: "DuckDB",        target: "API Server",   value: 85 },
+
+  // AI writes annotations into DB
+  { source: "AI (Claude)",   target: "DuckDB",       value: 12 },
+
+  // API → View categories
+  { source: "API Server",    target: "Maps",         value: 25 },
+  { source: "API Server",    target: "Reports",      value: 22 },
+  { source: "API Server",    target: "Anatomy",      value: 18 },
+  { source: "API Server",    target: "Git",          value: 18 },
+
+  // Human reviews in Reports
+  { source: "Human",         target: "Reports",      value: 5 },
+
+  // Views → VS Code
+  { source: "Maps",          target: "VS Code",      value: 25 },
+  { source: "Reports",       target: "VS Code",      value: 27 },
+  { source: "Anatomy",       target: "VS Code",      value: 18 },
+  { source: "Git",           target: "VS Code",      value: 18 },
+];
+
+const nodeColors = {
+  ".purs source": "#8B6914",
+  "spago config": "#A67C2E",
+  "git history":  "#7A8B6E",
+  "AI (Claude)":  "#7B68AD",
+  "Human":        "#C07040",
+  "Rust Loader":  "#6B8FA3",
+  "DuckDB":       "#4A7A8A",
+  "API Server":   "#5A7A9A",
+  "Maps":         "#2563EB",
+  "Reports":      "#D97706",
+  "Anatomy":      "#059669",
+  "Git":          "#7C3AED",
+  "VS Code":      "#333333",
+};
+
+const width = 900;
+const height = 500;
+const margin = { top: 10, right: 10, bottom: 10, left: 10 };
+
+// Build nodes from links
+const nodeNames = Array.from(new Set(links.flatMap(l => [l.source, l.target])));
+const nodes = nodeNames.map(name => ({ name }));
+const nodeMap = new Map(nodes.map((n, i) => [n.name, i]));
+const sankeyLinks = links.map(l => ({
+  source: nodeMap.get(l.source),
+  target: nodeMap.get(l.target),
+  value: l.value
+}));
+
+const sankey = d3.sankey()
+  .nodeId(d => d.index)
+  .nodeWidth(15)
+  .nodePadding(12)
+  .nodeAlign(d3.sankeyLeft)
+  .extent([[margin.left, margin.top], [width - margin.right, height - margin.bottom]]);
+
+const graph = sankey({
+  nodes: nodes.map(d => Object.assign({}, d)),
+  links: sankeyLinks.map(d => Object.assign({}, d))
+});
+
+const svg = d3.select("#chart")
+  .append("svg")
+  .attr("width", width)
+  .attr("height", height)
+  .attr("viewBox", [0, 0, width, height]);
+
+// Gradient defs
+const defs = svg.append("defs");
+graph.links.forEach((link, i) => {
+  const grad = defs.append("linearGradient")
+    .attr("id", `d3-grad-${i}`)
+    .attr("gradientUnits", "userSpaceOnUse")
+    .attr("x1", link.source.x1)
+    .attr("x2", link.target.x0);
+  grad.append("stop").attr("offset", "0%")
+    .attr("stop-color", nodeColors[link.source.name] || "#999");
+  grad.append("stop").attr("offset", "100%")
+    .attr("stop-color", nodeColors[link.target.name] || "#999");
+});
+
+// Links (D3 sankey uses stroke-width ribbons, not filled areas)
+svg.append("g")
+  .selectAll("path")
+  .data(graph.links)
+  .join("path")
+  .attr("class", "link")
+  .attr("d", d3.sankeyLinkHorizontal())
+  .attr("fill", "none")
+  .attr("stroke", (d, i) => `url(#d3-grad-${i})`)
+  .attr("stroke-opacity", 0.5)
+  .attr("stroke-width", d => Math.max(1, d.width))
+  .append("title")
+  .text(d => `${d.source.name} → ${d.target.name}: ${d.value}`);
+
+// Nodes
+const node = svg.append("g")
+  .selectAll("g")
+  .data(graph.nodes)
+  .join("g")
+  .attr("class", "node");
+
+node.append("rect")
+  .attr("x", d => d.x0)
+  .attr("y", d => d.y0)
+  .attr("height", d => d.y1 - d.y0)
+  .attr("width", d => d.x1 - d.x0)
+  .attr("fill", d => nodeColors[d.name] || "#999")
+  .attr("rx", 2)
+  .append("title")
+  .text(d => `${d.name}: ${d.value}`);
+
+// Labels
+node.append("text")
+  .attr("x", d => d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6)
+  .attr("y", d => (d.y0 + d.y1) / 2)
+  .attr("dy", "0.35em")
+  .attr("text-anchor", d => d.x0 < width / 2 ? "start" : "end")
+  .text(d => d.name);
+</script>
+</body>
+</html>

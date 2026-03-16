@@ -20,7 +20,7 @@ import Data.Maybe (Maybe(..))
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import CE2.Scene (Scene(..), isMapScene, isAnatomyScene, isReportScene, isProjectScene)
+import CE2.Scene (Scene(..), isMapScene, isGitScene, isAnatomyScene, isReportScene)
 import CE2.Types (ColorMode(..), RefreshPhase(..))
 import CE2.Component.SceneCoordinator.Pure (ViewMode(..))
 
@@ -39,17 +39,13 @@ type Row1Actions i =
   , onConfirmSync :: i
   }
 
--- | Global scene shortcuts: Maps, Reports, Anatomy, Projects + Sync
+-- | Global scene shortcuts: Maps, Reports, Anatomy, Git
 renderRow1 :: forall w i. Row1State -> Row1Actions i -> Array (HH.HTML w i)
 renderRow1 state actions =
   [ navButton "Maps" GalaxyTreemap (isMapScene state.scene)
   , navButton "Reports" PackageReport (isReportScene state.scene)
   , navButton "Anatomy" ProjectAnatomy (isAnatomyScene state.scene)
-  , navButton "Projects" ProjectSetup (isProjectScene state.scene)
-  -- Sync is visually separated from nav buttons
-  , HH.span
-      [ HP.style "border-left: 1px solid rgba(0,0,0,0.15); padding-left: 8px; margin-left: 4px;" ]
-      [ syncButton state.refreshPhase actions.onArmSync actions.onConfirmSync ]
+  , navButton "Git" GitOverview (isGitScene state.scene)
   ]
   where
   navButton :: String -> Scene -> Boolean -> HH.HTML w i

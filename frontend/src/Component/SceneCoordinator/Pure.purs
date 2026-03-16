@@ -59,6 +59,8 @@ themeForScene = case _ of
   ModuleOverview _ _ -> MistTheme
   DeclarationDetail _ _ _ -> DaylightTheme
   ModuleStructure _ _ -> MistTheme
+  ModuleSignatures _ _ -> MistTheme
+  GitOverview -> DaylightTheme
   TypeClassGrid -> MidnightTheme
   NamespaceTree -> DaylightTheme
   PackageReport -> DaylightTheme
@@ -102,6 +104,8 @@ canonicalStateCode state = case state.scene of
   DeclarationDetail pkg mod decl -> "H(" <> pkg <> "," <> mod <> "," <> decl <> ")"
 
   ModuleStructure pkg mod -> "S(" <> pkg <> "," <> mod <> ")"
+  ModuleSignatures pkg mod -> "Sig(" <> pkg <> "," <> mod <> ")"
+  GitOverview -> "Git"
 
   TypeClassGrid -> "T"
   NamespaceTree -> "N"

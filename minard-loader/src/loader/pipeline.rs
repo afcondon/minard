@@ -527,6 +527,30 @@ impl LoadPipeline {
 
         timer.lap(&format!("extra packages ({} pkgs, {} modules)", stats.extra_packages_loaded, stats.extra_modules_loaded));
 
+        // Phase 6d: Detect Main modules for packages without explicit bundle_module.
+        // Any package containing a module ending in ".Main" or named "Main" is an application.
+        progress.set_message("Detecting app entry points...");
+        let detected = conn.execute(
+            "UPDATE package_versions SET bundle_module = (
+                SELECT m.name FROM modules m
+                WHERE m.package_version_id = package_versions.id
+                  AND (m.name LIKE '%.Main' OR m.name = 'Main')
+                LIMIT 1
+            )
+            WHERE bundle_module IS NULL
+              AND EXISTS (
+                SELECT 1 FROM modules m
+                WHERE m.package_version_id = package_versions.id
+                  AND (m.name LIKE '%.Main' OR m.name = 'Main')
+            )",
+            [],
+        ).unwrap_or(0);
+        if detected > 0 && self.verbose {
+            eprintln!("  Detected {} app entry points from Main modules", detected);
+        }
+
+        timer.lap("detect entry points");
+
         // Phase 7: Post-load processing (imports, calls, git data)
         // Process each workspace package separately
         progress.set_message("Extracting module imports...");

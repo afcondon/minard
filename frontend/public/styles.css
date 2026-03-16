@@ -3203,7 +3203,6 @@ a.ps-clickable:hover {
 .commit-module-grid {
   height: 100%;
   overflow-y: auto;
-  padding: 24px 32px;
   font-family: var(--font-mono);
   color: var(--color-text-dark);
 }
@@ -3211,6 +3210,7 @@ a.ps-clickable:hover {
 .cmg-inner {
   max-width: 1400px;
   margin: 0 auto;
+  padding: 12px 32px 24px;
 }
 
 .cmg-header {
@@ -3229,44 +3229,7 @@ a.ps-clickable:hover {
   margin: 0;
 }
 
-/* Controls bar */
-.cmg-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #ddd;
-}
-
-.cmg-control-label {
-  font-size: 10px;
-  color: #888;
-  margin-right: 4px;
-}
-
-.cmg-control-btn {
-  background: none;
-  border: 1px solid #ccc;
-  padding: 2px 8px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: #666;
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.cmg-control-btn:hover {
-  background: #f0f0f0;
-  border-color: #999;
-}
-
-.cmg-control-btn.active {
-  background: rgba(14, 76, 138, 0.1);
-  border-color: #0E4C8A;
-  color: #0E4C8A;
-  font-weight: 600;
-}
+/* Controls bar — now uses shared .page-subnav + .filter-pill */
 
 .cmg-control-sep {
   width: 1px;
@@ -3483,6 +3446,88 @@ a.ps-clickable:hover {
 /* Sparkline link hover effect */
 .sparkline-link:hover {
   background: #f0ede6 !important;
+}
+
+/* =============================================================================
+   Page Sub-Nav — Shared beige banner + filter pill buttons
+   Used by: ModuleStructure, ModuleSignatures, CommitModuleGrid
+   ============================================================================= */
+
+/* Beige banner bar spanning full width of page content area */
+.page-subnav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: var(--color-beige-base);
+  border-bottom: 1px solid #999;
+  min-height: 40px;
+}
+
+/* Variant with content to left + right (justify between) */
+.page-subnav--split {
+  justify-content: space-between;
+}
+
+/* Title text inside the sub-nav */
+.page-subnav__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-dark);
+}
+
+/* Muted stats / secondary text in sub-nav */
+.page-subnav__stats {
+  font-size: 10px;
+  color: #665;
+}
+
+/* Right-aligned group of controls */
+.page-subnav__controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Label before a group of filter buttons */
+.page-subnav__label {
+  font-size: 9px;
+  color: #665;
+  margin-right: 2px;
+}
+
+/* Filter bar below the sub-nav (kind filters, etc.) */
+.page-filter-bar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 16px;
+  flex-wrap: wrap;
+}
+
+/* Generic pill-shaped filter button */
+.filter-pill {
+  background: none;
+  border: 1px solid #ccc;
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #666;
+  cursor: pointer;
+  border-radius: 2px;
+  line-height: 1.4;
+}
+
+.filter-pill:hover {
+  background: #f0f0f0;
+  border-color: #999;
+}
+
+.filter-pill.active {
+  background: #333;
+  color: #fff;
+  border-color: #333;
+  font-weight: 600;
 }
 
 /* =============================================================================

@@ -18,6 +18,7 @@ module CE2.Scene
   , isPackageScene
   , isModuleScene
   , isMapScene
+  , isGitScene
   , isAnatomyScene
   , isReportScene
   , isProjectScene
@@ -41,6 +42,7 @@ data Scene
   | ModuleOverview String String    -- Module overview: bubble pack + declaration listing (pkg, module)
   | DeclarationDetail String String String  -- Single declaration detail (pkg, module, decl)
   | ModuleStructure String String -- Module structure view: diagrams + annotations (pkg, module)
+  | ModuleSignatures String String -- Type signatures + git blame ribbon (pkg, module)
   | TypeClassGrid                   -- Grid view of all type classes with method/instance counts
   | NamespaceTree                   -- Horizontal tidy tree of module namespace hierarchy
   | PackageReport                   -- Package-level report cards with metrics + annotations
@@ -53,6 +55,7 @@ data Scene
   | CompareSnapshots String String Int          -- Cross-snapshot comparison (pkg, module, beforeSnapshotId)
   | ProjectSetup                               -- Project CRUD (add/delete/list)
   | SnapshotManagement                         -- Snapshot creation + cleanup
+  | GitOverview                                -- Git landing page: package inventory by source
   | CommitModuleGrid String                    -- Commit-module change grid (package)
   | CoChangeCube String                        -- 3D co-change tensor (package)
 
@@ -67,6 +70,7 @@ instance showScene :: Show Scene where
   show (ModuleOverview pkg mod) = "ModuleOverview(" <> pkg <> "," <> mod <> ")"
   show (DeclarationDetail pkg mod decl) = "DeclarationDetail(" <> pkg <> "," <> mod <> "," <> decl <> ")"
   show (ModuleStructure pkg mod) = "ModuleStructure(" <> pkg <> "," <> mod <> ")"
+  show (ModuleSignatures pkg mod) = "ModuleSignatures(" <> pkg <> "," <> mod <> ")"
   show TypeClassGrid = "TypeClassGrid"
   show NamespaceTree = "NamespaceTree"
   show PackageReport = "PackageReport"
@@ -79,6 +83,7 @@ instance showScene :: Show Scene where
   show (CompareModules p1 m1 p2 m2) = "CompareModules(" <> p1 <> "," <> m1 <> "," <> p2 <> "," <> m2 <> ")"
   show (CompareSnapshots p m sid) = "CompareSnapshots(" <> p <> "," <> m <> "," <> show sid <> ")"
   show SnapshotManagement = "SnapshotManagement"
+  show GitOverview = "GitOverview"
   show (CommitModuleGrid pkg) = "CommitModuleGrid(" <> pkg <> ")"
   show (CoChangeCube pkg) = "CoChangeCube(" <> pkg <> ")"
 
@@ -93,6 +98,7 @@ parentScene = case _ of
   ModuleOverview pkg _ -> PkgTreemap pkg   -- Back to package treemap
   DeclarationDetail pkg mod _ -> ModuleStructure pkg mod  -- Back to signature map (primary module view)
   ModuleStructure pkg _ -> PkgTreemap pkg                -- Back to package treemap
+  ModuleSignatures pkg mod -> ModuleStructure pkg mod   -- Back to module structure
   TypeClassGrid -> GalaxyTreemap           -- Type class view returns to galaxy
   NamespaceTree -> GalaxyTreemap           -- Namespace tree returns to galaxy
   PackageReport -> ProjectManagement        -- Package report returns to landing
@@ -105,7 +111,8 @@ parentScene = case _ of
   CompareModules _ _ _ _ -> GalaxyTreemap               -- Compare view returns to galaxy
   CompareSnapshots p m _ -> ModuleStructure p m      -- Back to the module being compared
   SnapshotManagement -> ProjectSetup                   -- Back to project setup
-  CommitModuleGrid pkg -> PkgTreemap pkg              -- Back to package treemap
+  GitOverview -> GitOverview                          -- Root of git family
+  CommitModuleGrid _ -> GitOverview                   -- Back to git overview
   CoChangeCube pkg -> CommitModuleGrid pkg            -- Back to 2D commit grid
 
 -- | A segment in the breadcrumb trail
@@ -123,14 +130,16 @@ sceneBreadcrumbs = case _ of
   PkgTreemap pkg      -> [mapsSeg, galaxySeg, solarSeg pkg]
   PkgModuleBeeswarm p -> [mapsSeg, galaxySeg, solarSeg p]
   ModuleStructure p m -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m]
+  ModuleSignatures p m -> [gitSeg, gitPkgSeg p, gitModSeg p m, { kind: "", label: "Signatures", scene: ModuleSignatures p m }]
   ModuleOverview p m  -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
                                   , { kind: "", label: "Overview", scene: ModuleOverview p m }]
   DeclarationDetail p m d -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
                                   , { kind: "Decl", label: d, scene: DeclarationDetail p m d }]
   CompareModules p1 m1 _ m2 -> [mapsSeg, galaxySeg, solarSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
   CompareSnapshots p m _ -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m, { kind: "", label: "Compare", scene: CompareSnapshots p m 0 }]
-  CommitModuleGrid pkg   -> [mapsSeg, galaxySeg, solarSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }]
-  CoChangeCube pkg       -> [mapsSeg, galaxySeg, solarSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }, { kind: "", label: "Cube", scene: CoChangeCube pkg }]
+  GitOverview -> [gitSeg]
+  CommitModuleGrid pkg -> [gitSeg, gitPkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }]
+  CoChangeCube pkg -> [gitSeg, gitPkgSeg pkg, { kind: "", label: "Commits", scene: CommitModuleGrid pkg }, { kind: "", label: "Cube", scene: CoChangeCube pkg }]
 
   -- Anatomy family
   ProjectAnatomy      -> [anatomySeg]
@@ -155,6 +164,9 @@ sceneBreadcrumbs = case _ of
     anatomySeg = { kind: "", label: "Anatomy", scene: ProjectAnatomy }
     reportsSeg = { kind: "", label: "Reports", scene: PackageReport }
     projectsSeg = { kind: "", label: "Projects", scene: ProjectSetup }
+    gitSeg = { kind: "", label: "Git", scene: GitOverview }
+    gitPkgSeg pkg = { kind: "Package", label: pkg, scene: CommitModuleGrid pkg }
+    gitModSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleSignatures p m }
     solarSeg pkg = { kind: "SolarSystem", label: pkg, scene: PkgTreemap pkg }
     planetSeg p m = { kind: "Planet", label: shortModuleName m, scene: ModuleStructure p m }
 
@@ -169,6 +181,7 @@ sceneLabel = case _ of
   ModuleOverview _ mod -> shortModuleName mod
   DeclarationDetail _ _ decl -> decl
   ModuleStructure _ mod -> shortModuleName mod
+  ModuleSignatures _ mod -> shortModuleName mod <> " Signatures"
   TypeClassGrid -> "Type Classes"
   NamespaceTree -> "Namespace Tree"
   PackageReport -> "Package Report"
@@ -181,6 +194,7 @@ sceneLabel = case _ of
   CompareModules _ m1 _ m2 -> shortModuleName m1 <> " vs " <> shortModuleName m2
   CompareSnapshots _ m _ -> shortModuleName m <> " (Compare)"
   SnapshotManagement -> "Snapshots"
+  GitOverview -> "Git Overview"
   CommitModuleGrid pkg -> pkg <> " Commits"
   CoChangeCube pkg -> pkg <> " Co-Change Cube"
 
@@ -209,6 +223,7 @@ isModuleScene (PkgModuleBeeswarm _) = true
 isModuleScene (ModuleOverview _ _) = true
 isModuleScene (DeclarationDetail _ _ _) = true
 isModuleScene (ModuleStructure _ _) = true
+isModuleScene (ModuleSignatures _ _) = true
 isModuleScene _ = false
 
 -- | Check if scene belongs to the Maps family (treemap / powers-of-ten drill chain)
@@ -224,8 +239,15 @@ isMapScene = case _ of
   DeclarationDetail _ _ _ -> true
   CompareModules _ _ _ _ -> true
   CompareSnapshots _ _ _ -> true
+  _ -> false
+
+-- | Check if scene belongs to the Git family
+isGitScene :: Scene -> Boolean
+isGitScene = case _ of
+  GitOverview -> true
   CommitModuleGrid _ -> true
   CoChangeCube _ -> true
+  ModuleSignatures _ _ -> true
   _ -> false
 
 -- | Check if scene belongs to the Anatomy family
@@ -273,6 +295,7 @@ sceneFromString str
       in Just (PackageAnatomy pkg)
   | str == "ProjectSetup" = Just ProjectSetup
   | str == "SnapshotManagement" = Just SnapshotManagement
+  | str == "GitOverview" = Just GitOverview
   | String.take 14 str == "ModuleAnatomy(" =
       let inner = String.drop 14 str
           content = String.take (String.length inner - 1) inner
@@ -329,6 +352,15 @@ sceneFromString str
             let pkg = String.take idx content
                 mod = String.drop (idx + 1) content
             in Just (ModuleStructure pkg mod)
+          Nothing -> Nothing
+  | String.take 17 str == "ModuleSignatures(" =
+      let inner = String.drop 17 str
+          content = String.take (String.length inner - 1) inner
+      in case String.indexOf (String.Pattern ",") content of
+          Just idx ->
+            let pkg = String.take idx content
+                mod = String.drop (idx + 1) content
+            in Just (ModuleSignatures pkg mod)
           Nothing -> Nothing
   | otherwise = Nothing
 

@@ -2,7 +2,7 @@
 -- |
 -- | A Halogen component that renders a module's internal structure:
 -- | layer diagrams, biconnected component decomposition, concern clustering,
--- | git blame view, annotations, and signature cards.
+-- | annotations and internal structure diagrams.
 module CE2.Component.ModuleStructureViz
   ( component
   , Input
@@ -34,7 +34,6 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
-import Halogen.HTML.Core (PropName(..))
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
@@ -50,17 +49,12 @@ import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, ChildCircle, kindColor,
 import CE2.Viz.DeclarationLayerDiagram as LayerDiagram
 import CE2.Viz.DOMHelpers as DOMHelpers
 import CE2.Viz.ModuleStructure as MSM
-import CE2.Viz.SignatureTree as SigTree
 import CE2.Viz.SourceCode as SourceCode
-import PureScript.CST.Lexer (lexModule)
 
 import Hylograph.HATS.InterpreterTick (clearContainer, rerender)
 
 -- | Open a URI in the browser (used for vscode:// links)
 foreign import openUri :: String -> Effect Unit
-
--- | Format a unix timestamp as a relative time string (e.g. "3 days ago")
-foreign import formatRelativeTime :: Int -> String
 
 -- =============================================================================
 -- Types
@@ -90,11 +84,11 @@ type Slot = H.Slot Query Output
 
 data Query a = NoQuery a
 
-data DiagramMode = LayerView | ArcView | DeclStructureView | ConcernClusterView | GitBlameView
+data DiagramMode = LayerView | ArcView | DeclStructureView | ConcernClusterView
 
 derive instance eqDiagramMode :: Eq DiagramMode
 
-data FocusedSection = FocusAnnotations | FocusDiagrams | FocusSignatures
+data FocusedSection = FocusAnnotations | FocusDiagrams
 
 derive instance eqFocusedSection :: Eq FocusedSection
 
@@ -102,7 +96,6 @@ type State =
   { initialized :: Boolean
   , actionListener :: Maybe (HS.Listener Action)
   , lastInput :: Input
-  , lanes :: Array MSM.Lane
   , annotations :: Array Loader.V2Annotation
   , measuredCells :: Array MSM.MeasuredCell
   , arcLayout :: Maybe ArcDiagram.ArcLayout
@@ -124,8 +117,6 @@ type State =
   , helpSection :: Maybe FocusedSection
   , sourcePreview :: Maybe { declarationName :: String }
   , cachedModuleSource :: Maybe String
-  , gitBlameData :: Maybe Loader.BlameResult
-  , gitBlameLoading :: Boolean
   }
 
 data Action
@@ -138,7 +129,6 @@ data Action
   | ArcNodeClicked String
   | LayerNodeHovered (Maybe String)
   | SwitchDiagramMode DiagramMode
-  | ScrollToLanes
   | OpenInEditor
   | ConfirmAnnotation Int
   | DisputeAnnotation Int
@@ -154,7 +144,6 @@ data Action
   | ClosePreview
   | OpenPreviewInEditor
   | PreviewFullDetail
-  | BlameLineClicked Int
 
 -- =============================================================================
 -- Component
@@ -178,7 +167,6 @@ initialState input =
   { initialized: false
   , actionListener: Nothing
   , lastInput: input
-  , lanes: []
   , annotations: input.annotations
   , measuredCells: []
   , arcLayout: Nothing
@@ -200,8 +188,6 @@ initialState input =
   , helpSection: Nothing
   , sourcePreview: Nothing
   , cachedModuleSource: Nothing
-  , gitBlameData: Nothing
-  , gitBlameLoading: false
   }
 
 -- =============================================================================
@@ -216,44 +202,25 @@ render state =
     ]
     [ renderSparklineRow state
     , case state.focusedSection of
-        -- Focused mode: single section fills the area
         Just FocusAnnotations ->
           renderFocusableSection FocusAnnotations state $
             HH.div [] (renderAnnotationHeader state)
         Just FocusDiagrams ->
           renderFocusableSection FocusDiagrams state $
             renderDiagramSection state
-        Just FocusSignatures ->
-          renderFocusableSection FocusSignatures state $
-            renderSignaturesSection state
-        -- Normal mode: two-column layout
         Nothing ->
           HH.div [ HP.style "display: flex; gap: 16px; min-height: 0;" ]
-            [ -- Left column (1/3): annotations + source preview
-              HH.div [ HP.style "width: 33%; flex-shrink: 0; overflow-y: auto;" ]
+            [ HH.div [ HP.style "width: 33%; flex-shrink: 0; overflow-y: auto;" ]
                 [ renderSourcePreview state
                 , renderFocusableSection FocusAnnotations state $
                     HH.div [] (renderAnnotationHeader state)
                 ]
-            -- Right column (2/3): diagrams + signatures
             , HH.div [ HP.style "flex: 1; min-width: 0; overflow-y: auto;" ]
                 [ renderFocusableSection FocusDiagrams state $
                     renderDiagramSection state
-                , renderFocusableSection FocusSignatures state $
-                    renderSignaturesSection state
                 ]
             ]
     ]
-
--- | Signatures section (lanes)
-renderSignaturesSection :: forall m. State -> H.ComponentHTML Action () m
-renderSignaturesSection state =
-  if Array.null state.lanes && state.initialized then
-    HH.div
-      [ HP.style "display:flex;align-items:center;justify-content:center;height:100px;color:#999;font-size:14px;" ]
-      [ HH.text "No declarations" ]
-  else
-    HH.div [] (state.lanes <#> renderLane)
 
 -- | Wrapper that adds a focus/unfocus click target and help toggle to a section
 renderFocusableSection :: forall m. FocusedSection -> State -> H.ComponentHTML Action () m -> H.ComponentHTML Action () m
@@ -264,7 +231,6 @@ renderFocusableSection section state content =
     sectionLabel = case section of
       FocusAnnotations -> "Report"
       FocusDiagrams -> "Diagrams"
-      FocusSignatures -> "Signatures"
     headerStyle = "display: flex; align-items: center; justify-content: space-between; padding: 2px 0; margin-bottom: 4px;"
   in
     HH.div [ HP.style "margin-bottom: 12px;" ]
@@ -304,11 +270,6 @@ renderSectionHelp = case _ of
     , "Layers \x2014 Call hierarchy from top-level orchestrators down to leaf utilities. Red dashed lines are violations (upward calls). Hover any node to trace its dependencies."
     , "Declarations \x2014 Biconnected component decomposition. Circles in the same colored cluster are tightly coupled. Diamond nodes (\x25C7) are articulation points: the only connection between groups. Dashed lines are bridges: cut one and two groups separate. Hover to see what each function connects to."
     , "Concerns \x2014 Declarations grouped by shared sub-expressions (case branches, state fields). Each bubble is a potential standalone module. Cross-group edges show the coupling cost of extraction."
-    ]
-  FocusSignatures -> helpPanel
-    [ "Every exported declaration in this module, grouped by kind (data types, type aliases, values, type classes, foreign imports)."
-    , "Each card shows the type signature rendered as an SVG. Click any declaration to drill into its detail view with source code and cross-references."
-    , "The grouping and count gives you a quick sense of the module's API surface area and responsibility."
     ]
   where
   helpPanel items =
@@ -366,7 +327,6 @@ renderDiagramSection state =
               , renderDiagramTab "Concerns" ConcernClusterView state.diagramMode
               ]
             else [])
-          <> [ renderDiagramTab "Git" GitBlameView state.diagramMode ]
           )
       -- Subtitle explaining the active diagram
       , HH.div [ HP.style "padding: 6px 0 4px; font-size: 10px; color: #888; line-height: 1.4;" ]
@@ -375,7 +335,6 @@ renderDiagramSection state =
                 <> (if state.diagramReason /= "" then state.diagramReason else "")
               DeclStructureView -> "Biconnected components of the internal call graph. Tightly coupled clusters share a color."
               ConcernClusterView -> "Declarations grouped by shared sub-expressions. Each group is a potential concern or responsibility."
-              GitBlameView -> "Source colored by recency of last change. Click any line to open in VS Code."
               ArcView -> ""
           ]
       , -- Active diagram
@@ -389,8 +348,7 @@ renderDiagramSection state =
               ]
           ConcernClusterView ->
             HH.div [ HP.id "concern-cluster-container", HP.style "min-height: 200px; background: #f0ede6; border: 1px solid #d5d0c4; border-radius: 4px;" ] []
-          GitBlameView -> renderGitBlameDiagram state
-      , if state.diagramMode /= GitBlameView then renderCtaBar declCount else HH.text ""
+      , renderCtaBar declCount
       ]
 
 renderDiagramTab :: forall m. String -> DiagramMode -> DiagramMode -> H.ComponentHTML Action () m
@@ -689,99 +647,14 @@ renderArcLabel state layout node =
       ]
       [ HH.text label ]
 
--- =============================================================================
--- Git Blame renderer
--- =============================================================================
-
-renderGitBlameDiagram :: forall m. State -> H.ComponentHTML Action () m
-renderGitBlameDiagram state
-  | state.gitBlameLoading =
-      HH.div [ HP.style "padding: 24px; color: #999; font-size: 12px; text-align: center;" ]
-        [ HH.text "Loading blame data..." ]
-  | otherwise = case state.gitBlameData of
-      Nothing ->
-        HH.div [ HP.style "padding: 24px; color: #999; font-size: 12px; text-align: center;" ]
-          [ HH.text "Git history not available" ]
-      Just blame ->
-        let
-          sourceLines = case state.cachedModuleSource of
-            Just src -> String.split (String.Pattern "\n") src
-            Nothing -> []
-          tokens = case state.cachedModuleSource of
-            Just src -> SourceCode.collectTokens (lexModule src)
-            Nothing -> []
-          knownDeclLookup = SourceCode.buildKnownDeclLookup []
-          annotationsByLine = SourceCode.buildAnnotationsByLine tokens knownDeclLookup
-          lineCount = Array.length blame.lines
-          gutterWidth = if lineCount >= 1000 then "4.5em" else if lineCount >= 100 then "3.5em" else "2.5em"
-        in
-          HH.div
-            [ HP.class_ (HH.ClassName "ps-source")
-            , HP.style "max-height: 600px; overflow-y: auto;"
-            ]
-            (Array.mapWithIndex (\idx blameLine ->
-              let
-                lineText = fromMaybe "" (Array.index sourceLines (blameLine.lineNum - 1))
-                annotations = case Map.lookup (blameLine.lineNum - 1) annotationsByLine of
-                  Just anns -> anns
-                  Nothing -> []
-                segments = SourceCode.buildLineSegments lineText annotations
-                -- Age gradient: oldest=#f0f4f8 (pale grey), newest=#e8a87c (warm amber)
-                age = blameLineAge blame.oldestTime blame.newestTime blameLine.authorTime
-                bgColor = blameAgeColor age
-                -- Commit group boundary: top border where hash differs from previous line
-                prevHash = Array.index blame.lines (idx - 1) <#> _.hash
-                isGroupStart = prevHash /= Just blameLine.hash
-                tooltip = blameLine.shortHash <> " \x00B7 " <> blameLine.author
-                  <> " \x00B7 " <> formatRelativeTime blameLine.authorTime
-                  <> "\n" <> blameLine.summary
-              in
-                HH.div
-                  [ HP.classes $
-                      [ HH.ClassName "ps-blame-line" ]
-                      <> (if isGroupStart then [ HH.ClassName "ps-blame-group-start" ] else [])
-                  , HP.style $ "background: " <> bgColor <> ";"
-                  , HP.title tooltip
-                  , HE.onClick \_ -> BlameLineClicked blameLine.lineNum
-                  ]
-                  [ HH.span
-                      [ HP.class_ (HH.ClassName "ps-linenum")
-                      , HP.style $ "width: " <> gutterWidth <> ";"
-                      ]
-                      [ HH.text (show blameLine.lineNum) ]
-                  , HH.span
-                      [ HP.class_ (HH.ClassName "ps-code") ]
-                      (SourceCode.renderSegments (\_ _ _ -> BlameLineClicked blameLine.lineNum) segments)
-                  ]
-            ) blame.lines)
-
--- | Compute age as 0.0 (oldest) to 1.0 (newest)
-blameLineAge :: Int -> Int -> Int -> Number
-blameLineAge oldest newest t =
-  if newest <= oldest then 0.5
-  else Int.toNumber (t - oldest) / Int.toNumber (newest - oldest)
-
--- | Map age (0..1) to a background color: oldest=#f0f4f8 (pale grey) → newest=#e8a87c (warm amber)
--- | 5-stop interpolation
-blameAgeColor :: Number -> String
-blameAgeColor age
-  | age < 0.25 = "rgb(240,244,248)"  -- pale grey-blue
-  | age < 0.5  = "rgb(238,236,228)"  -- warm grey
-  | age < 0.75 = "rgb(240,224,200)"  -- light tan
-  | age < 0.9  = "rgb(238,196,160)"  -- warm peach
-  | otherwise  = "rgb(232,168,124)"  -- warm amber
-
 -- | CTA bar shown below the arc diagram with scroll hint and editor stub.
 renderCtaBar :: forall m. Int -> H.ComponentHTML Action () m
 renderCtaBar declCount =
   HH.div
     [ HP.style "display: flex; justify-content: space-between; align-items: center; margin: 4px 0 0 0;" ]
     [ HH.span
-        [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
-        , HE.onMouseEnter \_ -> ArcNodeHovered Nothing
-        , HE.onClick \_ -> ScrollToLanes
-        ]
-        [ HH.text ("\x2193 " <> show declCount <> " declarations below") ]
+        [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999;" ]
+        [ HH.text (show declCount <> " declarations") ]
     , HH.div [ HP.style "display: flex; gap: 12px;" ]
         [ HH.span
             [ HP.style "font-family: 'Fira Code', monospace; font-size: 10px; color: #999; cursor: pointer; transition: color 150ms ease;"
@@ -1014,7 +887,9 @@ renderSparklineRow state =
       hasSparkline = nBars > 0
       hasBubblepack = not (Array.null state.lastInput.declarations)
   in HH.div
-    [ HP.style "margin: -12px -16px 12px -16px; padding: 6px 16px; background: #D4C9A8; border-bottom: 1px solid #999; display: flex; align-items: center; gap: 12px; height: 52px;" ]
+    [ HP.class_ (HH.ClassName "page-subnav")
+    , HP.style "margin: -12px -16px 12px -16px; height: 52px;"
+    ]
     ( (if hasBubblepack then [ renderModuleBubblepack state ] else [])
     <> (if hasSparkline then [ renderSparklineSvg state ] else [])
     <> [ HH.span
@@ -1387,89 +1262,6 @@ renderInlineRef _annIdx _refIdx cell =
     ]
     [ HH.text cell.name ]
 
-renderLane :: forall m. MSM.Lane -> H.ComponentHTML Action () m
-renderLane lane =
-  HH.div [ HP.style "margin-bottom: 16px;" ]
-    [ renderLaneHeader lane
-    , HH.div
-        [ HP.style "columns: 440px; column-gap: 8px;" ]
-        (lane.cells <#> renderFullCell)
-    ]
-
--- | Shared lane header
-renderLaneHeader :: forall m. MSM.Lane -> H.ComponentHTML Action () m
-renderLaneHeader lane =
-  HH.div
-    [ HP.style $ "display:flex; align-items:center; gap:8px; padding:4px 0; margin-bottom:6px; border-bottom: 2px solid " <> lane.accent <> ";" ]
-    [ HH.span
-        [ HP.style $ "font-family: 'Courier New', Courier, monospace; font-size:11px; font-weight:700; color:" <> lane.accent <> "; text-transform:uppercase; letter-spacing:0.5px;" ]
-        [ HH.text lane.label ]
-    , HH.span
-        [ HP.style $ "font-size:9px; padding:1px 5px; border-radius:8px; background:" <> lane.accent <> "; color:white; font-weight:600;" ]
-        [ HH.text (show (Array.length lane.cells)) ]
-    ]
-
--- =============================================================================
--- Cell renderers
--- =============================================================================
-
--- | Render a full-size cell for all declaration kinds.
--- | Structured content is set via the innerHTML DOM property so that
--- | Halogen applies it during its normal VDOM-to-DOM patch — no post-render
--- | injection or timing hacks required.
-renderFullCell :: forall m. MSM.MeasuredCell -> H.ComponentHTML Action () m
-renderFullCell cell =
-  let
-    baseProps =
-      [ HP.id ("sig-cell-" <> cell.name)
-      , HP.class_ (HH.ClassName "sigmap-cell")
-      , HP.style $ "break-inside:avoid;"
-          <> " margin-bottom:6px;"
-          <> " overflow:auto;"
-          <> " padding:" <> show MSM.cellPad <> "px;"
-          <> " box-sizing:border-box;"
-          <> " background:" <> MSM.kindBackground cell.kind <> ";"
-          <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
-          <> " border-radius:3px;"
-          <> " cursor:pointer;"
-      , HE.onClick \_ -> DiagramNodeClicked cell.name
-      ]
-  in case cellHtml cell of
-    Just html ->
-      HH.div (baseProps <> [ HP.prop (PropName "innerHTML") html ]) []
-    Nothing ->
-      HH.div baseProps
-        [ HH.div
-            [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
-            [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
-        ]
-
--- | Generate the HTML string for a cell's content. Returns Nothing for
--- | plain-text-only cells (no structured data, no AST).
-cellHtml :: MSM.MeasuredCell -> Maybe String
-cellHtml cell = case cell.dataDecl of
-  Just dd -> Just $ SigTree.renderDataDecl
-    { name: cell.name, typeParams: dd.typeParams, constructors: dd.constructors, keyword: dd.keyword }
-  Nothing -> case cell.classDecl of
-    Just cd ->
-      let
-        classHtml = SigTree.renderClassDecl
-          { name: cell.name, typeParams: cd.typeParams, superclasses: cd.superclasses, methods: cd.methods }
-        instancesHtml =
-          if Array.null cd.instances then ""
-          else renderInstancesHtml cd.instances
-      in Just (classHtml <> instancesHtml)
-    Nothing -> case cell.typeSynonym of
-      Just ts -> Just $ SigTree.renderTypeSynonym
-        { name: cell.name, typeParams: ts.typeParams, body: ts.body }
-      Nothing -> case cell.ast of
-        Just ast ->
-          if cell.foreignImport
-          then Just $ SigTree.renderForeignImport { name: cell.name, ast }
-          else Just $ SigTree.renderSignature
-            { name: cell.name, sig: cell.sig, ast, typeParams: [], className: Nothing }
-        Nothing -> Nothing
-
 -- =============================================================================
 -- Action Handlers
 -- =============================================================================
@@ -1504,10 +1296,9 @@ handleAction = case _ of
     let callsChanged = Map.size input.functionCalls /= Map.size state.lastInput.functionCalls
     H.modify_ _ { lastInput = input, annotations = input.annotations }
     when ((changed || callsChanged) && state.initialized) do
-      H.modify_ _ { lanes = [], measuredCells = [], arcLayout = Nothing, layerLayout = Nothing
+      H.modify_ _ { measuredCells = [], arcLayout = Nothing, layerLayout = Nothing
                    , declGraph = Nothing, declDecomp = Nothing
-                   , subDeclAnalysis = Nothing, subDeclGraph = Nothing
-                   , gitBlameData = Nothing, gitBlameLoading = false }
+                   , subDeclAnalysis = Nothing, subDeclGraph = Nothing }
       renderSignatureMap input
       afterState' <- H.get
       case afterState'.diagramMode of
@@ -1545,26 +1336,7 @@ handleAction = case _ of
     case mode of
       DeclStructureView -> renderDeclStructure
       ConcernClusterView -> renderConcernClusters
-      GitBlameView -> do
-        st <- H.get
-        case st.gitBlameData of
-          Just _ -> pure unit  -- cached
-          Nothing -> do
-            H.modify_ _ { gitBlameLoading = true }
-            result <- liftAff $ Loader.fetchModuleBlame st.lastInput.moduleName
-            case result of
-              Right blame -> H.modify_ _ { gitBlameData = Just blame, gitBlameLoading = false }
-              Left err -> do
-                log $ "[GitBlame] Error: " <> err
-                H.modify_ _ { gitBlameLoading = false }
       _ -> pure unit
-
-  ScrollToLanes -> do
-    state <- H.get
-    case Array.head state.lanes >>= (_.cells >>> Array.head) of
-      Just firstCell ->
-        liftEffect $ DOMHelpers.scrollElementIntoView ("sig-cell-" <> firstCell.name)
-      Nothing -> pure unit
 
   OpenInEditor -> do
     state <- H.get
@@ -1686,14 +1458,6 @@ handleAction = case _ of
         H.modify_ _ { sourcePreview = Nothing }
         H.raise (DeclarationClicked state.lastInput.packageName state.lastInput.moduleName sp.declarationName)
 
-  BlameLineClicked lineNum -> do
-    state <- H.get
-    case state.gitBlameData of
-      Just blame -> do
-        let uri = "vscode://file/" <> blame.filePath <> ":" <> show lineNum
-        liftEffect $ openUri uri
-      Nothing -> pure unit
-
 -- | Fetch numstat data for sparkline (pure SVG render happens via Halogen re-render)
 loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit
 loadSparkline pkgName modName = do
@@ -1706,7 +1470,7 @@ loadSparkline pkgName modName = do
       log $ "[Sparkline] " <> modName <> ": " <> show (Array.length bars) <> " commits"
       H.modify_ _ { sparklineBars = bars }
 
--- | Prepare cells, group into lanes, compute arc layout, then update state.
+-- | Prepare cells, compute arc layout, then update state.
 renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
 renderSignatureMap input = do
   state <- H.get
@@ -1718,7 +1482,6 @@ renderSignatureMap input = do
     , onDeclarationClick: Just onDeclClick
     }
     input.declarations
-  let newLanes = MSM.groupIntoLanes measured
   let layoutInput = { moduleName: input.moduleName
         , declarations: input.declarations
         , functionCalls: input.functionCalls
@@ -1768,7 +1531,7 @@ renderSignatureMap input = do
         Just a -> Array.length a.caseExpressions > 0
         Nothing -> false
   let { mode: defaultMode, reason } = chooseDiagramMode mLayerLayout declDecomp hasConcerns
-  H.modify_ _ { lanes = newLanes, measuredCells = measured
+  H.modify_ _ { measuredCells = measured
                , arcLayout = mArcLayout, layerLayout = mLayerLayout
                , declGraph = Just declGraph, declDecomp = Just declDecomp
                , subDeclAnalysis = mAnalysis, subDeclGraph = mSubDeclGraph
@@ -1901,20 +1664,3 @@ makeDeclarationClickCallback mListener pkgName modName declName = case mListener
   Just listener -> HS.notify listener (HandleDeclarationClick pkgName modName declName)
   Nothing -> log $ "[ModuleStructureViz] No listener for decl click: " <> pkgName <> "/" <> modName <> "/" <> declName
 
--- | Build HTML for the instances section of a class card.
-renderInstancesHtml :: Array { name :: String, sig :: Maybe String } -> String
-renderInstancesHtml instances =
-  let
-    count = Array.length instances
-    instanceItems = Array.foldl (\acc inst ->
-      acc <> "<li class=\"sig-class-instance\">"
-        <> "<code class=\"sig-class-instance-name\">" <> inst.name <> "</code>"
-        <> "</li>"
-    ) "" instances
-  in
-    "<div class=\"sig-class-instances\">"
-    <> "<div class=\"sig-class-instances-header\">"
-    <> show count <> " instance" <> (if count == 1 then "" else "s")
-    <> "</div>"
-    <> "<ul class=\"sig-class-instance-list\">" <> instanceItems <> "</ul>"
-    <> "</div>"
