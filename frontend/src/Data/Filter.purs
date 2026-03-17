@@ -93,13 +93,15 @@ computeTransitiveDeps roots packages =
 
 -- | Filter SimNodes based on scope
 -- | Used by BubblePackBeeswarmViz for project-level filtering
--- | Uses the source field: "workspace" = local, "registry"/"extra" = dependencies
+-- | Keeps both PackageNodes and their child ModuleNodes for visible packages
 filterNodesByScope :: BeeswarmScope -> Array SimNode -> Array Package -> Array SimNode
 filterNodesByScope scope nodes _packages = case scope of
   AllPackages -> nodes
   ProjectOnly ->
-    -- Local packages only (source == "workspace")
-    Array.filter (\n -> n.source == "workspace") nodes
+    -- Keep workspace packages and ALL their modules
+    let visiblePkgs = Set.fromFoldable $
+          Array.filter (\n -> n.source == "workspace") nodes <#> _.package
+    in Array.filter (\n -> Set.member n.package visiblePkgs) nodes
   ProjectWithDeps ->
     -- Local + registry (include all for now)
     nodes

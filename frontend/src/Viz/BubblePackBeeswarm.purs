@@ -593,25 +593,26 @@ packageNodeHATS callbacks node =
               []
         ]
         -- Source indicator for registry/extra packages
-        <> let letter = if node.source == "registry" then "p"
-                        else if node.source == "extra" then "e"
-                        else ""
-               fontSize = max 8.0 (node.r * 0.25)
-           in if letter /= "" && node.r > 20.0
-              then [ elem Text
-                       [ staticStr "x" "0"
-                       , thunkedNum "y" (-(node.r - fontSize))
-                       , staticStr "text-anchor" "middle"
-                       , staticStr "dominant-baseline" "central"
-                       , thunkedStr "font-size" (show fontSize)
-                       , staticStr "fill" "rgba(0,0,0,0.3)"
-                       , staticStr "font-family" "'Courier New', Courier, monospace"
-                       , staticStr "pointer-events" "none"
-                       , thunkedStr "textContent" letter
-                       ]
-                       []
-                   ]
-              else []
+        <> (let letter = if node.source == "registry" then "p"
+                         else if node.source == "extra" then "e"
+                         else ""
+                fontSize = max 8.0 (node.r * 0.25)
+            in if letter /= "" && node.r > 20.0
+               then [ elem Text
+                        [ staticStr "x" "0"
+                        , thunkedNum "y" (-(node.r - fontSize))
+                        , staticStr "text-anchor" "middle"
+                        , staticStr "dominant-baseline" "central"
+                        , thunkedStr "font-size" (show fontSize)
+                        , staticStr "fill" "rgba(0,0,0,0.3)"
+                        , staticStr "font-family" "'Courier New', Courier, monospace"
+                        , staticStr "pointer-events" "none"
+                        , thunkedStr "textContent" letter
+                        ]
+                        []
+                    ]
+               else []
+           )
         -- Module circles inside
         <> map (moduleCircleHATS callbacks node) node.modules
         <>
