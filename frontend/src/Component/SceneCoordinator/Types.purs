@@ -18,6 +18,9 @@ module CE2.Component.SceneCoordinator.Types
   , pushHistoryState
   , replaceHistoryState
   , readPopState
+  , mkHistoryState
+  , historyFocalPackage
+  , historyScope
   -- Slot proxies
   , _bubblePackBeeswarmViz
   , _galaxyBeeswarmViz
@@ -93,36 +96,70 @@ import CE2.Component.SlideOutPanel as SlideOutPanel
 
 import CE2.Data.Loader as Loader
 import CE2.Scene (Scene)
-import CE2.Types (ColorMode, BeeswarmScope, RefreshPhase, PackageReachability, PackageClusters, PackagePurity)
+import CE2.Types (ColorMode, BeeswarmScope(..), RefreshPhase, PackageReachability, PackageClusters, PackagePurity)
 import CE2.Component.SceneCoordinator.Pure (ViewMode)
 
 -- =============================================================================
 -- Browser History (pure PureScript, no FFI)
 -- =============================================================================
 
-type HistoryState = { scene :: String, viewMode :: String }
+type HistoryState =
+  { scene :: String
+  , viewMode :: String
+  , focalPackage :: String  -- "" for Nothing, package name for Just
+  , scope :: String         -- "all", "project", "deps", "transitive"
+  }
 
-pushHistoryState :: String -> String -> Effect Unit
-pushHistoryState sceneStr viewModeStr = do
+pushHistoryState :: HistoryState -> Effect Unit
+pushHistoryState hs = do
   w <- window
   h <- Win.history w
-  let st = unsafeToForeign { scene: sceneStr, viewMode: viewModeStr }
-  History.pushState st (History.DocumentTitle "") (History.URL "") h
+  History.pushState (unsafeToForeign hs) (History.DocumentTitle "") (History.URL "") h
 
-replaceHistoryState :: String -> String -> Effect Unit
-replaceHistoryState sceneStr viewModeStr = do
+replaceHistoryState :: HistoryState -> Effect Unit
+replaceHistoryState hs = do
   w <- window
   h <- Win.history w
-  let st = unsafeToForeign { scene: sceneStr, viewMode: viewModeStr }
-  History.replaceState st (History.DocumentTitle "") (History.URL "") h
+  History.replaceState (unsafeToForeign hs) (History.DocumentTitle "") (History.URL "") h
 
--- | Read scene/viewMode from a PopStateEvent, returning Nothing if state is null
+-- | Read history state from a PopStateEvent, returning Nothing if state is null
 readPopState :: WE.Event -> Maybe HistoryState
 readPopState evt = do
   popEvt <- PopStateEvent.fromEvent evt
   let st = PopStateEvent.state popEvt
   if isNull st || isUndefined st then Nothing
   else Just (unsafeFromForeign st :: HistoryState)
+
+-- | Build a HistoryState from typed values
+mkHistoryState :: String -> String -> Maybe String -> BeeswarmScope -> HistoryState
+mkHistoryState sceneStr viewModeStr mFocal scope =
+  { scene: sceneStr
+  , viewMode: viewModeStr
+  , focalPackage: case mFocal of
+      Just pkg -> pkg
+      Nothing -> ""
+  , scope: scopeToStr scope
+  }
+  where
+  scopeToStr = case _ of
+    AllPackages -> "all"
+    ProjectOnly -> "project"
+    ProjectWithDeps -> "deps"
+    ProjectWithTransitive -> "transitive"
+
+-- | Extract focal package from history state
+historyFocalPackage :: HistoryState -> Maybe String
+historyFocalPackage hs =
+  if hs.focalPackage == "" then Nothing else Just hs.focalPackage
+
+-- | Extract scope from history state
+historyScope :: HistoryState -> BeeswarmScope
+historyScope hs = case hs.scope of
+  "all" -> AllPackages
+  "project" -> ProjectOnly
+  "deps" -> ProjectWithDeps
+  "transitive" -> ProjectWithTransitive
+  _ -> ProjectOnly
 
 -- =============================================================================
 -- Types
@@ -402,7 +439,7 @@ data Action
   = Initialize
   | Receive Input
   | NavigateTo Scene
-  | HandlePopstate Scene ViewMode     -- Browser back/forward button pressed
+  | HandlePopstate Scene ViewMode (Maybe String) BeeswarmScope  -- Browser back/forward: scene, viewMode, focalPackage, scope
   | HandleBubblePackBeeswarmOutput BubblePackBeeswarmViz.Output
   | HandleGalaxyBeeswarmOutput GalaxyBeeswarmViz.Output
   | HandleGalaxyTreemapOutput GalaxyTreemapViz.Output

@@ -181,25 +181,25 @@ handleAction = case _ of
       -- Full re-render needed
       log "[BubblePackBeeswarmViz] Data changed, re-rendering"
       startVisualization input
-    else if scopeChanged || focalChanged then do
-      -- Use GUP for scope or focal change
-      log $ "[BubblePackBeeswarmViz] Scope/focal changed: scope=" <> show input.scope
-          <> ", focal=" <> show input.focalPackage
+    else if focalChanged then do
+      -- Focal change = different package neighborhood, full re-render
+      log $ "[BubblePackBeeswarmViz] Focal changed to " <> show input.focalPackage <> ", re-rendering"
+      startVisualization input
+    else if scopeChanged then do
+      -- Use GUP for scope change (same packages, different filter)
+      log $ "[BubblePackBeeswarmViz] Scope changed: scope=" <> show input.scope
       case state.handle of
         Just handle -> do
-          -- Filter nodes based on scope and focal
           let filteredNodes = applyFilters input
               callbacks = makeCallbacks state.actionListener
           log $ "[BubblePackBeeswarmViz] Filtering to " <> show (Array.length filteredNodes) <> " nodes"
           liftEffect $ BubblePackBeeswarm.setScope handle callbacks filteredNodes
-          -- Re-apply colors after GUP
           liftEffect $ BubblePackBeeswarm.updateColors
             C.bubblePackBeeswarmContainer
             input.theme
             input.colorMode
         Nothing -> do
-          -- No handle - recover by re-initializing
-          log "[BubblePackBeeswarmViz] WARNING: No handle for scope/focal change, re-initializing"
+          log "[BubblePackBeeswarmViz] WARNING: No handle for scope change, re-initializing"
           startVisualization input
     else if themeChanged || colorModeChanged then do
       -- Just update colors in place

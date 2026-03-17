@@ -862,7 +862,7 @@ handleAction = case _ of
     state <- H.get
 
     -- Replace current history state with initial scene (so back works from start)
-    liftEffect $ replaceHistoryState (sceneToString state.scene) (viewModeToString state.viewMode)
+    liftEffect $ replaceHistoryState $ mkHistoryState (sceneToString state.scene) (viewModeToString state.viewMode) state.focalPackage state.scope
 
     -- Set up popstate listener for back/forward navigation
     { emitter: historyEmitter, listener: historyListener } <- liftEffect HS.create
@@ -876,7 +876,7 @@ handleAction = case _ of
     popstateListener <- liftEffect $ ET.eventListener \e ->
       case readPopState e of
         Just hs -> case sceneFromString hs.scene of
-          Just scene -> HS.notify historyListener (HandlePopstate scene (viewModeFromString hs.viewMode))
+          Just scene -> HS.notify historyListener (HandlePopstate scene (viewModeFromString hs.viewMode) (historyFocalPackage hs) (historyScope hs))
           Nothing -> pure unit
         Nothing -> pure unit
 
@@ -1005,8 +1005,9 @@ handleAction = case _ of
       }
 
     -- Push to browser history (enables back/forward buttons)
-    -- ViewMode resets to PrimaryView on scene change
-    liftEffect $ pushHistoryState (sceneToString targetScene) (viewModeToString PrimaryView)
+    -- ViewMode resets to PrimaryView on scene change; preserve focal and scope
+    currentState <- H.get
+    liftEffect $ pushHistoryState $ mkHistoryState (sceneToString targetScene) (viewModeToString PrimaryView) currentState.focalPackage currentState.scope
 
     -- If reachability mode is active, recompute for the target scene
     when (state.colorMode == Reachability) $ case targetScene of
@@ -1041,27 +1042,25 @@ handleAction = case _ of
 
   -- Browser back/forward button navigation
   -- Navigate to the scene without pushing to history (it's already there)
-  HandlePopstate targetScene targetViewMode -> do
+  HandlePopstate targetScene targetViewMode targetFocal targetScope -> do
     state <- H.get
-    log $ "[SceneCoordinator] Popstate navigation to: " <> show targetScene <> " viewMode=" <> show targetViewMode
+    log $ "[SceneCoordinator] Popstate navigation to: " <> show targetScene
+        <> " viewMode=" <> show targetViewMode
+        <> " focal=" <> show targetFocal
+        <> " scope=" <> show targetScope
 
-    -- Skip if already at this scene with same viewMode
-    when (state.scene /= targetScene || state.viewMode /= targetViewMode) do
+    -- Skip if already at this scene with same viewMode and focal
+    when (state.scene /= targetScene || state.viewMode /= targetViewMode || state.focalPackage /= targetFocal) do
       -- Clear existing viz containers and dismiss any visible tooltips
       liftEffect clearAllVizContainers
       liftEffect clearAllHighlights
 
-      -- Determine appropriate scope for the scene
-      let scopeForScene = case targetScene of
-            SolarSwarm -> ProjectOnly
-            _ -> state.scope
-
       H.modify_ _
         { scene = targetScene
         , viewMode = targetViewMode
-        , scope = scopeForScene
+        , scope = targetScope
         , capturedPositions = Nothing  -- Clear stale positions
-        , focalPackage = Nothing  -- Clear focal when navigating via history
+        , focalPackage = targetFocal   -- Restore focal from history
         , reachabilityData = Nothing  -- Clear stale reachability (package-specific)
         , clusterData = Nothing       -- Clear stale cluster data (package-specific)
         , purityData = Nothing        -- Clear stale purity data (package-specific)
@@ -1378,7 +1377,7 @@ handleAction = case _ of
     log $ "[SceneCoordinator] Setting view mode: " <> show targetMode
     H.modify_ _ { viewMode = targetMode }
     -- Push view mode change to browser history
-    liftEffect $ pushHistoryState (sceneToString state.scene) (viewModeToString targetMode)
+    liftEffect $ pushHistoryState $ mkHistoryState (sceneToString state.scene) (viewModeToString targetMode) state.focalPackage state.scope
     -- Re-render the visualization with new mode
     newState <- H.get
     Loaders.prepareSceneData newState
