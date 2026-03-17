@@ -1,29 +1,17 @@
--- | Scene Coordinator Component (Streamlined)
+-- | Scene Coordinator Component
 -- |
--- | Streamlined coordinator for "YouTube teaser" navigation path.
--- | Clean linear navigation: Treemap → Beeswarm → SolarSwarm → Neighborhood → PkgTreemap
--- |
--- | Key features:
--- | - 6 scenes (down from 12)
--- | - Animated transitions between scenes
--- | - Linear navigation with instant back jumps
--- | - Scope filtering (GUP) for beeswarm views
+-- | Thin dispatcher: owns component lifecycle, render, handleAction routing,
+-- | and output handlers. Data loading, overlay toggles, and search are
+-- | delegated to sibling modules.
 module CE2.Component.SceneCoordinator
-  ( component
-  , Input
-  , Output(..)
-  , Slot
-  , Query(..)
-  , V2Data
-  , TransitionState
+  ( module CE2.Component.SceneCoordinator.Types
+  , component
   ) where
 
 import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
-import Data.Int as Data.Int
-import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set as Set
@@ -35,27 +23,23 @@ import Effect.Aff as Aff
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
-import Foreign (Foreign, unsafeToForeign, unsafeFromForeign, isNull, isUndefined)
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
-import Type.Proxy (Proxy(..))
-import Web.Event.Event as WE
 import Web.Event.Event (EventType(..))
+import Web.Event.Event as WE
 import Web.Event.EventTarget (addEventListener, removeEventListener, eventListener) as ET
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (toEventTarget) as HTMLDoc
-import Web.HTML.Window (document, history, toEventTarget) as Win
-import Web.HTML.History (pushState, replaceState, DocumentTitle(..), URL(..)) as History
-import Web.HTML.Event.PopStateEvent as PopStateEvent
-import Web.UIEvent.KeyboardEvent (KeyboardEvent, toEvent, key, repeat)
+import Web.HTML.Window (document, toEventTarget) as Win
+import Web.UIEvent.KeyboardEvent (toEvent, key, repeat)
 import Web.UIEvent.KeyboardEvent as KE
 
 -- PSD3 Imports
 import Hylograph.HATS.InterpreterTick (clearContainer, clearAllHighlights)
 
--- Child visualization components (streamlined)
+-- Child visualization components
 import CE2.Component.BubblePackBeeswarmViz as BubblePackBeeswarmViz
 import CE2.Component.GalaxyBeeswarmViz as GalaxyBeeswarmViz
 import CE2.Component.ModuleTreemapEnrichedViz as ModuleTreemapEnrichedViz
@@ -88,376 +72,18 @@ import CE2.Component.Header.Navigation as Navigation
 import CE2.Component.Header.Search as Search
 
 import CE2.Containers as C
-import CE2.Data.CoChange as CoChange
 import CE2.Data.Loader as Loader
 import CE2.Scene (Scene(..), sceneFromString, sceneToString)
 import CE2.Viz.DependencyMatrix as DependencyMatrix
-import CE2.Types (ColorMode(..), BeeswarmScope(..), RefreshPhase(..), themeColors, isDarkTheme, PackageReachability, PackageClusters, PackagePurity)
-import CE2.Viz.DeclarationArcDiagram (isEffectful) as ArcDiagram
+import CE2.Types (ColorMode(..), BeeswarmScope(..), RefreshPhase(..), themeColors, isDarkTheme)
 import CE2.Component.SceneCoordinator.Pure (ViewMode(..), viewModeToString, viewModeFromString)
 import CE2.Component.SceneCoordinator.Pure as Pure
 
--- =============================================================================
--- Browser History (pure PureScript, no FFI)
--- =============================================================================
-
-type HistoryState = { scene :: String, viewMode :: String }
-
-pushHistoryState :: String -> String -> Effect Unit
-pushHistoryState sceneStr viewModeStr = do
-  w <- window
-  h <- Win.history w
-  let st = unsafeToForeign { scene: sceneStr, viewMode: viewModeStr }
-  History.pushState st (History.DocumentTitle "") (History.URL "") h
-
-replaceHistoryState :: String -> String -> Effect Unit
-replaceHistoryState sceneStr viewModeStr = do
-  w <- window
-  h <- Win.history w
-  let st = unsafeToForeign { scene: sceneStr, viewMode: viewModeStr }
-  History.replaceState st (History.DocumentTitle "") (History.URL "") h
-
--- | Read scene/viewMode from a PopStateEvent, returning Nothing if state is null
-readPopState :: WE.Event -> Maybe HistoryState
-readPopState evt = do
-  popEvt <- PopStateEvent.fromEvent evt
-  let st = PopStateEvent.state popEvt
-  if isNull st || isUndefined st then Nothing
-  else Just (unsafeFromForeign st :: HistoryState)
-
--- =============================================================================
--- Types
--- =============================================================================
-
--- | V2 data for specialized visualizations
-type V2Data =
-  { packages :: Array Loader.V2Package
-  , modules :: Array Loader.V2ModuleListItem
-  , imports :: Array Loader.V2ModuleImports
-  }
-
--- | Transition state for animated scene changes
--- | Captures positions from source scene to initialize target scene
-type TransitionState =
-  { from :: Scene
-  , to :: Scene
-  , positions :: Map String { x :: Number, y :: Number, r :: Number }
-  , progress :: Number  -- 0.0 to 1.0
-  }
-
--- | Input from parent (AppShell)
-type Input =
-  { modelData :: Maybe Loader.LoadedModel
-  , v2Data :: Maybe V2Data
-  , packageSetData :: Maybe Loader.PackageSetData
-  , initialScene :: Scene
-  }
-
--- | Output to parent
-data Output
-  = RequestPackageSetData
-  | SceneChanged Scene
-  | ProjectLoaded          -- A project was loaded; AppShell should re-fetch all data
-  | RequestDataRefresh (Array Loader.ProjectInfo)  -- User clicked Sync; re-run loader + re-fetch
-
--- | Slot type for parent component
-type Slot = H.Slot Query Output
-
--- | Queries from parent
-data Query a
-  = SetScene Scene a
-  | NotifyRefreshError String a  -- Refresh failed; set error state
-
--- | Child component slots (streamlined - removed debug components)
-type Slots =
-  ( bubblePackBeeswarmViz :: BubblePackBeeswarmViz.Slot Unit
-  , galaxyBeeswarmViz :: GalaxyBeeswarmViz.Slot Unit
-  , galaxyTreemapViz :: GalaxyTreemapViz.Slot Unit
-  , moduleTreemapViz :: ModuleTreemapEnrichedViz.Slot Unit
-  , moduleOverviewViz :: ModuleOverviewViz.Slot Unit
-  , declarationDetailViz :: DeclarationDetailViz.Slot Unit
-  , pkgModuleBeeswarmViz :: PkgModuleBeeswarmViz.Slot Unit
-  , typeClassGridViz :: H.Slot TypeClassGridViz.Query TypeClassGridViz.Output Unit
-  , moduleStructureViz :: ModuleStructureViz.Slot Unit
-  , moduleSignaturesViz :: ModuleSignaturesViz.Slot Unit
-  , gitOverviewViz :: GitOverviewViz.Slot Unit
-  , dependencyChordViz :: DependencyChordViz.Slot String
-  , dependencyAdjacencyViz :: DependencyAdjacencyViz.Slot String
-  , slideOutPanel :: SlideOutPanel.Slot Unit
-  , packageReportViz :: PackageReportViz.Slot Unit
-  , annotationReportViz :: AnnotationReportViz.Slot Unit
-  , landingPageViz :: LandingPageViz.Slot Unit
-  , projectManagementViz :: ProjectManagementViz.Slot Unit
-  , projectAnatomyViz :: ProjectAnatomyViz.Slot Unit
-  , namespaceTreeViz :: H.Slot NamespaceTreeViz.Query NamespaceTreeViz.Output Unit
-  , packageAnatomyViz :: PackageAnatomyViz.Slot Unit
-  , moduleAnatomyViz :: ModuleAnatomyViz.Slot Unit
-  , compareModuleViz :: CompareModuleViz.Slot Unit
-  , snapshotManagementViz :: SnapshotManagementViz.Slot Unit
-  , commitModuleGridViz :: CommitModuleGridViz.Slot Unit
-  , coChangeCubeViz :: CoChangeCubeViz.Slot Unit
-  )
-
-_bubblePackBeeswarmViz :: Proxy "bubblePackBeeswarmViz"
-_bubblePackBeeswarmViz = Proxy
-
-_galaxyBeeswarmViz :: Proxy "galaxyBeeswarmViz"
-_galaxyBeeswarmViz = Proxy
-
-_galaxyTreemapViz :: Proxy "galaxyTreemapViz"
-_galaxyTreemapViz = Proxy
-
-_moduleTreemapViz :: Proxy "moduleTreemapViz"
-_moduleTreemapViz = Proxy
-
-_moduleOverviewViz :: Proxy "moduleOverviewViz"
-_moduleOverviewViz = Proxy
-
-_declarationDetailViz :: Proxy "declarationDetailViz"
-_declarationDetailViz = Proxy
-
-_pkgModuleBeeswarmViz :: Proxy "pkgModuleBeeswarmViz"
-_pkgModuleBeeswarmViz = Proxy
-
-_typeClassGridViz :: Proxy "typeClassGridViz"
-_typeClassGridViz = Proxy
-
-_moduleStructureViz :: Proxy "moduleStructureViz"
-_moduleStructureViz = Proxy
-
-_moduleSignaturesViz :: Proxy "moduleSignaturesViz"
-_moduleSignaturesViz = Proxy
-
-_gitOverviewViz :: Proxy "gitOverviewViz"
-_gitOverviewViz = Proxy
-
-_dependencyChordViz :: Proxy "dependencyChordViz"
-_dependencyChordViz = Proxy
-
-_dependencyAdjacencyViz :: Proxy "dependencyAdjacencyViz"
-_dependencyAdjacencyViz = Proxy
-
-_slideOutPanel :: Proxy "slideOutPanel"
-_slideOutPanel = Proxy
-
-_packageReportViz :: Proxy "packageReportViz"
-_packageReportViz = Proxy
-
-_annotationReportViz :: Proxy "annotationReportViz"
-_annotationReportViz = Proxy
-
-_landingPageViz :: Proxy "landingPageViz"
-_landingPageViz = Proxy
-
-_projectManagementViz :: Proxy "projectManagementViz"
-_projectManagementViz = Proxy
-
-_projectAnatomyViz :: Proxy "projectAnatomyViz"
-_projectAnatomyViz = Proxy
-
-_namespaceTreeViz :: Proxy "namespaceTreeViz"
-_namespaceTreeViz = Proxy
-
-_packageAnatomyViz :: Proxy "packageAnatomyViz"
-_packageAnatomyViz = Proxy
-
-_moduleAnatomyViz :: Proxy "moduleAnatomyViz"
-_moduleAnatomyViz = Proxy
-
-_compareModuleViz :: Proxy "compareModuleViz"
-_compareModuleViz = Proxy
-
-_snapshotManagementViz :: Proxy "snapshotManagementViz"
-_snapshotManagementViz = Proxy
-
-_commitModuleGridViz :: Proxy "commitModuleGridViz"
-_commitModuleGridViz = Proxy
-
-_coChangeCubeViz :: Proxy "coChangeCubeViz"
-_coChangeCubeViz = Proxy
-
--- | Captured position for transitions (from treemap cells or beeswarm)
-type CapturedPosition = { name :: String, x :: Number, y :: Number, r :: Number }
-
--- | Module count threshold for skipping treemap overview
--- | Packages with fewer modules go directly to module flow view
--- | Larger packages show treemap first for orientation
-smallPackageThreshold :: Int
-smallPackageThreshold = 200
-
--- | Unified view mode for visualizations
--- | Component state - streamlined for teaser navigation
-type State =
-  { -- Current scene
-    scene :: Scene
-
-    -- Data from parent (immutable)
-  , modelData :: Maybe Loader.LoadedModel
-  , v2Data :: Maybe V2Data
-  , packageSetData :: Maybe Loader.PackageSetData
-
-    -- Scope (for GUP in beeswarm)
-  , scope :: BeeswarmScope
-
-    -- Focal package (for neighborhood filtering in SolarSwarm)
-    -- When set, SolarSwarm filters to show only this package + its deps/dependents
-  , focalPackage :: Maybe String
-
-    -- Color mode (persists through transitions)
-  , colorMode :: ColorMode
-
-    -- View mode (resets to PrimaryView on scene change)
-  , viewMode :: ViewMode
-
-    -- Transition (during animated transitions)
-  , transition :: Maybe TransitionState
-  , capturedPositions :: Maybe (Array CapturedPosition)  -- For animated transitions
-
-    -- Declaration stats for module bubblepack view (lazy loaded)
-  , declarationStats :: Maybe (Map.Map Int Loader.V2ModuleDeclarationStats)
-
-    -- Package declarations for enriched treemap (lazy loaded per package)
-  , packageDeclarations :: Map.Map Int (Array Loader.V2Declaration)
-
-    -- Function calls for declaration-level dependency highlighting (lazy loaded once)
-  , packageCalls :: Map.Map Int (Array Loader.V2FunctionCall)
-  , allCallsLoaded :: Boolean
-
-    -- Module annotations (lazy loaded per module, keyed by module name)
-  , moduleAnnotations :: Map.Map String (Array Loader.V2Annotation)
-
-    -- All annotations (lazy loaded for AnnotationReport scene)
-  , allAnnotations :: Maybe (Array Loader.V2Annotation)
-
-    -- Panel state (tracked by coordinator for visibility)
-  , panelOpen :: Boolean
-  , panelContent :: SlideOutPanel.PanelContent
-
-    -- Coordinated hover state
-  , hoveredPackage :: Maybe String    -- Package name currently being hovered
-  , hoveredModule :: Maybe { packageName :: String, moduleName :: String }  -- Module being hovered
-
-    -- Type class stats (lazy loaded for TypeClassGrid scene)
-  , typeClassStats :: Maybe Loader.TypeClassStats
-
-    -- Namespace tree data (lazy loaded for NamespaceTree scene)
-  , namespaceTreeData :: Maybe (Array Loader.V2NamespaceTreeNode)
-
-    -- Namespace → packages mapping (lazy loaded for NamespaceTree scene)
-  , namespacePackages :: Maybe (Array Loader.NamespacePackageEntry)
-
-    -- Git status (lazy loaded when Git mode activated)
-  , gitStatus :: Maybe Loader.GitStatusData
-
-    -- Reachability data (lazy computed when Reachability mode activated)
-  , reachabilityData :: Maybe PackageReachability
-
-    -- Reachability peek (hold R key to overlay text labels)
-  , reachabilityPeek :: Boolean
-  , keyboardCleanup :: Maybe (Effect Unit)
-
-    -- Cluster data (lazy computed when Cluster mode activated)
-  , clusterData :: Maybe PackageClusters
-
-    -- Purity data (lazy computed when P key peek activated)
-  , purityData :: Maybe PackagePurity
-  , purityPeek :: Boolean
-
-    -- Structural complexity data (lazy loaded when StructuralComplexity mode activated)
-  , complexityData :: Maybe (Map.Map String Loader.ModuleStructuralComplexity)
-  , complexityPeek :: Boolean
-
-    -- Change frequency data (lazy loaded from git commit history)
-  , changeFrequencyData :: Maybe (Map.Map String Number)
-
-    -- Co-change cluster data (lazy computed from git commit history)
-  , coChangeClusterData :: Maybe (Map.Map String Int)
-
-    -- Size-by-change-frequency toggle
-  , sizeByChangeFrequency :: Boolean
-
-    -- Infrastructure link filtering (Tidy mode)
-  , hideInfraLinks :: Boolean  -- When true, hide dependency links to low topo-layer packages
-
-    -- Project management
-  , loadedProjects :: Array Loader.ProjectInfo
-
-    -- Browser history integration
-  , historyCleanup :: Maybe (Effect Unit)  -- Cleanup function for popstate listener
-
-    -- Incremental refresh
-  , refreshPhase :: RefreshPhase
-
-    -- Scene loading (shows wait cursor during data fetch)
-  , sceneLoading :: Boolean
-
-    -- Search typeahead
-  , searchQuery :: String
-  , searchResults :: Array Loader.UnifiedSearchResult
-  , searchSelectedIndex :: Int
-  , searchOpen :: Boolean
-  , searchSeqId :: Int  -- Monotonic counter for debounce (ignore stale responses)
-  }
-
--- | Actions - streamlined
-data Action
-  = Initialize
-  | Receive Input
-  | NavigateTo Scene
-  | HandlePopstate Scene ViewMode     -- Browser back/forward button pressed
-  | HandleBubblePackBeeswarmOutput BubblePackBeeswarmViz.Output
-  | HandleGalaxyBeeswarmOutput GalaxyBeeswarmViz.Output
-  | HandleGalaxyTreemapOutput GalaxyTreemapViz.Output
-  | HandleModuleTreemapOutput ModuleTreemapEnrichedViz.Output
-  | HandleModuleOverviewOutput ModuleOverviewViz.Output
-  | HandleDeclarationDetailOutput DeclarationDetailViz.Output
-  | HandleModuleStructureOutput ModuleStructureViz.Output
-  | HandleModuleSignaturesOutput ModuleSignaturesViz.Output
-  | HandleGitOverviewOutput GitOverviewViz.Output
-  | HandlePackageReportOutput PackageReportViz.Output
-  | HandleTypeClassGridOutput TypeClassGridViz.Output
-  | HandleNamespaceTreeOutput NamespaceTreeViz.Output
-  | HandleAnnotationReportOutput AnnotationReportViz.Output
-  | HandleLandingPageOutput LandingPageViz.Output
-  | HandleProjectManagementOutput ProjectManagementViz.Output
-  | HandleProjectAnatomyOutput ProjectAnatomyViz.Output
-  | HandlePackageAnatomyOutput PackageAnatomyViz.Output
-  | HandleSnapshotManagementOutput SnapshotManagementViz.Output
-  | HandleCommitModuleGridOutput CommitModuleGridViz.Output
-  | HandleCoChangeCubeOutput CoChangeCubeViz.Output
-  | HandleModuleAnatomyOutput ModuleAnatomyViz.Output
-  | SetScope BeeswarmScope
-  | SetFocalPackage (Maybe String)        -- Set/clear focal package for neighborhood view
-  | SetViewMode ViewMode                  -- Switch between primary/matrix/chord
-  | HandleSlideOutPanelOutput SlideOutPanel.Output
-  | OpenModulePanel String String         -- packageName, moduleName
-  | OpenPackagePanel String               -- packageName - opens panel with first module
-  | ToggleGitMode                         -- Click toggle: GitStatus color mode
-  | ToggleTidyMode                        -- Click toggle: infrastructure link filtering
-  | ToggleReachabilityMode                -- Click toggle: reachability coloring
-  | ToggleClusterMode                     -- Click toggle: cluster coloring
-  | ToggleComplexityMode                  -- Click toggle: structural complexity coloring
-  | ToggleChangeFrequencyMode             -- Click toggle: change frequency heat map
-  | ToggleCoChangeClusterMode             -- Click toggle: co-change community coloring
-  | ToggleSizeByFrequency                 -- Click toggle: treemap sizing by change frequency
-  | ToggleReachabilityPeek               -- Click toggle for reachability peek
-  | TogglePurityPeek                     -- Click toggle for purity peek
-  | ToggleCouplingPeek                   -- Click toggle for coupling peek
-  -- Momentary keyboard peeks (hold key = show, release = revert)
-  | OverlayPeekOn String                  -- Key pressed — activate overlay by key name
-  | OverlayPeekOff                        -- Any overlay key released — revert to default
-  -- Incremental refresh (two-click confirmation)
-  | ArmSync                               -- First click: show "Confirm?" + start timeout
-  | ConfirmSync                           -- Second click: actually trigger sync
-  | RevertSyncArm                         -- Auto-revert pending state after timeout
-  | RequestRefresh                        -- Internal: actually starts the sync
-  | ClearRefreshDone                      -- Timer fires 1.5s after sync completion
-  -- Search typeahead
-  | SearchInput String                    -- User typed in search box
-  | SearchResultsReceived Int (Array Loader.UnifiedSearchResult)  -- Results arrived (seqId, results)
-  | SearchKeyDown KeyboardEvent           -- Keyboard event on search input
-  | SearchConfirmIndex Int                -- Mouse click on specific result
-  | SearchDismiss                         -- Escape or blur
+-- Extracted modules
+import CE2.Component.SceneCoordinator.Types
+import CE2.Component.SceneCoordinator.Loaders as Loaders
+import CE2.Component.SceneCoordinator.Overlays as Overlays
+import CE2.Component.SceneCoordinator.Search as Search.Handler
 
 -- =============================================================================
 -- Component
@@ -1291,7 +917,7 @@ handleAction = case _ of
 
     log "[SceneCoordinator] Keyboard listener for reachability peek enabled"
 
-    prepareSceneData state
+    Loaders.prepareSceneData state
 
   Receive input -> do
     state <- H.get
@@ -1343,7 +969,7 @@ handleAction = case _ of
         , coChangeClusterData = Nothing
         }
       newState <- H.get
-      prepareSceneData newState
+      Loaders.prepareSceneData newState
 
   NavigateTo targetScene -> do
     state <- H.get
@@ -1384,33 +1010,33 @@ handleAction = case _ of
 
     -- If reachability mode is active, recompute for the target scene
     when (state.colorMode == Reachability) $ case targetScene of
-      PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
-      PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
-      GalaxyTreemap -> computeAndStoreGlobalReachability
+      PkgTreemap pkg -> Overlays.computeAndStoreReachabilityForPeek pkg
+      PkgModuleBeeswarm pkg -> Overlays.computeAndStoreReachabilityForPeek pkg
+      GalaxyTreemap -> Overlays.computeAndStoreGlobalReachability
       _ -> pure unit
 
     -- If cluster mode is active and we're entering a package view, recompute
     when (state.colorMode == ClusterView) $ case targetScene of
-      PkgTreemap pkg -> computeAndStoreClusters pkg
-      PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
+      PkgTreemap pkg -> Overlays.computeAndStoreClusters pkg
+      PkgModuleBeeswarm pkg -> Overlays.computeAndStoreClusters pkg
       _ -> pure unit
 
     -- If change frequency mode is active, reload for the new package
     when (state.colorMode == ChangeFrequency) $ case targetScene of
-      PkgTreemap pkg -> loadChangeFrequencyData pkg
-      PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+      PkgTreemap pkg -> Loaders.loadChangeFrequencyData pkg
+      PkgModuleBeeswarm pkg -> Loaders.loadChangeFrequencyData pkg
       _ -> pure unit
 
     -- If co-change cluster mode is active, reload for the new package
     when (state.colorMode == CoChangeCluster) $ case targetScene of
-      PkgTreemap pkg -> loadCoChangeClusterData pkg
-      PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
+      PkgTreemap pkg -> Loaders.loadCoChangeClusterData pkg
+      PkgModuleBeeswarm pkg -> Loaders.loadCoChangeClusterData pkg
       _ -> pure unit
 
     H.raise (SceneChanged targetScene)
     H.modify_ _ { sceneLoading = true }
     newState <- H.get
-    prepareSceneData newState
+    Loaders.prepareSceneData newState
     H.modify_ _ { sceneLoading = false }
 
   -- Browser back/forward button navigation
@@ -1445,26 +1071,26 @@ handleAction = case _ of
 
       -- If reachability mode is active, recompute for the target scene
       when (state.colorMode == Reachability) $ case targetScene of
-        PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
-        PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
-        GalaxyTreemap -> computeAndStoreGlobalReachability
+        PkgTreemap pkg -> Overlays.computeAndStoreReachabilityForPeek pkg
+        PkgModuleBeeswarm pkg -> Overlays.computeAndStoreReachabilityForPeek pkg
+        GalaxyTreemap -> Overlays.computeAndStoreGlobalReachability
         _ -> pure unit
 
       -- If change frequency mode is active, reload for the new package
       when (state.colorMode == ChangeFrequency) $ case targetScene of
-        PkgTreemap pkg -> loadChangeFrequencyData pkg
-        PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
+        PkgTreemap pkg -> Loaders.loadChangeFrequencyData pkg
+        PkgModuleBeeswarm pkg -> Loaders.loadChangeFrequencyData pkg
         _ -> pure unit
 
       -- If co-change cluster mode is active, reload for the new package
       when (state.colorMode == CoChangeCluster) $ case targetScene of
-        PkgTreemap pkg -> loadCoChangeClusterData pkg
-        PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
+        PkgTreemap pkg -> Loaders.loadCoChangeClusterData pkg
+        PkgModuleBeeswarm pkg -> Loaders.loadCoChangeClusterData pkg
         _ -> pure unit
 
       H.raise (SceneChanged targetScene)
       newState <- H.get
-      prepareSceneData newState
+      Loaders.prepareSceneData newState
 
   HandleBubblePackBeeswarmOutput output -> case output of
     BubblePackBeeswarmViz.PackageClicked pkgName -> do
@@ -1755,266 +1381,27 @@ handleAction = case _ of
     liftEffect $ pushHistoryState (sceneToString state.scene) (viewModeToString targetMode)
     -- Re-render the visualization with new mode
     newState <- H.get
-    prepareSceneData newState
+    Loaders.prepareSceneData newState
 
-  ToggleGitMode -> do
-    state <- H.get
-    if state.colorMode == GitStatus
-      then do
-        -- Toggle OFF: return to default topo coloring
-        log "[SceneCoordinator] Git mode OFF"
-        H.modify_ _ { colorMode = FullRegistryTopo }
-      else do
-        -- Toggle ON: activate git mode and fetch status if needed
-        log "[SceneCoordinator] Git mode ON"
-        H.modify_ _ { colorMode = GitStatus }
-        -- Fetch git status if not already loaded
-        when (state.gitStatus == Nothing) do
-          log "[SceneCoordinator] Fetching git status..."
-          result <- liftAff Loader.fetchGitStatus
-          case result of
-            Right gitData -> do
-              log $ "[SceneCoordinator] Git status: "
-                  <> show (Array.length gitData.modified) <> " modified, "
-                  <> show (Array.length gitData.staged) <> " staged, "
-                  <> show (Array.length gitData.untracked) <> " untracked"
-              H.modify_ _ { gitStatus = Just gitData }
-            Left err ->
-              log $ "[SceneCoordinator] Failed to fetch git status: " <> err
-
-  ToggleTidyMode -> do
-    state <- H.get
-    let newVal = not state.hideInfraLinks
-        threshold = if newVal then 2 else 0
-    log $ "[SceneCoordinator] Tidy mode " <> (if newVal then "ON" else "OFF")
-        <> ", scene=" <> show state.scene
-        <> ", infraLayerThreshold=" <> show threshold
-    H.modify_ _ { hideInfraLinks = newVal }
-    -- Note: no clearAllHighlights here. All primary views are slot-managed and
-    -- handle their own HATS lifecycle. Calling clearAllHighlights from the parent
-    -- corrupts global HATS state before the child's deferred Receive can re-render.
-    -- Re-render current scene to apply/remove infrastructure link filtering
-    newState <- H.get
-    prepareSceneData newState
-
-  ToggleReachabilityMode -> do
-    state <- H.get
-    if state.colorMode == Reachability
-      then do
-        log "[SceneCoordinator] Reachability mode OFF"
-        H.modify_ _ { colorMode = FullRegistryTopo }
-      else do
-        log "[SceneCoordinator] Reachability mode ON"
-        H.modify_ _ { colorMode = Reachability }
-        -- Compute reachability for current package (if in a package view)
-        case state.scene of
-          PkgTreemap pkg -> computeAndStoreReachability pkg
-          PkgModuleBeeswarm pkg -> computeAndStoreReachability pkg
-          GalaxyTreemap -> computeAndStoreGlobalReachability
-          _ -> pure unit
-    where
-      computeAndStoreReachability pkg = do
-        state' <- H.get
-        case state'.v2Data of
-          Just v2 -> do
-            -- Find bundle module for this package (deterministic app detection)
-            let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
-                              >>= _.bundleModule
-                reach = Pure.computePackageReachability pkg bundleMod v2.imports v2.modules
-                modeLabel = if reach.isApp
-                  then case bundleMod of
-                    Just m  -> "App reachability from " <> m <> " (explicit)"
-                    Nothing -> "App reachability from " <> show (Set.toUnfoldable reach.entryPoints :: Array String) <> " (heuristic)"
-                  else "Library reachability"
-            log $ "[SceneCoordinator] " <> modeLabel <> " for " <> pkg <> ": "
-                <> show (Set.size reach.reachable) <> " reachable, "
-                <> show (Set.size reach.entryPoints) <> " entry points"
-                <> " (allImports=" <> show (Array.length v2.imports) <> ", allModules=" <> show (Array.length v2.modules) <> ")"
-            log $ "[SceneCoordinator]   entry points: " <> show (Set.toUnfoldable reach.entryPoints :: Array String)
-            log $ "[SceneCoordinator]   unreachable: " <> show (Array.filter (\m -> m.package.name == pkg && not (Set.member m.name reach.reachable)) v2.modules <#> _.name)
-            H.modify_ _ { reachabilityData = Just reach }
-          Nothing -> pure unit
-
-  ToggleClusterMode -> do
-    state <- H.get
-    if state.colorMode == ClusterView
-      then do
-        log "[SceneCoordinator] Cluster mode OFF"
-        H.modify_ _ { colorMode = FullRegistryTopo }
-      else do
-        log "[SceneCoordinator] Cluster mode ON"
-        H.modify_ _ { colorMode = ClusterView }
-        -- Compute clusters for current package (if in a package view)
-        case state.scene of
-          PkgTreemap pkg -> computeAndStoreClusters pkg
-          PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
-          _ -> pure unit
-
-  ToggleComplexityMode -> do
-    state <- H.get
-    if state.colorMode == StructuralComplexity
-      then do
-        log "[SceneCoordinator] Structural complexity mode OFF"
-        H.modify_ _ { colorMode = DefaultUniform }
-      else do
-        log "[SceneCoordinator] Structural complexity mode ON"
-        H.modify_ _ { colorMode = StructuralComplexity }
-        when (state.complexityData == Nothing) loadComplexityData
-
-  ToggleChangeFrequencyMode -> do
-    state <- H.get
-    if state.colorMode == ChangeFrequency
-      then do
-        log "[SceneCoordinator] Change frequency mode OFF"
-        H.modify_ _ { colorMode = FullRegistryTopo }
-      else do
-        log "[SceneCoordinator] Change frequency mode ON"
-        H.modify_ _ { colorMode = ChangeFrequency }
-        when (state.changeFrequencyData == Nothing) do
-          case state.scene of
-            PkgTreemap pkg -> loadChangeFrequencyData pkg
-            PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
-            _ -> pure unit
-
-  ToggleSizeByFrequency -> do
-    state <- H.get
-    let newVal = not state.sizeByChangeFrequency
-    log $ "[SceneCoordinator] Size by change frequency: " <> show newVal
-    H.modify_ _ { sizeByChangeFrequency = newVal }
-    -- Ensure frequency data is loaded when toggling on
-    when (newVal && state.changeFrequencyData == Nothing) do
-      case state.scene of
-        PkgTreemap pkg -> loadChangeFrequencyData pkg
-        PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
-        _ -> pure unit
-
-  ToggleCoChangeClusterMode -> do
-    state <- H.get
-    if state.colorMode == CoChangeCluster
-      then do
-        log "[SceneCoordinator] Co-change cluster mode OFF"
-        H.modify_ _ { colorMode = FullRegistryTopo }
-      else do
-        log "[SceneCoordinator] Co-change cluster mode ON"
-        H.modify_ _ { colorMode = CoChangeCluster }
-        when (state.coChangeClusterData == Nothing) do
-          case state.scene of
-            PkgTreemap pkg -> loadCoChangeClusterData pkg
-            PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
-            _ -> pure unit
-
-  -- =========================================================================
-  -- Sticky Peek Toggles (click button to toggle on/off)
-  -- =========================================================================
-
-  ToggleReachabilityPeek -> do
-    state <- H.get
-    let newVal = not state.reachabilityPeek
-    H.modify_ _ { reachabilityPeek = newVal }
-    when (newVal && state.reachabilityData == Nothing) $ case state.scene of
-      PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
-      PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
-      GalaxyTreemap -> computeAndStoreGlobalReachability
-      _ -> pure unit
-
-  TogglePurityPeek -> do
-    state <- H.get
-    let newVal = not state.purityPeek
-    H.modify_ _ { purityPeek = newVal }
-    when (newVal && state.purityData == Nothing) $ case state.scene of
-      PkgTreemap pkg -> computeAndStorePurityForPeek pkg
-      PkgModuleBeeswarm pkg -> computeAndStorePurityForPeek pkg
-      _ -> pure unit
-
-  ToggleCouplingPeek -> do
-    state <- H.get
-    let newVal = not state.complexityPeek
-    H.modify_ _ { complexityPeek = newVal }
-    when (newVal && state.complexityData == Nothing) loadComplexityData
-
-  -- =========================================================================
-  -- Momentary Keyboard Peeks (hold key = show overlay, release = revert)
-  -- Radio behavior: activating one clears all others
-  -- =========================================================================
-
-  OverlayPeekOn k -> do
-    state <- H.get
-    when (not state.searchOpen) do
-      -- Clear all peeks and reset colorMode, then activate the requested one
-      H.modify_ _ { reachabilityPeek = false, purityPeek = false, complexityPeek = false, colorMode = DefaultUniform }
-      case k of
-        "c" -> do
-          H.modify_ _ { complexityPeek = true }
-          when (state.complexityData == Nothing) loadComplexityData
-        "g" -> do
-          H.modify_ _ { colorMode = GitStatus }
-          when (state.gitStatus == Nothing) do
-            result <- liftAff Loader.fetchGitStatus
-            case result of
-              Right gitData -> H.modify_ _ { gitStatus = Just gitData }
-              Left _ -> pure unit
-        "h" -> do
-          H.modify_ _ { colorMode = ChangeFrequency }
-          when (state.changeFrequencyData == Nothing) $ case state.scene of
-            PkgTreemap pkg -> loadChangeFrequencyData pkg
-            PkgModuleBeeswarm pkg -> loadChangeFrequencyData pkg
-            _ -> pure unit
-        "k" -> do
-          H.modify_ _ { colorMode = ClusterView }
-          case state.scene of
-            PkgTreemap pkg -> computeAndStoreClusters pkg
-            PkgModuleBeeswarm pkg -> computeAndStoreClusters pkg
-            _ -> pure unit
-        "p" -> do
-          H.modify_ _ { purityPeek = true }
-          when (state.purityData == Nothing) $ case state.scene of
-            PkgTreemap pkg -> computeAndStorePurityForPeek pkg
-            PkgModuleBeeswarm pkg -> computeAndStorePurityForPeek pkg
-            _ -> pure unit
-        "r" -> do
-          H.modify_ _ { reachabilityPeek = true }
-          when (state.reachabilityData == Nothing) $ case state.scene of
-            PkgTreemap pkg -> computeAndStoreReachabilityForPeek pkg
-            PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
-            GalaxyTreemap -> computeAndStoreGlobalReachability
-            _ -> pure unit
-        "x" -> do
-          H.modify_ _ { colorMode = CoChangeCluster }
-          when (state.coChangeClusterData == Nothing) $ case state.scene of
-            PkgTreemap pkg -> loadCoChangeClusterData pkg
-            PkgModuleBeeswarm pkg -> loadCoChangeClusterData pkg
-            _ -> pure unit
-        _ -> pure unit
-
-  OverlayPeekOff -> do
-    H.modify_ _ { reachabilityPeek = false, purityPeek = false, complexityPeek = false, colorMode = DefaultUniform }
+  ToggleGitMode -> Overlays.handleToggleGitMode
+  ToggleTidyMode -> Overlays.handleToggleTidyMode
+  ToggleReachabilityMode -> Overlays.handleToggleReachabilityMode
+  ToggleClusterMode -> Overlays.handleToggleClusterMode
+  ToggleComplexityMode -> Overlays.handleToggleComplexityMode
+  ToggleChangeFrequencyMode -> Overlays.handleToggleChangeFrequencyMode
+  ToggleSizeByFrequency -> Overlays.handleToggleSizeByFrequency
+  ToggleCoChangeClusterMode -> Overlays.handleToggleCoChangeClusterMode
+  ToggleReachabilityPeek -> Overlays.handleToggleReachabilityPeek
+  TogglePurityPeek -> Overlays.handleTogglePurityPeek
+  ToggleCouplingPeek -> Overlays.handleToggleCouplingPeek
+  OverlayPeekOn k -> Overlays.handleOverlayPeekOn k
+  OverlayPeekOff -> Overlays.handleOverlayPeekOff
 
   -- =========================================================================
   -- Search Typeahead Actions
   -- =========================================================================
 
-  SearchInput query -> do
-    state <- H.get
-    let seqId = state.searchSeqId + 1
-    if String.length query < 2
-      then
-        H.modify_ _ { searchQuery = query, searchResults = [], searchOpen = false, searchSeqId = seqId }
-      else do
-        H.modify_ _ { searchQuery = query, searchOpen = true, searchSelectedIndex = 0, searchSeqId = seqId }
-        -- Fork async search with simple debounce: delay then check if seqId still matches
-        void $ H.fork do
-          liftAff $ Aff.delay (Milliseconds 150.0)
-          currentState <- H.get
-          when (currentState.searchSeqId == seqId) do
-            result <- liftAff $ Loader.searchAll query
-            case result of
-              Right results ->
-                -- Sort: packages first, modules second, declarations last
-                let sorted = Array.sortBy (comparing searchEntityPriority) results
-                -- Only apply if seqId still matches (user hasn't typed more)
-                in H.modify_ _ { searchResults = sorted, searchSelectedIndex = 0 }
-              Left err ->
-                log $ "[SceneCoordinator] Search error: " <> err
+  SearchInput query -> Search.Handler.handleSearchInput query
 
   SearchResultsReceived seqId results -> do
     state <- H.get
@@ -2035,20 +1422,25 @@ handleAction = case _ of
         H.modify_ _ { searchSelectedIndex = newIdx }
       "Enter" -> do
         liftEffect $ WE.preventDefault (toEvent evt)
-        confirmSearchSelection state state.searchSelectedIndex
+        case Search.Handler.resolveSearchSelection state.searchResults state.searchSelectedIndex of
+          Just targetScene -> do
+            H.modify_ _ { searchQuery = "", searchResults = [], searchOpen = false }
+            handleAction (NavigateTo targetScene)
+          Nothing -> pure unit
       "Escape" -> do
         H.modify_ _ { searchQuery = "", searchResults = [], searchOpen = false }
       _ -> pure unit
 
   SearchConfirmIndex idx -> do
     state <- H.get
-    confirmSearchSelection state idx
+    case Search.Handler.resolveSearchSelection state.searchResults idx of
+      Just targetScene -> do
+        log $ "[SceneCoordinator] Search navigation to: " <> show targetScene
+        H.modify_ _ { searchQuery = "", searchResults = [], searchOpen = false }
+        handleAction (NavigateTo targetScene)
+      Nothing -> pure unit
 
-  SearchDismiss -> do
-    -- Small delay to allow mousedown events on results to fire first
-    void $ H.fork do
-      liftAff $ Aff.delay (Milliseconds 200.0)
-      H.modify_ _ { searchOpen = false }
+  SearchDismiss -> Search.Handler.handleSearchDismiss
 
   -- Two-click sync: arm → confirm → execute
   ArmSync -> do
@@ -2197,363 +1589,6 @@ handleAction = case _ of
             log $ "[SceneCoordinator] Opening first module: " <> firstMod.name
             handleAction (OpenModulePanel pkgName firstMod.name)
 
--- | Prepare data for the current scene
-prepareSceneData :: forall m. MonadAff m => State -> H.HalogenM State Action Slots Output m Unit
-prepareSceneData state = case state.scene of
-  GalaxyTreemap -> do
-    case state.packageSetData of
-      Just _ ->
-        log "[SceneCoordinator] GalaxyTreemap: data available, slot will render"
-      Nothing -> do
-        log "[SceneCoordinator] Requesting package set data"
-        H.raise RequestPackageSetData
-
-  GalaxyBeeswarm -> do
-    case state.packageSetData of
-      Just _ ->
-        log "[SceneCoordinator] GalaxyBeeswarm: data available, slot will render"
-      Nothing -> do
-        log "[SceneCoordinator] Requesting package set data"
-        H.raise RequestPackageSetData
-
-  SolarSwarm -> do
-    case state.viewMode of
-      PrimaryView ->
-        -- BubblePack is handled by the Halogen slot
-        case state.modelData of
-          Just model ->
-            log $ "[SceneCoordinator] SolarSwarm (BubblePack): "
-                <> show model.packageCount <> " packages, "
-                <> show model.moduleCount <> " modules"
-                <> ", scope=" <> show state.scope
-          Nothing ->
-            log "[SceneCoordinator] No modelData for SolarSwarm"
-
-      ChordView ->
-        log "[SceneCoordinator] SolarSwarm ChordView: rendering handled by slot"
-
-      MatrixView ->
-        log "[SceneCoordinator] SolarSwarm MatrixView: rendering handled by slot"
-
-  PkgTreemap pkgName -> do
-    case state.v2Data of
-      Just v2 -> do
-        let pkgModules = Array.filter (\m -> m.package.name == pkgName) v2.modules
-
-        log $ "[SceneCoordinator] PkgTreemap (" <> show state.viewMode <> "): "
-            <> pkgName <> " - " <> show (Array.length pkgModules) <> " modules"
-
-        case state.viewMode of
-          PrimaryView -> do
-            -- Enriched treemap needs full declarations for bubble packs
-            -- Check if we already have declarations for this package's modules
-            let missingDeclModules = Array.filter (\m -> not (Map.member m.id state.packageDeclarations)) pkgModules
-
-            -- Fetch declarations if missing (per-package, parallel)
-            when (Array.length missingDeclModules > 0) do
-              log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " modules"
-              newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
-              let merged = Map.union newDecls state.packageDeclarations
-              H.modify_ _ { packageDeclarations = merged }
-
-            -- Fetch ALL function calls once via bulk endpoint (for declaration-level dependency highlighting)
-            when (not state.allCallsLoaded) do
-              log "[SceneCoordinator] Fetching all function calls (bulk endpoint)"
-              result <- liftAff Loader.fetchV2AllCalls
-              case result of
-                Right allCalls -> do
-                  log $ "[SceneCoordinator] Loaded function calls for " <> show (Array.length allCalls) <> " modules"
-                  -- Convert Array V2ModuleCalls to Map Int (Array V2FunctionCall)
-                  let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
-                        Tuple mc.moduleId (mc.calls <#> \c ->
-                          { callerName: c.callerName
-                          , calleeModule: c.calleeModule
-                          , calleeName: c.calleeName
-                          , isCrossModule: c.isCrossModule
-                          , callCount: c.callCount
-                          , sourceSpan: c.sourceSpan
-                          })
-                  H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
-                Left err ->
-                  log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
-
-            log "[SceneCoordinator] PrimaryView (Enriched Treemap): rendering handled by slot"
-
-          ChordView ->
-            log "[SceneCoordinator] PkgTreemap ChordView: rendering handled by slot"
-
-          MatrixView ->
-            log "[SceneCoordinator] PkgTreemap MatrixView: rendering handled by slot"
-
-      Nothing ->
-        log "[SceneCoordinator] No v2Data for PkgTreemap"
-
-  ModuleOverview pkgName _modName -> do
-    -- Ensure declarations are loaded for this package
-    ensurePackageDeclarationsLoaded state pkgName
-    log "[SceneCoordinator] ModuleOverview: rendering handled by slot"
-
-  DeclarationDetail pkgName _modName _declName -> do
-    -- Ensure declarations are loaded for this package
-    ensurePackageDeclarationsLoaded state pkgName
-    log "[SceneCoordinator] DeclarationDetail: rendering handled by slot"
-
-  ModuleStructure pkgName modName -> do
-    -- Ensure declarations are loaded for this package
-    ensurePackageDeclarationsLoaded state pkgName
-    -- Fetch annotations for this module if not cached
-    when (not $ Map.member modName state.moduleAnnotations) do
-      result <- liftAff $ Loader.fetchModuleAnnotations modName
-      case result of
-        Right anns -> H.modify_ _ { moduleAnnotations = Map.insert modName anns state.moduleAnnotations }
-        Left _err -> pure unit  -- Annotations are optional; silent fail
-    log "[SceneCoordinator] ModuleStructure: rendering handled by slot"
-
-  GitOverview ->
-    log "[SceneCoordinator] GitOverview: rendering handled by slot"
-
-  ModuleSignatures pkgName _modName -> do
-    ensurePackageDeclarationsLoaded state pkgName
-    log "[SceneCoordinator] ModuleSignatures: rendering handled by slot"
-
-  PkgModuleBeeswarm pkgName -> do
-    case state.v2Data of
-      Just v2 -> do
-        -- Fetch declaration stats if not cached (needed for bubblepack overlay)
-        let pkgModules = Array.filter (\m -> m.package.name == pkgName) v2.modules
-            moduleCount = Array.length pkgModules
-            isSmallPackage = moduleCount < smallPackageThreshold
-        log $ "[SceneCoordinator] PkgModuleBeeswarm: " <> pkgName
-            <> " (" <> show moduleCount <> " modules), slot will render"
-        when (isSmallPackage && state.declarationStats == Nothing) do
-          log "[SceneCoordinator] Fetching declaration stats for bubblepack view"
-          result <- liftAff Loader.fetchV2ModuleDeclarationStats
-          case result of
-            Right statsArray -> do
-              let stats = Map.fromFoldable $ statsArray <#> \s -> Tuple s.moduleId s
-              H.modify_ _ { declarationStats = Just stats }
-            Left err ->
-              log $ "[SceneCoordinator] Failed to fetch declaration stats: " <> err
-      Nothing ->
-        log "[SceneCoordinator] No v2Data for PkgModuleBeeswarm"
-
-  TypeClassGrid -> do
-    log "[SceneCoordinator] TypeClassGrid"
-    case state.typeClassStats of
-      Just stats ->
-        log $ "[SceneCoordinator] TypeClassGrid: " <> show stats.count <> " classes, slot will render"
-      Nothing -> do
-        log "[SceneCoordinator] Loading type class stats..."
-        result <- liftAff Loader.fetchTypeClassStats
-        case result of
-          Right stats -> do
-            log $ "[SceneCoordinator] Loaded " <> show stats.count <> " type classes"
-            H.modify_ _ { typeClassStats = Just stats }
-          Left err ->
-            log $ "[SceneCoordinator] Failed to load type class stats: " <> err
-
-  NamespaceTree -> do
-    log "[SceneCoordinator] NamespaceTree"
-    -- Fetch tree data if not cached
-    case state.namespaceTreeData of
-      Just nsData ->
-        log $ "[SceneCoordinator] NamespaceTree: " <> show (Array.length nsData) <> " nodes cached"
-      Nothing -> do
-        log "[SceneCoordinator] Loading namespace tree..."
-        result <- liftAff Loader.fetchNamespaceTree
-        case result of
-          Right nsData -> do
-            log $ "[SceneCoordinator] Loaded " <> show (Array.length nsData) <> " namespace nodes"
-            H.modify_ _ { namespaceTreeData = Just nsData }
-          Left err ->
-            log $ "[SceneCoordinator] Failed to load namespace tree: " <> err
-    -- Fetch namespace→packages mapping if not cached
-    case state.namespacePackages of
-      Just nsPkgs ->
-        log $ "[SceneCoordinator] Namespace packages: " <> show (Array.length nsPkgs) <> " entries cached"
-      Nothing -> do
-        log "[SceneCoordinator] Loading namespace packages..."
-        nsPkgResult <- liftAff Loader.fetchNamespacePackages
-        case nsPkgResult of
-          Right entries -> do
-            log $ "[SceneCoordinator] Loaded " <> show (Array.length entries) <> " namespace-package entries"
-            H.modify_ _ { namespacePackages = Just entries }
-          Left err ->
-            log $ "[SceneCoordinator] Failed to load namespace packages: " <> err
-
-  PackageReport -> do
-    -- Same data loading as AnnotationReport — annotations needed for both
-    loadAnnotationsIfNeeded state
-
-  AnnotationReport -> do
-    loadAnnotationsIfNeeded state
-
-  ProjectManagement -> do
-    log "[SceneCoordinator] ProjectManagement: landing page (static)"
-
-  ProjectSetup -> do
-    log "[SceneCoordinator] ProjectSetup: fetching projects list"
-    result <- liftAff Loader.fetchV2Projects
-    case result of
-      Right projects -> do
-        log $ "[SceneCoordinator] Loaded " <> show (Array.length projects) <> " projects"
-        H.modify_ _ { loadedProjects = projects }
-      Left err ->
-        log $ "[SceneCoordinator] Failed to load projects: " <> err
-
-  SnapshotManagement -> do
-    log "[SceneCoordinator] SnapshotManagement"
-    -- Component handles its own data loading
-
-  CommitModuleGrid pkg -> do
-    log $ "[SceneCoordinator] CommitModuleGrid: " <> pkg
-    -- Component handles its own data loading
-
-  CoChangeCube pkg -> do
-    log $ "[SceneCoordinator] CoChangeCube: " <> pkg
-    -- Component handles its own data loading
-
-  PackageAnatomy pkg -> do
-    -- Data is already available in v2Data (imports loaded upfront)
-    log $ "[SceneCoordinator] PackageAnatomy: " <> pkg
-
-  ModuleAnatomy pkgName modName -> do
-    log $ "[SceneCoordinator] ModuleAnatomy: " <> modName
-    -- Need declarations and function calls for this module
-    st <- H.get
-    case st.v2Data of
-      Just v2 -> do
-        -- Ensure declarations loaded
-        let mod = Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
-        case mod of
-          Just m -> do
-            when (not (Map.member m.id st.packageDeclarations)) do
-              log $ "[SceneCoordinator] Fetching declarations for " <> modName
-              newDecls <- liftAff $ Loader.fetchV2PackageDeclarations [m]
-              st2 <- H.get
-              H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
-            -- Ensure function calls loaded
-            when (not st.allCallsLoaded) do
-              log "[SceneCoordinator] Fetching all function calls for module structure"
-              result <- liftAff Loader.fetchV2AllCalls
-              case result of
-                Right allCalls -> do
-                  let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
-                        Tuple mc.moduleId (mc.calls <#> \c -> { callerName: c.callerName
-                          , calleeModule: c.calleeModule
-                          , calleeName: c.calleeName
-                          , isCrossModule: c.isCrossModule
-                          , callCount: c.callCount
-                          , sourceSpan: c.sourceSpan
-                          })
-                  H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
-                Left err ->
-                  log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
-          Nothing ->
-            log $ "[SceneCoordinator] Module not found: " <> modName
-      Nothing -> pure unit
-
-  CompareModules pkg1 mod1 pkg2 mod2 -> do
-    log $ "[SceneCoordinator] CompareModules: " <> mod1 <> " vs " <> mod2
-    st <- H.get
-    case st.v2Data of
-      Just v2 -> do
-        -- Ensure declarations loaded for both modules
-        let mods = Array.filter (\m ->
-              (m.name == mod1 && m.package.name == pkg1) ||
-              (m.name == mod2 && m.package.name == pkg2)) v2.modules
-            missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) mods
-        when (Array.length missingDeclModules > 0) do
-          log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " compared modules"
-          newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
-          st2 <- H.get
-          H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
-        -- Ensure function calls loaded
-        when (not st.allCallsLoaded) do
-          log "[SceneCoordinator] Fetching all function calls for compare view"
-          result <- liftAff Loader.fetchV2AllCalls
-          case result of
-            Right allCalls -> do
-              let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
-                    Tuple mc.moduleId (mc.calls <#> \c -> { callerName: c.callerName
-                      , calleeModule: c.calleeModule
-                      , calleeName: c.calleeName
-                      , isCrossModule: c.isCrossModule
-                      , callCount: c.callCount
-                      , sourceSpan: c.sourceSpan
-                      })
-              H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
-            Left err ->
-              log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
-      Nothing -> pure unit
-
-  CompareSnapshots pkg mod _beforeSnapshotId -> do
-    -- Data loading for CompareSnapshots is handled in CompareModuleViz itself
-    -- (it fetches from the snapshot-scoped API). We just need current-snapshot data.
-    log $ "[SceneCoordinator] CompareSnapshots: " <> mod
-    st <- H.get
-    case st.v2Data of
-      Just v2 -> do
-        let mods = Array.filter (\m -> m.name == mod && m.package.name == pkg) v2.modules
-            missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) mods
-        when (Array.length missingDeclModules > 0) do
-          newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
-          st2 <- H.get
-          H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
-        when (not st.allCallsLoaded) do
-          result <- liftAff Loader.fetchV2AllCalls
-          case result of
-            Right allCalls -> do
-              let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
-                    Tuple mc.moduleId (mc.calls <#> \c -> { callerName: c.callerName
-                      , calleeModule: c.calleeModule
-                      , calleeName: c.calleeName
-                      , isCrossModule: c.isCrossModule
-                      , callCount: c.callCount
-                      , sourceSpan: c.sourceSpan
-                      })
-              H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
-            Left err ->
-              log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
-      Nothing -> pure unit
-
-  ProjectAnatomy -> do
-    -- Package set data is already loaded in DataLoaded phase — no extra fetch needed
-    case state.packageSetData of
-      Just psData ->
-        log $ "[SceneCoordinator] ProjectAnatomy: " <> show (Array.length psData.packages) <> " packages available"
-      Nothing -> do
-        log "[SceneCoordinator] ProjectAnatomy: requesting package set data"
-        H.raise RequestPackageSetData
-
--- | Shared annotation loading for PackageReport and AnnotationReport
-loadAnnotationsIfNeeded :: forall m. MonadAff m => State -> H.HalogenM State Action Slots Output m Unit
-loadAnnotationsIfNeeded state = do
-  case state.allAnnotations of
-    Just _ -> log "[SceneCoordinator] Annotations: data cached"
-    Nothing -> do
-      log "[SceneCoordinator] Loading all annotations..."
-      result <- liftAff Loader.fetchAllAnnotations
-      case result of
-        Right anns -> do
-          log $ "[SceneCoordinator] Loaded " <> show (Array.length anns) <> " annotations"
-          H.modify_ _ { allAnnotations = Just anns }
-        Left err ->
-          log $ "[SceneCoordinator] Failed to load annotations: " <> err
-  -- Eagerly fetch declarations for annotated modules (needed for bubblepacks)
-  st <- H.get
-  case st.v2Data, st.allAnnotations of
-    Just v2, Just anns -> do
-      let annotatedModuleNames = Set.fromFoldable $ anns <#> _.targetId
-          annotatedModules = Array.filter (\m -> Set.member m.name annotatedModuleNames) v2.modules
-          missingDeclModules = Array.filter (\m -> not (Map.member m.id st.packageDeclarations)) annotatedModules
-      when (Array.length missingDeclModules > 0) do
-        log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " annotated modules (bubblepacks)"
-        newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
-        st2 <- H.get
-        H.modify_ _ { packageDeclarations = Map.union newDecls st2.packageDeclarations }
-    _, _ -> log "[SceneCoordinator] Annotations: v2Data or annotations not ready for declaration fetch"
-
 -- =============================================================================
 -- Query Handlers
 -- =============================================================================
@@ -2579,174 +1614,3 @@ clearAllVizContainers = do
   clearContainer (C.bubblePackBeeswarmContainer)
   clearContainer "#pkg-treemap-container"
   clearContainer "#circlepack-container"
-
--- | Ensure declarations are loaded for a package's modules
-ensurePackageDeclarationsLoaded :: forall m. MonadAff m => State -> String -> H.HalogenM State Action Slots Output m Unit
-ensurePackageDeclarationsLoaded state pkgName =
-  case state.v2Data of
-    Just v2 -> do
-      let pkgModules = Array.filter (\m -> m.package.name == pkgName) v2.modules
-          missingDeclModules = Array.filter (\m -> not (Map.member m.id state.packageDeclarations)) pkgModules
-
-      when (Array.length missingDeclModules > 0) do
-        log $ "[SceneCoordinator] Fetching declarations for " <> show (Array.length missingDeclModules) <> " modules in " <> pkgName
-        newDecls <- liftAff $ Loader.fetchV2PackageDeclarations missingDeclModules
-        currentState <- H.get
-        let merged = Map.union newDecls currentState.packageDeclarations
-        H.modify_ _ { packageDeclarations = merged }
-
-      -- Also ensure function calls are loaded
-      when (not state.allCallsLoaded) do
-        log "[SceneCoordinator] Fetching all function calls (bulk endpoint)"
-        result <- liftAff Loader.fetchV2AllCalls
-        case result of
-          Right allCalls -> do
-            log $ "[SceneCoordinator] Loaded function calls for " <> show (Array.length allCalls) <> " modules"
-            let callsMap = Map.fromFoldable $ allCalls <#> \mc ->
-                  Tuple mc.moduleId (mc.calls <#> \c ->
-                    { callerName: c.callerName
-                    , calleeModule: c.calleeModule
-                    , calleeName: c.calleeName
-                    , isCrossModule: c.isCrossModule
-                    , callCount: c.callCount
-                    , sourceSpan: c.sourceSpan
-                    })
-            H.modify_ _ { packageCalls = callsMap, allCallsLoaded = true }
-          Left err ->
-            log $ "[SceneCoordinator] Failed to fetch function calls: " <> err
-    Nothing ->
-      log "[SceneCoordinator] No v2Data available for declaration loading"
-
--- =============================================================================
--- Search Helpers
--- =============================================================================
-
--- | Confirm selection of a search result and navigate
--- | Priority for sorting search results: packages > modules > declarations
-searchEntityPriority :: Loader.UnifiedSearchResult -> Int
-searchEntityPriority r = case r.entityType of
-  "package" -> 0
-  "module" -> 1
-  _ -> 2
-
-confirmSearchSelection :: forall m. MonadAff m => State -> Int -> H.HalogenM State Action Slots Output m Unit
-confirmSearchSelection state idx =
-  case Array.index state.searchResults idx of
-    Nothing -> pure unit
-    Just result -> do
-      let targetScene = Pure.sceneForResult result
-      log $ "[SceneCoordinator] Search navigation to: " <> show targetScene
-      H.modify_ _ { searchQuery = "", searchResults = [], searchOpen = false }
-      handleAction (NavigateTo targetScene)
-
--- | Helper: compute and store clusters for a package (used in action handlers)
-computeAndStoreClusters :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
-computeAndStoreClusters pkg = do
-  state <- H.get
-  case state.v2Data of
-    Just v2 -> do
-      let clusters = Pure.computePackageClusters pkg v2.imports v2.modules
-      log $ "[SceneCoordinator] Clusters for " <> pkg <> ": "
-          <> show (Array.length clusters.clusters) <> " components, "
-          <> show (Map.size clusters.communities) <> " community assignments"
-      H.modify_ _ { clusterData = Just clusters }
-    Nothing -> pure unit
-
--- | Helper: compute and store reachability for peek (reuses existing logic)
-computeAndStoreReachabilityForPeek :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
-computeAndStoreReachabilityForPeek pkg = do
-  state <- H.get
-  case state.v2Data of
-    Just v2 -> do
-      let bundleMod = Array.find (\p -> p.name == pkg) v2.packages
-                        >>= _.bundleModule
-          reach = Pure.computePackageReachability pkg bundleMod v2.imports v2.modules
-          modeLabel = if reach.isApp
-            then case bundleMod of
-              Just m  -> "App reachability from " <> m <> " (explicit)"
-              Nothing -> "App reachability from " <> show (Set.toUnfoldable reach.entryPoints :: Array String) <> " (heuristic)"
-            else "Library reachability"
-      log $ "[SceneCoordinator] " <> modeLabel <> " for " <> pkg <> ": "
-          <> show (Set.size reach.reachable) <> " reachable, "
-          <> show (Set.size reach.entryPoints) <> " entry points"
-      H.modify_ _ { reachabilityData = Just reach }
-    Nothing -> pure unit
-
--- | Helper: compute and store global reachability (galaxy-level, all packages)
-computeAndStoreGlobalReachability :: forall m. MonadAff m => H.HalogenM State Action Slots Output m Unit
-computeAndStoreGlobalReachability = do
-  state <- H.get
-  case state.v2Data of
-    Just v2 -> do
-      let reach = Pure.computeGlobalReachability v2.imports v2.modules v2.packages
-      log $ "[SceneCoordinator] Global reachability: "
-          <> show (Set.size reach.reachable) <> " reachable, "
-          <> show (Set.size reach.entryPoints) <> " entry points"
-      H.modify_ _ { reachabilityData = Just reach }
-    Nothing -> pure unit
-
--- | Helper: compute and store purity data for peek overlay
-computeAndStorePurityForPeek :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
-computeAndStorePurityForPeek pkg = do
-  state <- H.get
-  case state.v2Data of
-    Just v2 -> do
-      let pkgModules = Array.filter (\m -> m.package.name == pkg) v2.modules
-          modulePurity = Map.fromFoldable $ pkgModules <#> \m ->
-            let
-              decls = fromMaybe [] $ Map.lookup m.id state.packageDeclarations
-              valueDecls = Array.filter (\d -> d.kind == "value" && d.typeSignature /= Nothing) decls
-              effectfulCount = Array.length $ Array.filter (\d -> ArcDiagram.isEffectful d.typeSignature) valueDecls
-              totalCount = Array.length valueDecls
-            in Tuple m.name { effectfulCount, totalCount }
-          purity = { modulePurity, packageName: pkg }
-      log $ "[SceneCoordinator] Purity for " <> pkg <> ": "
-          <> show (Map.size modulePurity) <> " modules analyzed"
-      H.modify_ _ { purityData = Just purity }
-    Nothing -> pure unit
-
--- | Load structural complexity data from backend (global, not per-package)
-loadComplexityData :: forall m. MonadAff m => H.HalogenM State Action Slots Output m Unit
-loadComplexityData = do
-  result <- liftAff Loader.fetchModuleStructuralComplexity
-  case result of
-    Right modules -> do
-      let complexityMap = Map.fromFoldable $ modules <#> \m -> Tuple m.moduleName m
-      log $ "[SceneCoordinator] Loaded structural complexity for " <> show (Map.size complexityMap) <> " modules"
-      H.modify_ _ { complexityData = Just complexityMap }
-    Left err ->
-      log $ "[SceneCoordinator] Failed to load complexity: " <> err
-
--- | Load change frequency data from git commit history for a package
-loadChangeFrequencyData :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
-loadChangeFrequencyData pkg = do
-  log $ "[SceneCoordinator] Fetching change frequency for " <> pkg
-  result <- liftAff $ Loader.fetchCommitFiles 200 pkg
-  case result of
-    Right r -> do
-      let freqs = CoChange.moduleFrequencies r.commits
-          freqPairs = Map.toUnfoldable freqs :: Array (Tuple String Int)
-          maxFreq = Array.foldl (\acc (Tuple _ v) -> max acc v) 1 freqPairs
-          normalized = Map.fromFoldable $ freqPairs <#> \(Tuple k v) ->
-            Tuple k (Data.Int.toNumber v / Data.Int.toNumber maxFreq)
-      log $ "[SceneCoordinator] Change frequency for " <> pkg <> ": "
-          <> show (Map.size normalized) <> " modules from "
-          <> show (Array.length r.commits) <> " commits"
-      H.modify_ _ { changeFrequencyData = Just normalized }
-    Left err ->
-      log $ "[SceneCoordinator] Failed to load change frequency: " <> err
-
--- | Load co-change cluster data from git commit history for a package
-loadCoChangeClusterData :: forall m. MonadAff m => String -> H.HalogenM State Action Slots Output m Unit
-loadCoChangeClusterData pkg = do
-  log $ "[SceneCoordinator] Computing co-change clusters for " <> pkg
-  result <- liftAff $ Loader.fetchCommitFiles 200 pkg
-  case result of
-    Right r -> do
-      let { communities, clusters } = CoChange.coChangeCommunities r.commits r.allModules
-      log $ "[SceneCoordinator] Co-change clusters for " <> pkg <> ": "
-          <> show (Array.length clusters) <> " communities, "
-          <> show (Map.size communities) <> " modules assigned"
-      H.modify_ _ { coChangeClusterData = Just communities }
-    Left err ->
-      log $ "[SceneCoordinator] Failed to load co-change clusters: " <> err

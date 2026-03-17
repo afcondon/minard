@@ -21,4 +21,4 @@ main = HA.runHalogenAff do
     Nothing -> liftEffect $ log "[Main] Error: #app element not found"
     Just appEl -> do
       _ <- runUI AppShell.component unit appEl
-      liftEffect $ log "[Main] Code Explorer v2 started (build: 2026-01-22)"
+      liftEffect $ log "[Main] Code Explorer v2 started (build: 2026-03-17)"
