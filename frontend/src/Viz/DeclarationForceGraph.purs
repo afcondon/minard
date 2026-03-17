@@ -337,7 +337,7 @@ startSimulation config nodes edges neighborMap = do
   renderFullHATS config initialNodes edges neighborMap
 
   -- Subscribe to tick events
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       currentNodes <- handle.getNodes
       renderFullHATS config currentNodes edges neighborMap
@@ -348,7 +348,7 @@ startSimulation config nodes edges neighborMap = do
     Started -> log "[DeclarationForceGraph] Simulation started"
     Stopped -> pure unit
 
-  pure { stop: handle.stop }
+  pure { stop: handle.stop *> unsubscribe }
 
 -- =============================================================================
 -- HATS Rendering

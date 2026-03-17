@@ -160,9 +160,9 @@ render config packages = do
   renderSVGContainerHATS config
 
   -- Start simulation and get handle
-  simHandle <- startSimulation config nodes
+  { handle: simHandle, unsubscribe } <- startSimulation config nodes
 
-  pure { simHandle, config, dateRange, stop: simHandle.stop }
+  pure { simHandle, config, dateRange, stop: simHandle.stop *> unsubscribe }
 
 -- | Render beeswarm with initial positions (for hero transition from treemap)
 renderWithPositions :: Config -> Array PackageSetPackage -> Array InitialPosition -> Effect BeeswarmHandle
@@ -186,9 +186,9 @@ renderWithPositions config packages positions = do
   renderSVGContainerHATS config
 
   -- Start simulation (will settle into beeswarm pattern)
-  simHandle <- startSimulation config nodes
+  { handle: simHandle, unsubscribe } <- startSimulation config nodes
 
-  pure { simHandle, config, dateRange, stop: simHandle.stop }
+  pure { simHandle, config, dateRange, stop: simHandle.stop *> unsubscribe }
 
 -- | Clean up (stop simulation and clear)
 cleanup :: String -> Effect Unit
@@ -738,7 +738,7 @@ packageNodeHATS config node =
 -- =============================================================================
 
 -- | Start the force simulation
-startSimulation :: Config -> Array PackageNode -> Effect (SimulationHandle PackageNodeRow)
+startSimulation :: Config -> Array PackageNode -> Effect { handle :: SimulationHandle PackageNodeRow, unsubscribe :: Effect Unit }
 startSimulation config nodes = do
   log $ "[PackageSetBeeswarm] Creating simulation with " <> show (Array.length nodes) <> " nodes"
   log $ "[PackageSetBeeswarm] Container: " <> "#beeswarm-nodes"
@@ -766,7 +766,7 @@ startSimulation config nodes = do
 
   -- Subscribe to events - tick uses fast path (transform-only)
   tickCountRef <- Ref.new 0
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       -- Fast path: only update transforms (not full HATS rerender)
       currentNodes <- handle.getNodes
@@ -779,4 +779,4 @@ startSimulation config nodes = do
     Started -> log "[PackageSetBeeswarm] Simulation started"
     Stopped -> log "[PackageSetBeeswarm] Simulation stopped"
 
-  pure handle
+  pure { handle, unsubscribe }

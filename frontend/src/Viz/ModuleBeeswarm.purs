@@ -140,9 +140,9 @@ render config modules = do
   renderSVGContainerHATS config (Array.length modules)
 
   -- Start simulation and get handle
-  simHandle <- startSimulation config nodes
+  { handle: simHandle, unsubscribe } <- startSimulation config nodes
 
-  pure { simHandle, config, stop: simHandle.stop }
+  pure { simHandle, config, stop: simHandle.stop *> unsubscribe }
 
 -- | Update scope (filter visible nodes via GUP)
 -- | After updating simulation data, does a full HATS rerender to handle enter/exit
@@ -351,7 +351,7 @@ moduleNodeHATS node =
 -- =============================================================================
 
 -- | Start the force simulation
-startSimulation :: Config -> Array ModuleNode -> Effect (SimulationHandle ModuleNodeRow)
+startSimulation :: Config -> Array ModuleNode -> Effect { handle :: SimulationHandle ModuleNodeRow, unsubscribe :: Effect Unit }
 startSimulation _config nodes = do
   log $ "[ModuleBeeswarm] Creating simulation with " <> show (Array.length nodes) <> " nodes"
 
@@ -379,7 +379,7 @@ startSimulation _config nodes = do
 
   -- Subscribe to events - tick uses fast path (transform-only)
   tickCountRef <- Ref.new 0
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       -- Fast path: only update transforms (not full HATS rerender)
       currentNodes <- handle.getNodes
@@ -392,7 +392,7 @@ startSimulation _config nodes = do
     Started -> log "[ModuleBeeswarm] Simulation started"
     Stopped -> log "[ModuleBeeswarm] Simulation stopped"
 
-  pure handle
+  pure { handle, unsubscribe }
 
 -- =============================================================================
 -- Single Package Module Beeswarm (Topo Ordering)
@@ -428,7 +428,7 @@ renderSinglePackage config modules imports = do
   renderSVGContainerSinglePkgHATS config (Array.length modules)
 
   -- Start simulation
-  simHandle <- startSimulationSinglePkg config nodes
+  { handle: simHandle, unsubscribe } <- startSimulationSinglePkg config nodes
 
   pure
     { simHandle
@@ -437,7 +437,7 @@ renderSinglePackage config modules imports = do
               , height: config.height
               , packages: []
               }
-    , stop: simHandle.stop
+    , stop: simHandle.stop *> unsubscribe
     }
 
 -- | Compute topo layers for modules within a package
@@ -682,7 +682,7 @@ moduleNodeSinglePkgHATS node =
     ]
 
 -- | Start simulation for single-package view
-startSimulationSinglePkg :: SinglePackageConfig -> Array ModuleNode -> Effect (SimulationHandle ModuleNodeRow)
+startSimulationSinglePkg :: SinglePackageConfig -> Array ModuleNode -> Effect { handle :: SimulationHandle ModuleNodeRow, unsubscribe :: Effect Unit }
 startSimulationSinglePkg _config nodes = do
   log $ "[ModuleBeeswarm] Starting single-package simulation with " <> show (Array.length nodes) <> " nodes"
 
@@ -705,7 +705,7 @@ startSimulationSinglePkg _config nodes = do
 
   -- Subscribe to events - tick uses fast path (transform-only)
   tickCountRef <- Ref.new 0
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       -- Fast path: only update transforms (not full HATS rerender)
       currentNodes <- handle.getNodes
@@ -718,7 +718,7 @@ startSimulationSinglePkg _config nodes = do
     Started -> log "[ModuleBeeswarm/Single] Simulation started"
     Stopped -> log "[ModuleBeeswarm/Single] Simulation stopped"
 
-  pure handle
+  pure { handle, unsubscribe }
 
 -- =============================================================================
 -- Anatomy Module Beeswarm (all modules, colored by package, topo positioning)
@@ -770,9 +770,9 @@ renderAnatomyModules config modules = do
   log $ "[ModuleBeeswarm/Anatomy] Starting with " <> show (Array.length nodes) <> " modules"
 
   renderAnatomySVGContainer config
-  simHandle <- startAnatomySimulation config nodes
+  { handle: simHandle, unsubscribe } <- startAnatomySimulation config nodes
 
-  pure { simHandle, stop: simHandle.stop }
+  pure { simHandle, stop: simHandle.stop *> unsubscribe }
 
 -- | Category classification for modules (mirrors package beeswarm)
 data ModuleCategory = MWorkspace | MDirectDep | MTransitive
@@ -1047,7 +1047,7 @@ lastSegment name =
     Nothing -> name
 
 -- | Start force simulation for anatomy modules
-startAnatomySimulation :: AnatomyModuleConfig -> Array AnatomyModuleNode -> Effect (SimulationHandle AnatomyModuleNodeRow)
+startAnatomySimulation :: AnatomyModuleConfig -> Array AnatomyModuleNode -> Effect { handle :: SimulationHandle AnatomyModuleNodeRow, unsubscribe :: Effect Unit }
 startAnatomySimulation config nodes = do
   log $ "[ModuleBeeswarm/Anatomy] Creating simulation with " <> show (Array.length nodes) <> " nodes"
 
@@ -1069,7 +1069,7 @@ startAnatomySimulation config nodes = do
   renderAnatomyModuleNodesHATS config initialNodes
 
   tickCountRef <- Ref.new 0
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       currentNodes <- handle.getNodes
       tickUpdate C.anatomyModuleNodes currentNodes
@@ -1081,4 +1081,4 @@ startAnatomySimulation config nodes = do
     Started -> log "[ModuleBeeswarm/Anatomy] Simulation started"
     Stopped -> log "[ModuleBeeswarm/Anatomy] Simulation stopped"
 
-  pure handle
+  pure { handle, unsubscribe }

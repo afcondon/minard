@@ -285,7 +285,7 @@ startSimulation config nodes = do
   renderNodesHATS config initialNodes
 
   -- Subscribe to events
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       currentNodes <- handle.getNodes
       -- Full rerender on tick (needed for links which connect to moving nodes)
@@ -297,7 +297,7 @@ startSimulation config nodes = do
     Started -> log "[DependencyNeighborhood] Simulation started"
     Stopped -> pure unit
 
-  pure { stop: handle.stop }
+  pure { stop: handle.stop *> unsubscribe }
 
 -- =============================================================================
 -- HATS Rendering

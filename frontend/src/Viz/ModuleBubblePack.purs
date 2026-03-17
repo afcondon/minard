@@ -161,7 +161,7 @@ render config modules statsMap = do
   renderNodesHATS config initialNodes
 
   -- Subscribe to simulation events - tick uses fast path (transform-only)
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       -- Fast path: only update transforms (not full HATS rerender)
       currentNodes <- handle.getNodes
@@ -175,7 +175,7 @@ render config modules statsMap = do
   pure
     { simHandle: handle
     , config
-    , stop: handle.stop
+    , stop: handle.stop *> unsubscribe
     }
 
 -- | Update visible modules (GUP - enter/exit animations)

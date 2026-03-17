@@ -163,9 +163,9 @@ render config packages = do
   log $ "[AnatomyBeeswarm] Starting with " <> show (Array.length nodes) <> " packages, " <> show (Array.length config.unusedPackages) <> " unused"
 
   renderSVGContainer config
-  simHandle <- startSimulation config nodes
+  { handle: simHandle, unsubscribe } <- startSimulation config nodes
 
-  pure { simHandle, stop: simHandle.stop }
+  pure { simHandle, stop: simHandle.stop *> unsubscribe }
 
 -- | Clean up
 cleanup :: String -> Effect Unit
@@ -493,7 +493,7 @@ nodeHATS config node =
 -- Force Simulation
 -- =============================================================================
 
-startSimulation :: Config -> Array AnatomyNode -> Effect (SimulationHandle AnatomyNodeRow)
+startSimulation :: Config -> Array AnatomyNode -> Effect { handle :: SimulationHandle AnatomyNodeRow, unsubscribe :: Effect Unit }
 startSimulation config nodes = do
   log $ "[AnatomyBeeswarm] Creating simulation with " <> show (Array.length nodes) <> " nodes"
 
@@ -517,7 +517,7 @@ startSimulation config nodes = do
 
   -- Subscribe to tick events for position updates
   tickCountRef <- Ref.new 0
-  _ <- subscribe events \event -> case event of
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       currentNodes <- handle.getNodes
       tickUpdate "#anatomy-beeswarm-nodes" currentNodes
@@ -529,4 +529,4 @@ startSimulation config nodes = do
     Started -> log "[AnatomyBeeswarm] Simulation started"
     Stopped -> log "[AnatomyBeeswarm] Simulation stopped"
 
-  pure handle
+  pure { handle, unsubscribe }
