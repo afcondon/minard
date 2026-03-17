@@ -108,8 +108,8 @@ initialState input =
   , modelData: input.modelData
   , v2Data: input.v2Data
   , packageSetData: input.packageSetData
-  , scope: AllPackages
-  , focalPackage: Nothing        -- No focal package initially
+  , scope: input.initialScope
+  , focalPackage: input.initialFocalPackage
   , colorMode: FullRegistryTopo  -- Topo coloring persists through transitions
   , viewMode: PrimaryView        -- Resets to PrimaryView on scene change
   , transition: Nothing

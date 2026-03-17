@@ -21,6 +21,8 @@ module CE2.Component.SceneCoordinator.Types
   , mkHistoryState
   , historyFocalPackage
   , historyScope
+  , readSceneFromHash
+  , HashState
   -- Slot proxies
   , _bubblePackBeeswarmViz
   , _galaxyBeeswarmViz
@@ -52,16 +54,20 @@ module CE2.Component.SceneCoordinator.Types
 
 import Prelude
 
+import Data.Array as Array
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Tuple (Tuple(..))
+import Data.String as String
 import Effect (Effect)
 import Foreign (unsafeToForeign, unsafeFromForeign, isNull, isUndefined)
 import Halogen as H
 import Type.Proxy (Proxy(..))
 import Web.Event.Event as WE
 import Web.HTML (window)
-import Web.HTML.Window (history) as Win
+import Web.HTML.Location as Location
+import Web.HTML.Window (history, location) as Win
 import Web.HTML.History (pushState, replaceState, DocumentTitle(..), URL(..)) as History
 import Web.HTML.Event.PopStateEvent as PopStateEvent
 import Web.UIEvent.KeyboardEvent (KeyboardEvent)
@@ -95,7 +101,7 @@ import CE2.Component.DependencyAdjacencyViz as DependencyAdjacencyViz
 import CE2.Component.SlideOutPanel as SlideOutPanel
 
 import CE2.Data.Loader as Loader
-import CE2.Scene (Scene)
+import CE2.Scene (Scene, sceneFromString)
 import CE2.Types (ColorMode, BeeswarmScope(..), RefreshPhase, PackageReachability, PackageClusters, PackagePurity)
 import CE2.Component.SceneCoordinator.Pure (ViewMode)
 
@@ -114,13 +120,28 @@ pushHistoryState :: HistoryState -> Effect Unit
 pushHistoryState hs = do
   w <- window
   h <- Win.history w
-  History.pushState (unsafeToForeign hs) (History.DocumentTitle "") (History.URL "") h
+  History.pushState (unsafeToForeign hs) (History.DocumentTitle "") (historyUrl hs) h
 
 replaceHistoryState :: HistoryState -> Effect Unit
 replaceHistoryState hs = do
   w <- window
   h <- Win.history w
-  History.replaceState (unsafeToForeign hs) (History.DocumentTitle "") (History.URL "") h
+  History.replaceState (unsafeToForeign hs) (History.DocumentTitle "") (historyUrl hs) h
+
+-- | Build a URL hash from a HistoryState
+-- | Only includes non-default params to keep URLs clean
+historyUrl :: HistoryState -> History.URL
+historyUrl hs =
+  let
+    params = Array.catMaybes
+      [ if hs.viewMode /= "primary" then Just ("view=" <> hs.viewMode) else Nothing
+      , if hs.focalPackage /= "" then Just ("focal=" <> hs.focalPackage) else Nothing
+      , if hs.scope /= "project" then Just ("scope=" <> hs.scope) else Nothing
+      ]
+    queryStr = case params of
+      [] -> ""
+      ps -> "?" <> String.joinWith "&" ps
+  in History.URL ("#/" <> hs.scene <> queryStr)
 
 -- | Read history state from a PopStateEvent, returning Nothing if state is null
 readPopState :: WE.Event -> Maybe HistoryState
@@ -151,6 +172,60 @@ mkHistoryState sceneStr viewModeStr mFocal scope =
 historyFocalPackage :: HistoryState -> Maybe String
 historyFocalPackage hs =
   if hs.focalPackage == "" then Nothing else Just hs.focalPackage
+
+-- | Parsed URL hash state
+type HashState =
+  { scene :: Scene
+  , viewMode :: String
+  , focalPackage :: Maybe String
+  , scope :: BeeswarmScope
+  }
+
+-- | Read scene and params from the current URL hash
+-- | Parses: #/SolarSwarm?focal=minard-frontend&scope=project&view=matrix
+readSceneFromHash :: Effect (Maybe HashState)
+readSceneFromHash = do
+  w <- window
+  loc <- Win.location w
+  hash <- Location.hash loc
+  -- Strip leading "#/"
+  let raw = case String.stripPrefix (String.Pattern "#/") hash of
+        Just s -> s
+        Nothing -> case String.stripPrefix (String.Pattern "#") hash of
+          Just s -> s
+          Nothing -> ""
+  if String.null raw then pure Nothing
+  else do
+    -- Split on "?" to separate scene from params
+    let { sceneStr, params } = case String.indexOf (String.Pattern "?") raw of
+          Just idx ->
+            { sceneStr: String.take idx raw
+            , params: parseParams (String.drop (idx + 1) raw)
+            }
+          Nothing ->
+            { sceneStr: raw, params: Map.empty }
+    case sceneFromString sceneStr of
+      Nothing -> pure Nothing
+      Just scene -> pure $ Just
+        { scene
+        , viewMode: fromMaybe "primary" (Map.lookup "view" params)
+        , focalPackage: Map.lookup "focal" params
+        , scope: case Map.lookup "scope" params of
+            Just "all" -> AllPackages
+            Just "deps" -> ProjectWithDeps
+            Just "transitive" -> ProjectWithTransitive
+            _ -> ProjectOnly
+        }
+  where
+  parseParams :: String -> Map.Map String String
+  parseParams str =
+    let pairs = String.split (String.Pattern "&") str
+    in Map.fromFoldable $ Array.mapMaybe parsePair pairs
+
+  parsePair :: String -> Maybe (Tuple String String)
+  parsePair s = case String.indexOf (String.Pattern "=") s of
+    Just idx -> Just (Tuple (String.take idx s) (String.drop (idx + 1) s))
+    Nothing -> Nothing
 
 -- | Extract scope from history state
 historyScope :: HistoryState -> BeeswarmScope
@@ -187,6 +262,8 @@ type Input =
   , v2Data :: Maybe V2Data
   , packageSetData :: Maybe Loader.PackageSetData
   , initialScene :: Scene
+  , initialFocalPackage :: Maybe String
+  , initialScope :: BeeswarmScope
   }
 
 -- | Output to parent

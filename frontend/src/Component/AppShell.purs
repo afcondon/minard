@@ -15,6 +15,7 @@ import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Effect.Aff.Class (class MonadAff)
+import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
@@ -23,6 +24,8 @@ import Type.Proxy (Proxy(..))
 
 import CE2.Data.Loader as Loader
 import CE2.Component.SceneCoordinator as SceneCoordinator
+import CE2.Component.SceneCoordinator.Types (readSceneFromHash)
+import CE2.Types (BeeswarmScope(..))
 import CE2.Scene (Scene(..))
 
 -- =============================================================================
@@ -57,6 +60,8 @@ type State =
   , v2Data :: Maybe V2Data  -- Raw V2 data for specialized views
   , packageSetData :: Maybe Loader.PackageSetData
   , currentScene :: Scene  -- Track current scene for header display
+  , currentFocal :: Maybe String  -- For URL routing
+  , currentScope :: BeeswarmScope  -- For URL routing
   }
 
 -- | Actions handled at the shell level
@@ -95,7 +100,9 @@ initialState _ =
   , modelData: Nothing
   , v2Data: Nothing
   , packageSetData: Nothing
-  , currentScene: ProjectManagement  -- Always start here; user navigates from hub
+  , currentScene: ProjectManagement
+  , currentFocal: Nothing
+  , currentScope: ProjectOnly
   }
 
 -- =============================================================================
@@ -128,6 +135,8 @@ mkSceneCoordinatorInput state =
   , v2Data: state.v2Data
   , packageSetData: state.packageSetData
   , initialScene: state.currentScene
+  , initialFocalPackage: state.currentFocal
+  , initialScope: state.currentScope
   }
 
 -- | Render the header with status info
@@ -159,13 +168,24 @@ showPhase (Error msg) = "Error: " <> msg
 handleAction :: forall output m. MonadAff m => Action -> H.HalogenM State Action Slots output m Unit
 handleAction = case _ of
   Initialize -> do
-    log "[AppShell] Initializing — always starting at ProjectManagement..."
-
-    -- Always start at ProjectManagement. Load data in background if projects exist.
-    H.modify_ _
-      { phase = Ready
-      , currentScene = ProjectManagement
-      }
+    -- Check URL hash for bookmarked scene; default to ProjectManagement
+    mHashState <- liftEffect readSceneFromHash
+    case mHashState of
+      Just hs -> do
+        log $ "[AppShell] Initializing — scene: " <> show hs.scene <> " (from URL hash)"
+            <> ", focal=" <> show hs.focalPackage <> ", scope=" <> show hs.scope
+        H.modify_ _
+          { phase = Ready
+          , currentScene = hs.scene
+          , currentFocal = hs.focalPackage
+          , currentScope = hs.scope
+          }
+      Nothing -> do
+        log "[AppShell] Initializing — default (ProjectManagement)"
+        H.modify_ _
+          { phase = Ready
+          , currentScene = ProjectManagement
+          }
 
     void $ H.fork do
       projectsResult <- H.liftAff Loader.fetchV2Projects
