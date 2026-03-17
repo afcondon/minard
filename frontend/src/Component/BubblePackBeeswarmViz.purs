@@ -186,21 +186,9 @@ handleAction = case _ of
       log $ "[BubblePackBeeswarmViz] Focal changed to " <> show input.focalPackage <> ", re-rendering"
       startVisualization input
     else if scopeChanged then do
-      -- Use GUP for scope change (same packages, different filter)
-      log $ "[BubblePackBeeswarmViz] Scope changed: scope=" <> show input.scope
-      case state.handle of
-        Just handle -> do
-          let filteredNodes = applyFilters input
-              callbacks = makeCallbacks state.actionListener
-          log $ "[BubblePackBeeswarmViz] Filtering to " <> show (Array.length filteredNodes) <> " nodes"
-          liftEffect $ BubblePackBeeswarm.setScope handle callbacks filteredNodes
-          liftEffect $ BubblePackBeeswarm.updateColors
-            C.bubblePackBeeswarmContainer
-            input.theme
-            input.colorMode
-        Nothing -> do
-          log "[BubblePackBeeswarmViz] WARNING: No handle for scope change, re-initializing"
-          startVisualization input
+      -- Scope change = different visible set, full re-render
+      log $ "[BubblePackBeeswarmViz] Scope changed to " <> show input.scope <> ", re-rendering"
+      startVisualization input
     else if themeChanged || colorModeChanged then do
       -- Just update colors in place
       log $ "[BubblePackBeeswarmViz] Theme/color changed, hasHandle=" <> show (isJust state.handle)

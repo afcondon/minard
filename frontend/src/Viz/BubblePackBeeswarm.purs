@@ -9,7 +9,6 @@
 module CE2.Viz.BubblePackBeeswarm
   ( render
   , renderWithPositions
-  , setScope
   , updateColors
   , Config
   , Callbacks
@@ -191,18 +190,22 @@ render config callbacks nodes = do
     , alphaMin: 0.001
     }
 
-  -- Initial render with full HATS tree (creates elements with behaviors)
+  -- Initial render with full HATS tree including link placeholders
+  -- Using createPackageNodesTreeWithLinks from the start ensures stable tree
+  -- structure — tickUpdate and Completed rerender reconcile correctly
   initialNodes <- handle.getNodes
-  renderNodesHATS callbacks initialNodes
+  let initialTree = createPackageNodesTreeWithLinks callbacks initialNodes
+  _ <- rerender C.bubblePackBeeswarmNodes initialTree
 
-  -- Subscribe to simulation events - tick uses fast path (transform-only)
-  _ <- subscribe events \event -> case event of
+  -- Subscribe to simulation events
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       -- Fast path: only update transforms (not full HATS rerender)
       currentNodes <- handle.getNodes
       tickUpdate C.bubblePackBeeswarmNodes currentNodes
     Completed -> do
       log "[BubblePackBeeswarm] Simulation converged"
+      -- Full rerender with final positions (same tree structure as initial)
       finalNodes <- handle.getNodes
       let tree = createPackageNodesTreeWithLinks callbacks finalNodes
       _ <- rerender C.bubblePackBeeswarmNodes tree
@@ -215,7 +218,7 @@ render config callbacks nodes = do
   pure
     { simHandle: handle
     , config
-    , stop: handle.stop
+    , stop: handle.stop *> unsubscribe  -- Clean up subscription on stop
     }
 
 -- | Render with initial positions (for Beeswarm → SolarSwarm transition)
@@ -258,12 +261,13 @@ renderWithPositions config callbacks nodes positions = do
     , alphaMin: 0.001
     }
 
-  -- Initial render with full HATS tree (creates elements with behaviors)
+  -- Initial render with stable tree structure (includes link placeholders)
   initialNodes <- handle.getNodes
-  renderNodesHATS callbacks initialNodes
+  let initialTree = createPackageNodesTreeWithLinks callbacks initialNodes
+  _ <- rerender C.bubblePackBeeswarmNodes initialTree
 
-  -- Subscribe to simulation events - tick uses fast path
-  _ <- subscribe events \event -> case event of
+  -- Subscribe to simulation events
+  unsubscribe <- subscribe events \event -> case event of
     Tick _ -> do
       currentNodes <- handle.getNodes
       tickUpdate C.bubblePackBeeswarmNodes currentNodes
@@ -279,31 +283,8 @@ renderWithPositions config callbacks nodes positions = do
   pure
     { simHandle: handle
     , config
-    , stop: handle.stop
+    , stop: handle.stop *> unsubscribe
     }
-
--- | Update visible packages (GUP - enter/exit animations)
--- | After updating simulation data, does a full HATS rerender to handle enter/exit
--- | (The fast tickUpdate path only handles position changes, not element changes)
-setScope :: BubblePackHandle -> Callbacks -> Array SimNode -> Effect Unit
-setScope handle callbacks nodes = do
-  log $ "[BubblePackBeeswarm] setScope called with " <> show (Array.length nodes) <> " nodes"
-
-  let packageNodes = Array.filter (\n -> n.nodeType == PackageNode) nodes
-      moduleNodes = Array.filter (\n -> n.nodeType == ModuleNode) nodes
-      modulesByPackage = groupModulesByPackage moduleNodes
-      packedNodes = preparePackedNodes handle.config packageNodes modulesByPackage
-
-  result <- handle.simHandle.updateData packedNodes []
-
-  log $ "[BubblePackBeeswarm] GUP: " <>
-    show (Array.length result.nodes.entered) <> " entered, " <>
-    show (Array.length result.nodes.updated) <> " updated, " <>
-    show (Array.length result.nodes.exited) <> " exited"
-
-  -- Full HATS rerender to handle enter/exit (tickUpdate only does transforms)
-  currentNodes <- handle.simHandle.getNodes
-  renderNodesHATS callbacks currentNodes
 
 -- | Update colors in place (re-renders with new colors)
 updateColors :: String -> ViewTheme -> ColorMode -> Effect Unit
@@ -524,25 +505,6 @@ renderSVGContainerHATS config = do
         ]
   _ <- rerender config.containerSelector containerTree
   pure unit
-
--- | Render all package nodes using HATS
-renderNodesHATS :: Callbacks -> Array PackedPackageNode -> Effect Unit
-renderNodesHATS callbacks nodes = do
-  let nodesTree = createPackageNodesTree callbacks nodes
-  _ <- rerender C.bubblePackBeeswarmNodes nodesTree
-  pure unit
-
--- | Create the nodes tree for HATS rendering
--- | Wrapped in a Group to match createPackageNodesTreeWithLinks structure
--- | so HATS can reconcile when links are added after simulation converges
-createPackageNodesTree :: Callbacks -> Array PackedPackageNode -> Tree
-createPackageNodesTree callbacks nodes =
-  elem Group []
-    [ forEach "packages" Group nodes nodeKey (packageNodeHATS callbacks)
-    ]
-  where
-  nodeKey :: PackedPackageNode -> String
-  nodeKey n = n.name
 
 -- | Package node template using HATS
 packageNodeHATS :: Callbacks -> PackedPackageNode -> Tree
