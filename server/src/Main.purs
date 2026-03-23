@@ -21,6 +21,8 @@ import API.Projects as Projects
 import API.Snapshots as Snapshots
 import API.Unified as Unified
 
+foreign import getPortFromEnv :: Effect Int
+
 -- =============================================================================
 -- Routes (V2 API only)
 -- =============================================================================
@@ -182,9 +184,10 @@ main = launchAff_ do
   liftEffect $ log $ "Default snapshot: " <> show mDefaultSnapshot
   defaultSnapshotRef <- liftEffect $ Ref.new mDefaultSnapshot
 
+  port <- liftEffect getPortFromEnv
   liftEffect do
-    _ <- serve { port: 3000 } { route, router: mkRouter dbRef defaultSnapshotRef }
-    log "Minard API server running on http://localhost:3000"
+    _ <- serve { port } { route, router: mkRouter dbRef defaultSnapshotRef }
+    log $ "Minard API server running on http://localhost:" <> show port
     log ""
     log "Endpoints:"
     log "  GET /api/v2/stats                        - Database statistics"

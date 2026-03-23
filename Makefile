@@ -3,11 +3,15 @@
 # Targets:
 #   bootstrap   — check prereqs, build everything, self-scan, print instructions
 #   start       — start server + frontend
-#   stop        — kill services on ports 3000/3001
+#   stop        — kill services (on configured ports, default 3000/3001)
 #   clean-test  — clone → bootstrap → start in /tmp (verifies repo is self-contained)
 
 MINARD := $(shell pwd)
 DB     := database/ce-unified.duckdb
+
+# Configurable ports (override with: make start API_PORT=4000 FRONTEND_PORT=4001)
+API_PORT      ?= 3000
+FRONTEND_PORT ?= 3001
 
 # Platform detection for pre-built loader binary
 UNAME_S := $(shell uname -s)
@@ -110,18 +114,21 @@ _self-scan:
 
 start:
 	@echo "Starting Minard..."
-	@cd $(MINARD) && node server/run.js &
-	@cd $(MINARD)/frontend && npx serve public -p 3001 &
+	@cd $(MINARD) && PORT=$(API_PORT) node server/run.js &
+	@cd $(MINARD)/frontend && npx serve public -p $(FRONTEND_PORT) &
 	@sleep 1
 	@echo ""
-	@echo "  API:      http://localhost:3000"
-	@echo "  Frontend: http://localhost:3001"
+	@echo "  API:      http://localhost:$(API_PORT)"
+	@echo "  Frontend: http://localhost:$(FRONTEND_PORT)"
+	@if [ "$(API_PORT)" != "3000" ]; then \
+		echo "  (API on non-default port — open frontend with ?api=$(API_PORT))"; \
+	fi
 	@echo ""
-	@$(OPEN_CMD) http://localhost:3001
+	@$(OPEN_CMD) http://localhost:$(FRONTEND_PORT)
 
 stop:
 	@echo "Stopping Minard..."
-	@lsof -ti :3000 :3001 2>/dev/null | xargs kill 2>/dev/null || true
+	@lsof -ti :$(API_PORT) :$(FRONTEND_PORT) 2>/dev/null | xargs kill 2>/dev/null || true
 	@sleep 1
 	@echo "Stopped."
 
