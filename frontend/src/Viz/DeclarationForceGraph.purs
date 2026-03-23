@@ -390,7 +390,7 @@ declNodeElem config neighborMap node =
               else if Array.elem hoveredId neighbors then Related
               else Dimmed
           , group: Just "decl-force"
-          , tooltip: Just { content: tooltipText, showWhen: OnHover }
+          , tooltip: Just { content: tooltipText, showWhen: OnHover, borderColor: Nothing }
           }
       ] <> clickBehavior
 

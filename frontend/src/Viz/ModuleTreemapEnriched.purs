@@ -1190,7 +1190,7 @@ declarationCircleElem config moduleName decl =
               else if Array.elem hoveredId decl.calledBy then Related   -- This calls me
               else Dimmed
           , group: Just "declarations"  -- Declaration-level highlighting group
-          , tooltip: Just { content: tooltipText, showWhen: OnHover }
+          , tooltip: Just { content: tooltipText, showWhen: OnHover, borderColor: Nothing }
           }
       ] <> declClickBehavior
     )

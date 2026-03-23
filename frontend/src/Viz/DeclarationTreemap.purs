@@ -347,7 +347,7 @@ declarationCell config pd =
                 else if Array.elem hoveredId pd.calledBy then Related
                 else Dimmed
             , group: Just "declarations"
-            , tooltip: Just { content: tooltipText, showWhen: OnHover }
+            , tooltip: Just { content: tooltipText, showWhen: OnHover, borderColor: Nothing }
             }
         ] <> clickBehavior
 

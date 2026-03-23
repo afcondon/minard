@@ -32,7 +32,8 @@ import Data.Tuple (Tuple(..))
 import Effect (Effect)
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onClick)
+import Hylograph.HATS (Tree, elem, staticStr, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlight, onCoordinatedHighlightWithTooltip, onClick)
+import Hylograph.Internal.Behavior.Types (TooltipTrigger(..))
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
 import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Internal.Behavior.Types (HighlightClass(..))  -- Primary, Related, Upstream, Downstream, Dimmed, Neutral
@@ -107,6 +108,7 @@ newtype PackageRenderData = PackageRenderData
   -- Source info for visual indicators
   , source :: String            -- "registry" | "workspace" | "extra"
   , isApp :: Boolean            -- true if has bundleModule
+  , bundleModule :: Maybe String -- entry point module name (e.g. "CE2.Main")
   , blockedByLocal :: Boolean   -- true if transitively depends on a "local" package (unpublishable)
   }
 
@@ -364,6 +366,7 @@ toPackageRenderDataWithoutDeps config pp =
     , dependedBy: []
     , source: pp.pkg.source
     , isApp: pp.pkg.bundleModule /= Nothing
+    , bundleModule: pp.pkg.bundleModule
     , blockedByLocal: false
     }
 
@@ -392,6 +395,7 @@ toPackageRenderDataWithDeps config dependsOnMap dependedByMap blockedSet pp =
     , dependedBy: fromMaybe [] $ Map.lookup pp.pkg.name dependedByMap
     , source: pp.pkg.source
     , isApp: pp.pkg.bundleModule /= Nothing
+    , bundleModule: pp.pkg.bundleModule
     , blockedByLocal: Set.member pp.pkg.name blockedSet
     }
 
@@ -530,10 +534,17 @@ blockedIcon (PackageRenderData d) =
           in show px <> "," <> show py
         ) (Array.replicate 8 unit)
         tooltip = dd.name <> ": local path override, not in registry. Packages depending on it cannot be built from the registry alone."
-    in [ elem Group
+    in [ withBehaviors
+           [ onCoordinatedHighlightWithTooltip
+               { identify: "badge:" <> dd.name
+               , classify: \_ -> Neutral
+               , group: Just "badges"
+               , tooltip: Just { content: tooltip, showWhen: OnHover, borderColor: Just "#DC2626" }
+               }
+           ]
+         $ elem Group
            [ staticStr "cursor" "help" ]
-           [ elem Title [ staticStr "textContent" tooltip ] []
-           , elem Polygon
+           [ elem Polygon
                [ staticStr "points" octPoints
                , staticStr "fill" "#DC2626"
                , staticStr "fill-opacity" "0.9"
@@ -561,11 +572,21 @@ blockedIcon (PackageRenderData d) =
   warningBadge dd =
     let cx = dd.x + dd.width - 16.0
         cy = dd.y + 14.0
-        tooltip = dd.name <> ": cannot be built from the registry alone — depends on a local-override package."
-    in [ elem Group
+        appSuffix = case dd.bundleModule of
+          Just m -> " (app entry: " <> m <> ")"
+          Nothing -> ""
+        tooltip = dd.name <> ": cannot be built from the registry alone — depends on a local-override package." <> appSuffix
+    in [ withBehaviors
+           [ onCoordinatedHighlightWithTooltip
+               { identify: "badge:" <> dd.name
+               , classify: \_ -> Neutral
+               , group: Just "badges"
+               , tooltip: Just { content: tooltip, showWhen: OnHover, borderColor: Just "#D97706" }
+               }
+           ]
+         $ elem Group
            [ staticStr "cursor" "help" ]
-           [ elem Title [ staticStr "textContent" tooltip ] []
-           , elem Circle
+           [ elem Circle
                [ thunkedNum "cx" cx
                , thunkedNum "cy" cy
                , thunkedNum "r" 8.0
@@ -717,9 +738,12 @@ renderCellContent config colors (PackageRenderData d) =
         Nothing -> circleElem
 
     -- Rounded rectangle for app packages (has bundleModule)
+    -- When source overlay is active, entry points get a green accent border
     makeAppRect =
       let rectW = d.circleR * 1.6
           rectH = d.circleR * 1.2
+          strokeCol = if config.sourcePeek then "#10B981" else colors.text  -- Green accent for entry points
+          strokeW = if config.sourcePeek then "2" else "0.5"
           rectElem = elem Rect
             [ thunkedNum "x" (d.cx - rectW / 2.0)
             , thunkedNum "y" (d.cy - rectH / 2.0)
@@ -728,8 +752,8 @@ renderCellContent config colors (PackageRenderData d) =
             , staticStr "rx" "4"
             , staticStr "ry" "4"
             , staticStr "fill" colors.stroke
-            , staticStr "stroke" colors.text
-            , staticStr "stroke-width" "0.5"
+            , staticStr "stroke" strokeCol
+            , staticStr "stroke-width" strokeW
             , staticStr "class" "package-circle app-rect"
             ]
             []
@@ -796,7 +820,19 @@ renderCellContent config colors (PackageRenderData d) =
       if d.width > 8.0 && d.height > 8.0
       then
         if d.isApp
-        then elem Group [] [ makeAppRect, makeLabel ]
+        then
+          let entryTooltip = case d.bundleModule of
+                Just m -> d.name <> " — app entry point: " <> m
+                Nothing -> d.name <> " — application package"
+          in withBehaviors
+               [ onCoordinatedHighlightWithTooltip
+                   { identify: "entry:" <> d.name
+                   , classify: \_ -> Neutral
+                   , group: Just "entries"
+                   , tooltip: Just { content: entryTooltip, showWhen: OnHover, borderColor: Just "#10B981" }
+                   }
+               ]
+             $ elem Group [] [ makeAppRect, makeLabel ]
         else elem Group [] [ makeCircle, makeSourceIndicator, makeLabel ]
       else elem Group [] []
 
@@ -810,7 +846,19 @@ renderCellContent config colors (PackageRenderData d) =
       if d.width > 8.0 && d.height > 8.0
       then
         if d.isApp
-        then elem Group [] [ makeAppRect, makeLabel ]
+        then
+          let entryTooltip = case d.bundleModule of
+                Just m -> d.name <> " — app entry point: " <> m
+                Nothing -> d.name <> " — application package"
+          in withBehaviors
+               [ onCoordinatedHighlightWithTooltip
+                   { identify: "entry:" <> d.name
+                   , classify: \_ -> Neutral
+                   , group: Just "entries"
+                   , tooltip: Just { content: entryTooltip, showWhen: OnHover, borderColor: Just "#10B981" }
+                   }
+               ]
+             $ elem Group [] [ makeAppRect, makeLabel ]
         else elem Group [] [ makeCircle, makeSourceIndicator, makeLabel ]
       else elem Group [] []
 
@@ -892,38 +940,47 @@ renderModuleCirclesInCell config colors (PackageRenderData d) =
               cy = d.cy + circle.y * scaleFactor
               r = circle.r * scaleFactor
 
+              -- Is this the entry point module?
+              isEntryModule = d.bundleModule == Just m.name
+
               -- Module status coloring
               gitSt = getModuleGitStatus config.gitStatus m.name
               reachStatus = config.reachabilityData <#> \rd -> getModuleReachability rd m.name
-              fillColor = case config.colorMode of
-                GitStatus -> gitStatusColor gitSt
-                Reachability -> case reachStatus of
-                  Just EntryPoint  -> "#00e5ff"
-                  Just Unreachable -> "#661111"
-                  Just Reachable   -> "#4caf50"
-                  _                -> colors.stroke
-                _ -> colors.stroke
-              strokeColor = case config.colorMode of
-                GitStatus -> case gitSt of
-                  GitModified -> "#d35400"
-                  GitStaged -> "#1e8449"
-                  GitUntracked -> "#7d3c98"
-                  GitClean -> "rgba(150, 150, 150, 0.3)"
-                Reachability -> case reachStatus of
-                  Just EntryPoint  -> "#ffffff"
-                  Just Unreachable -> "#331111"
-                  Just Reachable   -> "#2e7d32"
-                  _                -> colors.text
-                _ -> colors.text
-              strokeW = case config.colorMode of
-                GitStatus -> case gitSt of
-                  GitClean -> "0.5"
-                  _ -> "2.5"
-                Reachability -> case reachStatus of
-                  Just EntryPoint -> "3"
-                  Just Unreachable -> "0.5"
-                  _ -> "1.5"
-                _ -> "0.5"
+              fillColor
+                | isEntryModule = "#10B981"  -- Green — entry point always stands out
+                | otherwise = case config.colorMode of
+                    GitStatus -> gitStatusColor gitSt
+                    Reachability -> case reachStatus of
+                      Just EntryPoint  -> "#00e5ff"
+                      Just Unreachable -> "#661111"
+                      Just Reachable   -> "#4caf50"
+                      _                -> colors.stroke
+                    _ -> colors.stroke
+              strokeColor
+                | isEntryModule = "#059669"  -- Darker green border
+                | otherwise = case config.colorMode of
+                    GitStatus -> case gitSt of
+                      GitModified -> "#d35400"
+                      GitStaged -> "#1e8449"
+                      GitUntracked -> "#7d3c98"
+                      GitClean -> "rgba(150, 150, 150, 0.3)"
+                    Reachability -> case reachStatus of
+                      Just EntryPoint  -> "#ffffff"
+                      Just Unreachable -> "#331111"
+                      Just Reachable   -> "#2e7d32"
+                      _                -> colors.text
+                    _ -> colors.text
+              strokeW
+                | isEntryModule = "2"
+                | otherwise = case config.colorMode of
+                    GitStatus -> case gitSt of
+                      GitClean -> "0.5"
+                      _ -> "2.5"
+                    Reachability -> case reachStatus of
+                      Just EntryPoint -> "3"
+                      Just Unreachable -> "0.5"
+                      _ -> "1.5"
+                    _ -> "0.5"
             in
               elem Circle
                 [ thunkedNum "cx" cx
