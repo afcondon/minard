@@ -92,7 +92,10 @@ _install-deps:
 	@echo "Installing npm dependencies..."
 	@npm install
 
-_build-frontend: _install-deps
+_stamp-build:
+	@echo 'export const buildStamp = "'"$$(date '+%Y-%m-%d %H:%M')"'";' > frontend/src/BuildInfo.js
+
+_build-frontend: _install-deps _stamp-build
 	@echo "Building frontend..."
 	@spago build -p minard-frontend
 	@spago bundle -p minard-frontend

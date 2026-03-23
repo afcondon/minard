@@ -17,6 +17,7 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
+import CE2.BuildInfo as BuildInfo
 import CE2.Scene (Scene(..)) as Scene
 import CE2.Util.SVG (svgElem, sa)
 import CE2.Viz.SystemSankey as SystemSankey
@@ -111,11 +112,8 @@ renderHero state =
         ]
     -- Tagline
     , HH.p
-        [ HP.style "font-size: 15px; color: #888; margin: 0 0 6px 0; letter-spacing: 0.5px;" ]
-        [ HH.text "Code cartography for PureScript" ]
-    , HH.p
-        [ HP.style "font-size: 12px; color: #AAA; margin: 0 0 24px 0; font-style: italic;" ]
-        [ HH.text "build: 2026-03-23 11:00" ]
+        [ HP.style "font-size: 15px; color: #888; margin: 0 0 6px 0; letter-spacing: 0.5px; font-style: italic;" ]
+        [ HH.text $ "Fine code cartography since " <> BuildInfo.buildStamp ]
 
     -- Navigation links
     , HH.div
