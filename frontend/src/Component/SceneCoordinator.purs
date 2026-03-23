@@ -33,7 +33,7 @@ import Web.Event.EventTarget (addEventListener, removeEventListener, eventListen
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (toEventTarget) as HTMLDoc
 import Web.HTML.Window (document, toEventTarget) as Win
-import Web.UIEvent.KeyboardEvent (toEvent, key, repeat)
+import Web.UIEvent.KeyboardEvent (toEvent, key, repeat, metaKey, ctrlKey, shiftKey, altKey)
 import Web.UIEvent.KeyboardEvent as KE
 
 -- PSD3 Imports
@@ -136,6 +136,7 @@ initialState input =
   , purityPeek: false
   , complexityData: Nothing
   , complexityPeek: false
+  , sourcePeek: true
   , changeFrequencyData: Nothing
   , coChangeClusterData: Nothing
   , sizeByChangeFrequency: false
@@ -263,6 +264,7 @@ renderHeaderBar state =
                   , reachabilityPeek: state.reachabilityPeek
                   , purityPeek: state.purityPeek
                   , complexityPeek: state.complexityPeek
+                  , sourcePeek: state.sourcePeek
                   }
                   { onNavigateTo: NavigateTo
                   , onSetViewMode: SetViewMode
@@ -275,6 +277,7 @@ renderHeaderBar state =
                   , onToggleReachability: ToggleReachabilityPeek
                   , onTogglePurity: TogglePurityPeek
                   , onToggleCoupling: ToggleCouplingPeek
+                  , onToggleSource: ToggleSourcePeek
                   }
               )
           ]
@@ -400,6 +403,7 @@ renderScene state =
           , gitStatus: state.gitStatus
           , reachabilityData: state.reachabilityData
           , reachabilityPeek: state.reachabilityPeek
+          , sourcePeek: state.sourcePeek
           }
           HandleGalaxyTreemapOutput
       Nothing ->
@@ -891,11 +895,14 @@ handleAction = case _ of
     { emitter: keyEmitter, listener: keyListener } <- liftEffect HS.create
     void $ H.subscribe keyEmitter
 
-    let overlayKeys = ["c", "g", "h", "k", "p", "r", "x"]
+    let overlayKeys = ["c", "g", "h", "k", "o", "p", "r", "x"]
+        -- Ignore key events when modifier keys are held (Cmd, Ctrl, Shift, Alt)
+        -- This prevents Cmd-Shift-4 (screenshot) from triggering overlays
+        hasModifier ke = metaKey ke || ctrlKey ke || shiftKey ke || altKey ke
 
     keydownListener <- liftEffect $ ET.eventListener \e ->
       case KE.fromEvent e of
-        Just ke | Array.elem (key ke) overlayKeys && not (repeat ke) ->
+        Just ke | Array.elem (key ke) overlayKeys && not (repeat ke) && not (hasModifier ke) ->
           HS.notify keyListener (OverlayPeekOn (key ke))
         _ -> pure unit
 
@@ -1393,6 +1400,7 @@ handleAction = case _ of
   ToggleReachabilityPeek -> Overlays.handleToggleReachabilityPeek
   TogglePurityPeek -> Overlays.handleTogglePurityPeek
   ToggleCouplingPeek -> Overlays.handleToggleCouplingPeek
+  ToggleSourcePeek -> Overlays.handleToggleSourcePeek
   OverlayPeekOn k -> Overlays.handleOverlayPeekOn k
   OverlayPeekOff -> Overlays.handleOverlayPeekOff
 

@@ -317,6 +317,7 @@ renderTreemap theme packages _heroMode onRectClick = do
         , gitStatus: Nothing
         , colorMode: DefaultUniform
         , reachabilityData: Nothing
+        , sourcePeek: false
         }
   Treemap.render config packages
 

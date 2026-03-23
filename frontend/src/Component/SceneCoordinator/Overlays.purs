@@ -15,6 +15,7 @@ module CE2.Component.SceneCoordinator.Overlays
   , handleToggleReachabilityPeek
   , handleTogglePurityPeek
   , handleToggleCouplingPeek
+  , handleToggleSourcePeek
   , handleOverlayPeekOn
   , handleOverlayPeekOff
   , computeAndStoreClusters
@@ -229,6 +230,11 @@ handleToggleCouplingPeek = do
   H.modify_ _ { complexityPeek = newVal }
   when (newVal && state.complexityData == Nothing) Loaders.loadComplexityData
 
+handleToggleSourcePeek :: forall m. MonadAff m => H.HalogenM State Action Slots Output m Unit
+handleToggleSourcePeek = do
+  state <- H.get
+  H.modify_ _ { sourcePeek = not state.sourcePeek }
+
 -- =========================================================================
 -- Momentary Keyboard Peeks (hold key = show overlay, release = revert)
 -- Radio behavior: activating one clears all others
@@ -239,6 +245,7 @@ handleOverlayPeekOn k = do
   state <- H.get
   when (not state.searchOpen) do
     -- Clear all peeks and reset colorMode, then activate the requested one
+    -- Clear peeks and colorMode but preserve sourcePeek (it's a background overlay, composes with others)
     H.modify_ _ { reachabilityPeek = false, purityPeek = false, complexityPeek = false, colorMode = DefaultUniform }
     case k of
       "c" -> do
@@ -276,6 +283,9 @@ handleOverlayPeekOn k = do
           PkgModuleBeeswarm pkg -> computeAndStoreReachabilityForPeek pkg
           GalaxyTreemap -> computeAndStoreGlobalReachability
           _ -> pure unit
+      "o" -> do
+        -- Source overlay toggles independently (composes with other overlays)
+        H.modify_ _ { sourcePeek = not state.sourcePeek }
       "x" -> do
         H.modify_ _ { colorMode = CoChangeCluster }
         when (state.coChangeClusterData == Nothing) $ case state.scene of
@@ -286,6 +296,7 @@ handleOverlayPeekOn k = do
 
 handleOverlayPeekOff :: forall m. MonadAff m => H.HalogenM State Action Slots Output m Unit
 handleOverlayPeekOff = do
+  -- Preserve sourcePeek — it's a sticky toggle, not a momentary peek
   H.modify_ _ { reachabilityPeek = false, purityPeek = false, complexityPeek = false, colorMode = DefaultUniform }
 
 -- =========================================================================

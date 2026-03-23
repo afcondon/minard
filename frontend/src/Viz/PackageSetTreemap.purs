@@ -24,7 +24,7 @@ import Data.Int (toNumber, floor)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Number (sqrt)
+import Data.Number (sqrt, cos, sin)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
@@ -73,6 +73,7 @@ type Config =
   , gitStatus :: Maybe GitStatusData                         -- Git status for module coloring
   , colorMode :: ColorMode                                   -- Current color mode
   , reachabilityData :: Maybe PackageReachability            -- Reachability for dead code coloring
+  , sourcePeek :: Boolean                                    -- Show package source overlay (registry/local/workspace)
   }
 
 -- | Package with computed treemap position
@@ -106,6 +107,7 @@ newtype PackageRenderData = PackageRenderData
   -- Source info for visual indicators
   , source :: String            -- "registry" | "workspace" | "extra"
   , isApp :: Boolean            -- true if has bundleModule
+  , blockedByLocal :: Boolean   -- true if transitively depends on a "local" package (unpublishable)
   }
 
 derive instance eqPackageRenderData :: Eq PackageRenderData
@@ -137,10 +139,11 @@ renderWithHighlighting config packages = do
   let pkgNames = Set.fromFoldable $ map _.name packages
       dependsOnMap = buildDependsOnMap packages pkgNames config.infraLayerThreshold
       dependedByMap = buildDependedByMap packages pkgNames config.infraLayerThreshold
+      blockedSet = computeBlockedByLocal packages
 
   -- Compute treemap layout and render with dependency data
   let positioned = computeTreemapPositions config packages
-      packageData = positioned <#> toPackageRenderDataWithDeps config dependsOnMap dependedByMap
+      packageData = positioned <#> toPackageRenderDataWithDeps config dependsOnMap dependedByMap blockedSet
   renderTreemapSVGImpl config packageData true
 
 -- | Clean up (no simulation to stop, just clear)
@@ -308,6 +311,34 @@ renderTreemapSVGImpl config packageData enableHighlighting = do
   _ <- rerender config.containerSelector svgTree
   pure unit
 
+-- | Compute which packages are transitively blocked by local dependencies.
+-- | A package is blocked if any of its transitive deps has source == "local".
+-- | Returns the set of blocked package names.
+computeBlockedByLocal :: Array PackageSetPackage -> Set String
+computeBlockedByLocal packages =
+  let
+    -- Find all local packages (root causes)
+    localPkgs = Set.fromFoldable $ Array.filter (\p -> p.source == "local") packages <#> _.name
+
+    -- Build reverse dependency map: pkg → who depends on me
+    reverseDeps = foldl (\acc pkg ->
+      foldl (\acc' dep ->
+        Map.alter (Just <<< Array.cons pkg.name <<< fromMaybe []) dep acc'
+      ) acc pkg.depends
+    ) (Map.empty :: Map String (Array String)) packages
+
+    -- BFS forward from local packages through reverse deps
+    go visited frontier
+      | Set.isEmpty frontier = visited
+      | otherwise =
+          let dependents = Set.fromFoldable $ Array.concatMap
+                (\name -> fromMaybe [] $ Map.lookup name reverseDeps)
+                (Array.fromFoldable frontier)
+              unvisited = Set.difference dependents visited
+          in go (Set.union visited frontier) unvisited
+  in
+    Set.difference (go Set.empty localPkgs) localPkgs  -- Exclude the local packages themselves
+
 -- | Convert PositionedPackage to PackageRenderData (without dependency data)
 toPackageRenderDataWithoutDeps :: Config -> PositionedPackage -> PackageRenderData
 toPackageRenderDataWithoutDeps config pp =
@@ -333,11 +364,12 @@ toPackageRenderDataWithoutDeps config pp =
     , dependedBy: []
     , source: pp.pkg.source
     , isApp: pp.pkg.bundleModule /= Nothing
+    , blockedByLocal: false
     }
 
 -- | Convert PositionedPackage to PackageRenderData (with dependency data for highlighting)
-toPackageRenderDataWithDeps :: Config -> Map String (Array String) -> Map String (Array String) -> PositionedPackage -> PackageRenderData
-toPackageRenderDataWithDeps config dependsOnMap dependedByMap pp =
+toPackageRenderDataWithDeps :: Config -> Map String (Array String) -> Map String (Array String) -> Set String -> PositionedPackage -> PackageRenderData
+toPackageRenderDataWithDeps config dependsOnMap dependedByMap blockedSet pp =
   let
     cx = pp.x + pp.width / 2.0
     cy = pp.y + pp.height / 2.0
@@ -360,6 +392,7 @@ toPackageRenderDataWithDeps config dependsOnMap dependedByMap pp =
     , dependedBy: fromMaybe [] $ Map.lookup pp.pkg.name dependedByMap
     , source: pp.pkg.source
     , isApp: pp.pkg.bundleModule /= Nothing
+    , blockedByLocal: Set.member pp.pkg.name blockedSet
     }
 
 -- | Build a position map from package name to center coordinates
@@ -463,13 +496,107 @@ buildSVGTree config packageData enableHighlighting =
         else elem Group [] []
     ]
 
+-- | Color by package source (registry/workspace/local)
+-- | Registry packages return Nothing (keep default background)
+sourceColor :: String -> Maybe String
+sourceColor = case _ of
+  "workspace" -> Just "#1E3A5F"  -- Deep blue — your packages
+  "local"     -> Just "#5C3D1E"  -- Warm amber — local overrides (needs attention)
+  _           -> Nothing         -- Registry — no change, keep default background
+
+-- | Source overlay badges for unpublishable/local packages
+-- |
+-- | Local packages (root cause): red stop sign — can't be resolved from registry
+-- | Blocked packages: amber warning — transitively depends on a local package,
+-- |   meaning this package can't be built from the registry alone
+blockedIcon :: PackageRenderData -> Array Tree
+blockedIcon (PackageRenderData d) =
+  if d.source == "local"
+    then stopSign d  -- Red octagon: this package IS the problem
+    else if d.blockedByLocal
+      then warningBadge d  -- Amber circle: blocked by a local dep
+      else []
+  where
+  -- Tooltip background + text, hidden by default, shown on hover via onMouseEnter/Leave
+  -- Red octagon stop sign
+  stopSign dd =
+    let cx = dd.x + dd.width - 16.0
+        cy = dd.y + 14.0
+        r = 10.0
+        octPoints = Array.intercalate "," $ Array.mapWithIndex (\i _ ->
+          let angle = toNumber i * 3.14159265 / 4.0 - 3.14159265 / 8.0
+              px = cx + r * cos angle
+              py = cy + r * sin angle
+          in show px <> "," <> show py
+        ) (Array.replicate 8 unit)
+        tooltip = dd.name <> ": local path override, not in registry. Packages depending on it cannot be built from the registry alone."
+    in [ elem Group
+           [ staticStr "cursor" "help" ]
+           [ elem Polygon
+               [ staticStr "points" octPoints
+               , staticStr "fill" "#DC2626"
+               , staticStr "fill-opacity" "0.9"
+               , staticStr "stroke" "#991B1B"
+               , staticStr "stroke-width" "1"
+               ]
+               []
+           , elem Text
+               [ thunkedNum "x" cx
+               , thunkedNum "y" (cy + 0.5)
+               , staticStr "text-anchor" "middle"
+               , staticStr "dominant-baseline" "central"
+               , staticStr "font-size" "11"
+               , staticStr "font-weight" "bold"
+               , staticStr "fill" "white"
+               , staticStr "pointer-events" "none"
+               , staticStr "font-family" "system-ui, sans-serif"
+               , staticStr "textContent" "!"
+               ]
+               []
+           ]
+       ]
+
+  -- Amber warning circle
+  warningBadge dd =
+    let cx = dd.x + dd.width - 16.0
+        cy = dd.y + 14.0
+        tooltip = dd.name <> ": cannot be built from the registry alone — depends on a local-override package."
+    in [ elem Group
+           [ staticStr "cursor" "help" ]
+           [ elem Circle
+               [ thunkedNum "cx" cx
+               , thunkedNum "cy" cy
+               , thunkedNum "r" 8.0
+               , staticStr "fill" "#D97706"
+               , staticStr "fill-opacity" "0.85"
+               , staticStr "stroke" "#92400E"
+               , staticStr "stroke-width" "1"
+               ]
+               []
+           , elem Text
+               [ thunkedNum "x" cx
+               , thunkedNum "y" (cy + 0.5)
+               , staticStr "text-anchor" "middle"
+               , staticStr "dominant-baseline" "central"
+               , staticStr "font-size" "12"
+               , staticStr "font-weight" "bold"
+               , staticStr "fill" "white"
+               , staticStr "pointer-events" "none"
+               , staticStr "textContent" "×"
+               ]
+               []
+           ]
+       ]
+
 -- | Create tree for a single package group (called from forEach template)
 packageGroupTree :: Config -> PackageRenderData -> Tree
 packageGroupTree config (PackageRenderData d) =
   let
     colors = themeColors config.theme
-    -- Use background color for rects - strokes create the grid pattern
-    rectFill = colors.background
+    -- Use background color for rects, or source-based color when overlay active
+    rectFill = if config.sourcePeek
+      then fromMaybe colors.background (sourceColor d.source)
+      else colors.background
     -- Stronger stroke for blueprint grid effect
     strokeColor = if isDarkTheme config.theme
       then "rgba(255, 255, 255, 0.6)"
@@ -497,10 +624,13 @@ packageGroupTree config (PackageRenderData d) =
     , staticStr "data-name" d.name
     , staticStr "data-layer" (show d.topoLayer)
     ]
-    [ rectWithClick
+    ([ rectWithClick
     , -- Cell contents (circle, text) - circle may have its own click handler
       renderCellContent config colors (PackageRenderData d)
     ]
+    -- Source overlay: show blocked/local icons when active
+    <> (if config.sourcePeek then blockedIcon (PackageRenderData d) else [])
+    )
 
 -- | Create tree for a single package group with coordinated highlighting behavior
 -- | Highlight triggers only from circle/label hover, NOT rect background
@@ -508,8 +638,10 @@ packageGroupTreeWithHighlighting :: Config -> PackageRenderData -> Tree
 packageGroupTreeWithHighlighting config (PackageRenderData d) =
   let
     colors = themeColors config.theme
-    -- Use background color for rects - strokes create the grid pattern
-    rectFill = colors.background
+    -- Use background color for rects, or source-based color when overlay active
+    rectFill = if config.sourcePeek
+      then fromMaybe colors.background (sourceColor d.source)
+      else colors.background
     -- Stronger stroke for blueprint grid effect
     strokeColor = if isDarkTheme config.theme
       then "rgba(255, 255, 255, 0.6)"
@@ -555,9 +687,11 @@ packageGroupTreeWithHighlighting config (PackageRenderData d) =
       , staticStr "data-name" d.name
       , staticStr "data-layer" (show d.topoLayer)
       ]
-      [ rectWithClick
+      ([ rectWithClick
       , highlightedCellContent
       ]
+      <> (if config.sourcePeek then blockedIcon (PackageRenderData d) else [])
+      )
 
 -- | Render cell content based on cellContents config
 -- | Circles may have click handlers for navigating to SolarSwarm/neighborhood view

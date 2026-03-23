@@ -479,6 +479,9 @@ type State =
   , complexityData :: Maybe (Map.Map String Loader.ModuleStructuralComplexity)
   , complexityPeek :: Boolean
 
+    -- Source overlay (shows registry vs local vs workspace)
+  , sourcePeek :: Boolean
+
     -- Change frequency data (lazy loaded from git commit history)
   , changeFrequencyData :: Maybe (Map.Map String Number)
 
@@ -555,6 +558,7 @@ data Action
   | ToggleReachabilityPeek               -- Click toggle for reachability peek
   | TogglePurityPeek                     -- Click toggle for purity peek
   | ToggleCouplingPeek                   -- Click toggle for coupling peek
+  | ToggleSourcePeek                    -- Click toggle for source overlay (registry/local/workspace)
   -- Momentary keyboard peeks (hold key = show, release = revert)
   | OverlayPeekOn String                  -- Key pressed — activate overlay by key name
   | OverlayPeekOff                        -- Any overlay key released — revert to default

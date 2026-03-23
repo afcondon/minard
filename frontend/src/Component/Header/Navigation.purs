@@ -69,6 +69,7 @@ type Row2State =
   , reachabilityPeek :: Boolean
   , purityPeek :: Boolean
   , complexityPeek :: Boolean
+  , sourcePeek :: Boolean
   }
 
 type Row2Actions i =
@@ -85,6 +86,7 @@ type Row2Actions i =
   , onToggleReachability :: i
   , onTogglePurity :: i
   , onToggleCoupling :: i
+  , onToggleSource :: i
   }
 
 -- | Whether Row 2 should be rendered for this scene
@@ -103,7 +105,7 @@ renderRow2 state actions =
   case state.scene of
     -- Galaxy: reachability peek only (coupling is module-level, no-op here)
     GalaxyTreemap ->
-      peekGroup [ reachPeek ]
+      peekGroup [ reachPeek, sourceOverlay ]
 
     GalaxyBeeswarm -> []
 
@@ -168,6 +170,10 @@ renderRow2 state actions =
   reachOverlay :: HH.HTML w i
   reachOverlay = overlayButton "Reach" "R" actions.onToggleReachability
     (state.reachabilityPeek || state.colorMode == Reachability)
+
+  sourceOverlay :: HH.HTML w i
+  sourceOverlay = overlayButton "Source" "O" actions.onToggleSource
+    state.sourcePeek
 
   sizeOverlay :: HH.HTML w i
   sizeOverlay = overlayButton "Size" "S" actions.onToggleSizeByFreq

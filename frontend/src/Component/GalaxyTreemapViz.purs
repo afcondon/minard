@@ -54,6 +54,7 @@ type Input =
   , gitStatus :: Maybe Loader.GitStatusData   -- Git status for module coloring
   , reachabilityData :: Maybe PackageReachability  -- For reachability coloring in galaxy view
   , reachabilityPeek :: Boolean                   -- True while R key held (peek overlay)
+  , sourcePeek :: Boolean                         -- True while S key held (source overlay)
   }
 
 -- | Output to parent
@@ -173,12 +174,13 @@ handleAction = case _ of
                         || (input.gitStatus /= lastInput.gitStatus)
         reachabilityChanged = input.reachabilityData /= lastInput.reachabilityData
         peekChanged = input.reachabilityPeek /= lastInput.reachabilityPeek
+        sourcePeekChanged = input.sourcePeek /= lastInput.sourcePeek
 
     -- Update lastInput for next comparison
     H.modify_ _ { lastInput = input }
 
     -- Any change requires full re-render (HATS trees embed all config)
-    when (packagesChanged || themeChanged || colorModeChanged || thresholdChanged || modulesChanged || gitStatusChanged || reachabilityChanged || peekChanged) do
+    when (packagesChanged || themeChanged || colorModeChanged || thresholdChanged || modulesChanged || gitStatusChanged || reachabilityChanged || peekChanged || sourcePeekChanged) do
       log $ "[GalaxyTreemapViz] Input changed ("
           <> (if packagesChanged then "packages " else "")
           <> (if themeChanged then "theme " else "")
@@ -255,6 +257,7 @@ buildTreemapConfig input =
   , gitStatus: input.gitStatus
   , colorMode: effectiveColorMode input
   , reachabilityData: input.reachabilityData
+  , sourcePeek: input.sourcePeek
   }
 
 -- | Build treemap config from input with click handlers
@@ -274,6 +277,7 @@ buildTreemapConfigWithHandlers input onRectClick onCircleClick =
   , gitStatus: input.gitStatus
   , colorMode: effectiveColorMode input
   , reachabilityData: input.reachabilityData
+  , sourcePeek: input.sourcePeek
   }
 
 -- | Build click handler that routes D3 events to Halogen actions via the listener
