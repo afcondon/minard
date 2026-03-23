@@ -532,7 +532,8 @@ blockedIcon (PackageRenderData d) =
         tooltip = dd.name <> ": local path override, not in registry. Packages depending on it cannot be built from the registry alone."
     in [ elem Group
            [ staticStr "cursor" "help" ]
-           [ elem Polygon
+           [ elem Title [ staticStr "textContent" tooltip ] []
+           , elem Polygon
                [ staticStr "points" octPoints
                , staticStr "fill" "#DC2626"
                , staticStr "fill-opacity" "0.9"
@@ -563,7 +564,8 @@ blockedIcon (PackageRenderData d) =
         tooltip = dd.name <> ": cannot be built from the registry alone — depends on a local-override package."
     in [ elem Group
            [ staticStr "cursor" "help" ]
-           [ elem Circle
+           [ elem Title [ staticStr "textContent" tooltip ] []
+           , elem Circle
                [ thunkedNum "cx" cx
                , thunkedNum "cy" cy
                , thunkedNum "r" 8.0
