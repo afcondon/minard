@@ -14,6 +14,7 @@ module CE2.Component.DeclarationDetailViz
 import Prelude
 
 import Data.Array as Array
+import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.String as String
 import Effect (Effect)
@@ -42,6 +43,9 @@ type Input =
   , moduleName :: String
   , declarationName :: String
   , declarations :: Array Loader.V2Declaration
+  , moduleCalls :: Array Loader.V2FunctionCall
+  , allCalls :: Map.Map Int (Array Loader.V2FunctionCall)
+  , moduleNameToId :: Map.Map String Int
   }
 
 data Output
@@ -149,6 +153,10 @@ render state =
             , moduleName: input.moduleName
             , declarationName: input.declarationName
             , focusTypeSignature: mDecl >>= _.typeSignature
+            , declarations: input.declarations
+            , moduleCalls: input.moduleCalls
+            , allCalls: input.allCalls
+            , moduleNameToId: input.moduleNameToId
             }
             HandleUsageGraphOutput
         ]

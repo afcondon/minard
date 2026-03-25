@@ -1,9 +1,9 @@
 -- | Declaration Usage Graph Component
 -- |
--- | Pure Halogen HTML component showing cross-module usage for a declaration.
--- | Three-pane centered layout: callers (left, scrollable) | FOCUS (centered) | callees (right, scrollable).
--- | Self-contained: fetches its own data on Initialize/Receive.
--- | Renders compact Sigil type signatures (siglets) for each declaration.
+-- | Three-pane centered layout: callers (left) | module spine (center) | callees (right).
+-- | The center column shows all declarations from the focused module as a scrollable
+-- | spine — full Sigil signature for the focused declaration, compact siglets for siblings.
+-- | Clicking a sibling refocuses the graph. Self-contained: fetches its own usage data.
 module CE2.Component.DeclarationUsageGraph
   ( component
   , Input
@@ -18,8 +18,11 @@ import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set as Set
 import Data.String as String
+import Data.Tuple (Tuple(..))
 import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
@@ -28,6 +31,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 
 import CE2.Data.Loader as Loader
+import CE2.Viz.DOMHelpers (scrollChildIntoView)
 import CE2.Viz.ModuleTreemapEnriched (kindColor)
 import CE2.Viz.SignatureTree as SigTree
 import CE2.Viz.TypeSignature.TypeAST (parseToRenderType)
@@ -41,6 +45,10 @@ type Input =
   , moduleName :: String
   , declarationName :: String
   , focusTypeSignature :: Maybe String
+  , declarations :: Array Loader.V2Declaration
+  , moduleCalls :: Array Loader.V2FunctionCall
+  , allCalls :: Map.Map Int (Array Loader.V2FunctionCall)
+  , moduleNameToId :: Map.Map String Int
   }
 
 data Output
@@ -57,18 +65,28 @@ data Query a = NoQuery a
 data LoadState
   = Loading
   | Loaded Loader.DeclarationUsage
-  | Empty  -- No cross-module usage found
+  | Empty
+
+-- | "module.decl" key for node identity
+type NodeKey = String
 
 type State =
   { input :: Input
   , loadState :: LoadState
+  , hoveredSibling :: Maybe String
+  , hoveredNode :: Maybe NodeKey
+  , callsFrom :: Map.Map NodeKey (Set.Set NodeKey)  -- caller → set of callees
+  , callsTo :: Map.Map NodeKey (Set.Set NodeKey)    -- callee → set of callers
   }
 
 data Action
   = Initialize
   | Receive Input
-  | ClickNode String String  -- moduleName, declName
-  | ClickModule String       -- moduleName
+  | ClickNode String String  -- moduleName, declName (callers/callees)
+  | ClickSibling String      -- declName (same module)
+  | HoverSibling (Maybe String) -- declName or Nothing on leave
+  | HoverNode (Maybe NodeKey)   -- hover any caller/callee node
+  | ClickModule String
   | ClickOpenInEditor
   | ClickViewSignatures
   | ClickViewPackage
@@ -93,6 +111,10 @@ initialState :: Input -> State
 initialState input =
   { input
   , loadState: Loading
+  , hoveredSibling: Nothing
+  , hoveredNode: Nothing
+  , callsFrom: Map.empty
+  , callsTo: Map.empty
   }
 
 -- =============================================================================
@@ -118,14 +140,15 @@ render state = case state.loadState of
       ]
 
   Loaded usage ->
-    renderUsageGraph state.input usage
+    renderUsageGraph state.input usage (computeHighlightSet state usage)
 
--- | Render the full usage graph: callers | focus | callees
-renderUsageGraph :: forall m. Input -> Loader.DeclarationUsage -> H.ComponentHTML Action () m
-renderUsageGraph input usage =
+-- | Render the full usage graph: callers | module spine | callees
+-- | `highlightSet` contains "module.decl" keys that should stay bright when a sibling is hovered
+renderUsageGraph :: forall m. Input -> Loader.DeclarationUsage -> Maybe (Set.Set String) -> H.ComponentHTML Action () m
+renderUsageGraph input usage highlightSet =
   HH.div
     [ HP.style "display: flex; align-items: stretch; width: 100%; height: 100%; font-family: 'Courier New', Courier, monospace;" ]
-    [ -- Left pane: callers (scrolls horizontally, content right-aligned)
+    [ -- Left pane: callers
       HH.div
         [ HP.style "flex: 1; overflow-x: auto; overflow-y: auto; display: flex; justify-content: flex-end;" ]
         [ HH.div
@@ -133,10 +156,12 @@ renderUsageGraph input usage =
             callerColumns
         ]
 
-    -- Center: focus column
-    , focusColumn
+    -- Center: module spine (or single focus for cross-package)
+    , if Array.null input.declarations
+        then focusColumnSingle
+        else focusColumnSpine
 
-    -- Right pane: callees (scrolls horizontally)
+    -- Right pane: callees
     , HH.div
         [ HP.style "flex: 1; overflow-x: auto; overflow-y: auto; display: flex; justify-content: flex-start;" ]
         [ HH.div
@@ -155,10 +180,11 @@ renderUsageGraph input usage =
   calleeColumns = calleeHops <#> \hop ->
     renderHopColumn hop (fromMaybe [] $ Map.lookup hop calleesByHop) "callee"
 
-  -- Focus column — visually anchored center with full Sigil signature
-  -- Prefer API-provided focusTypeSignature, fall back to input from parent
-  focusColumn :: H.ComponentHTML Action () m
-  focusColumn =
+  -- -------------------------------------------------------------------------
+  -- Focus column: single declaration (fallback for cross-package)
+  -- -------------------------------------------------------------------------
+  focusColumnSingle :: H.ComponentHTML Action () m
+  focusColumnSingle =
     let
       focusSig = case usage.focusTypeSignature of
         Just s -> Just s
@@ -187,14 +213,119 @@ renderUsageGraph input usage =
       , HH.div
           [ HP.style "font-size: 10px; color: #aaa; margin-bottom: 16px;" ]
           [ HH.text $ show (Array.length usage.callers) <> " callers \x00B7 " <> show (Array.length usage.callees) <> " callees" ]
-      -- Navigation links
-      , HH.div
-          [ HP.style "border: 1px solid #d8d0bc; border-radius: 4px; padding: 8px 12px; margin-top: 4px; background: rgba(255,255,255,0.5); display: flex; flex-direction: column; gap: 4px; font-size: 11px;" ]
-          [ navLink "Open in editor" ClickOpenInEditor
-          , navLink "Module structure" (ClickModule input.moduleName)
-          , navLink "Signature map" ClickViewSignatures
-          , navLink "Package treemap" ClickViewPackage
+      , navBox
+      ]
+
+  -- -------------------------------------------------------------------------
+  -- Focus column: module spine (full module with focused + siblings)
+  -- -------------------------------------------------------------------------
+  focusColumnSpine :: H.ComponentHTML Action () m
+  focusColumnSpine =
+    let sorted = sortByKind input.declarations
+    in
+    HH.div
+      [ HP.style "display: flex; flex-direction: column; min-width: 220px; max-width: 380px; background: #f8f6f0; border-left: 2px solid #c8c0a8; border-right: 2px solid #c8c0a8; flex-shrink: 0;" ]
+      [ -- Module name header (fixed)
+        HH.div
+          [ HP.style "font-size: 11px; color: #888; text-align: center; padding: 10px 16px 6px; flex-shrink: 0; border-bottom: 1px solid #e8e4d8;" ]
+          [ HH.text $ shortModuleName input.moduleName
+          , HH.span [ HP.style "color: #bbb; margin-left: 6px;" ] [ HH.text $ "(" <> show (Array.length sorted) <> ")" ]
           ]
+      -- Scrollable spine
+      , HH.div
+          [ HP.style "flex: 1; overflow-y: auto; padding: 6px 12px;"
+          , HP.id "usage-graph-spine"
+          ]
+          (sorted <#> renderSpineEntry)
+      -- Caller/callee count + nav (fixed footer)
+      , HH.div
+          [ HP.style "flex-shrink: 0; border-top: 1px solid #e8e4d8; padding: 8px 16px;" ]
+          [ HH.div
+              [ HP.style "font-size: 10px; color: #aaa; text-align: center; margin-bottom: 8px;" ]
+              [ HH.text $ show (Array.length usage.callers) <> " callers \x00B7 " <> show (Array.length usage.callees) <> " callees" ]
+          , navBox
+          ]
+      ]
+
+  -- Render a spine entry: full sigil for focused, siglet for siblings
+  renderSpineEntry :: Loader.V2Declaration -> H.ComponentHTML Action () m
+  renderSpineEntry decl =
+    if decl.name == input.declarationName
+      then renderFocusedEntry decl
+      else renderSiblingEntry decl
+
+  -- Focused declaration: full Sigil signature, highlighted
+  renderFocusedEntry :: Loader.V2Declaration -> H.ComponentHTML Action () m
+  renderFocusedEntry decl =
+    let
+      focusSig = case usage.focusTypeSignature of
+        Just s -> Just s
+        Nothing -> decl.typeSignature
+      mSigHtml = do
+        sig <- focusSig
+        ast <- parseToRenderType sig
+        pure $ SigTree.renderSignature { name: decl.name, sig, ast, typeParams: decl.typeArguments, className: Nothing }
+    in
+    HH.div
+      [ HP.style "padding: 10px 8px; margin: 3px 0; background: rgba(78, 121, 167, 0.08); border-radius: 4px; border-left: 3px solid #4e79a7;"
+      , HP.id "spine-focus"
+      ]
+      [ case mSigHtml of
+          Just html ->
+            HH.div
+              [ HP.prop (PropName "innerHTML") html ]
+              []
+          Nothing ->
+            HH.div
+              [ HP.style "font-size: 14px; font-weight: 700; color: #222;" ]
+              [ HH.text decl.name ]
+      ]
+
+  -- Sibling declaration: compact siglet, clickable
+  renderSiblingEntry :: Loader.V2Declaration -> H.ComponentHTML Action () m
+  renderSiblingEntry decl =
+    let
+      mSigletHtml = do
+        sig <- decl.typeSignature
+        ast <- parseToRenderType sig
+        pure $ SigTree.renderSiglet { ast }
+      purityBg = if isEffectfulSig decl.typeSignature then "rgba(232, 150, 12, 0.06)" else "rgba(59, 130, 196, 0.04)"
+    in
+    HH.div
+      [ HP.style $ "cursor: pointer; padding: 4px 8px; margin: 1px 0; border-radius: 3px; transition: background 100ms ease; background: " <> purityBg <> ";"
+      , HE.onClick \_ -> ClickSibling decl.name
+      , HE.onMouseEnter \_ -> HoverSibling (Just decl.name)
+      , HE.onMouseLeave \_ -> HoverSibling Nothing
+      , HP.title decl.name
+      ]
+      [ HH.div
+          [ HP.style "display: flex; align-items: center; gap: 5px;" ]
+          [ HH.span
+              [ HP.style $ "display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: " <> kindColor decl.kind <> ";" ]
+              []
+          , HH.span
+              [ HP.style "font-size: 11px; color: #555; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" ]
+              [ HH.text decl.name ]
+          ]
+      , case mSigletHtml of
+          Just html ->
+            HH.div
+              [ HP.style "margin-left: 11px; margin-top: 2px; font-size: 10px; line-height: 1.4;"
+              , HP.prop (PropName "innerHTML") html
+              ]
+              []
+          Nothing -> HH.text ""
+      ]
+
+  -- Navigation box (shared between single and spine modes)
+  navBox :: H.ComponentHTML Action () m
+  navBox =
+    HH.div
+      [ HP.style "border: 1px solid #d8d0bc; border-radius: 4px; padding: 8px 12px; background: rgba(255,255,255,0.5); display: flex; flex-direction: column; gap: 4px; font-size: 11px;" ]
+      [ navLink "Open in editor" ClickOpenInEditor
+      , navLink "Module structure" (ClickModule input.moduleName)
+      , navLink "Signature map" ClickViewSignatures
+      , navLink "Package treemap" ClickViewPackage
       ]
 
   navLink :: String -> Action -> H.ComponentHTML Action () m
@@ -207,7 +338,10 @@ renderUsageGraph input usage =
       , HH.text label
       ]
 
-  -- Render a single hop column
+  -- -------------------------------------------------------------------------
+  -- Caller/callee columns (unchanged)
+  -- -------------------------------------------------------------------------
+
   renderHopColumn :: Int -> Array Loader.UsageNode -> String -> H.ComponentHTML Action () m
   renderHopColumn hop nodes direction =
     let
@@ -230,36 +364,38 @@ renderUsageGraph input usage =
           )
       ]
 
-  -- Render a group of nodes from the same module
   renderModuleGroup :: String -> Array Loader.UsageNode -> H.ComponentHTML Action () m
   renderModuleGroup modName nodes =
     HH.div
       [ HP.style "border-radius: 4px; padding: 6px 8px; background: rgba(0,0,0,0.04); border-left: 3px solid #c8c0a8;" ]
-      [ -- Module label (clickable)
-        HH.div
+      [ HH.div
           [ HP.style "font-size: 9px; color: #8b7355; margin-bottom: 4px; font-weight: 700; letter-spacing: 0.3px; cursor: pointer;"
           , HE.onClick \_ -> ClickModule modName
           , HP.title modName
           ]
           [ HH.text $ shortModuleName modName ]
-      -- Declaration nodes
       , HH.div
           [ HP.style "display: flex; flex-direction: column; gap: 4px;" ]
           (nodes <#> renderNode)
       ]
 
-  -- Render a single declaration node with kind dot, name, purity tint, and optional siglet
   renderNode :: Loader.UsageNode -> H.ComponentHTML Action () m
   renderNode node =
     let purityBg = if isEffectful node then "rgba(232, 150, 12, 0.08)" else "rgba(59, 130, 196, 0.06)"
+        nodeKey = node.moduleName <> "." <> node.declName
+        dimmed = case highlightSet of
+          Just hs -> not (Set.member nodeKey hs)
+          Nothing -> false
+        opacity = if dimmed then "opacity: 0.2; " else ""
     in
     HH.div
-      [ HP.style $ "cursor: pointer; padding: 3px 6px; border-radius: 3px; transition: background 100ms ease; background: " <> purityBg <> ";"
+      [ HP.style $ "cursor: pointer; padding: 3px 6px; border-radius: 3px; transition: opacity 150ms ease, background 100ms ease; background: " <> purityBg <> "; " <> opacity
       , HE.onClick \_ -> ClickNode node.moduleName node.declName
+      , HE.onMouseEnter \_ -> HoverNode (Just (node.moduleName <> "." <> node.declName))
+      , HE.onMouseLeave \_ -> HoverNode Nothing
       , HP.title (node.moduleName <> "." <> node.declName)
       ]
-      [ -- Name row with kind dot
-        HH.div
+      [ HH.div
           [ HP.style "display: flex; align-items: center; gap: 5px;" ]
           [ HH.span
               [ HP.style $ "display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: " <> kindColor node.kind <> ";" ]
@@ -268,7 +404,6 @@ renderUsageGraph input usage =
               [ HP.style "font-size: 11px; color: #333; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" ]
               [ HH.text node.declName ]
           ]
-      -- Siglet (compact type signature) if available
       , case renderSigletHtml node of
           Just html ->
             HH.div
@@ -279,24 +414,97 @@ renderUsageGraph input usage =
           Nothing -> HH.text ""
       ]
 
--- | Check if a declaration is effectful based on its type signature
--- | Heuristic: presence of Effect, Aff, or MonadEffect/MonadAff in the signature
+-- =============================================================================
+-- Hover Highlighting
+-- =============================================================================
+
+-- | Compute highlight set from either sibling hover or node hover.
+-- | Returns Nothing when nothing is hovered (all nodes render normally).
+-- | Returns Just (set of keys that should stay bright) when hovering.
+computeHighlightSet :: State -> Loader.DeclarationUsage -> Maybe (Set.Set NodeKey)
+computeHighlightSet state _usage =
+  case state.hoveredSibling of
+    Just siblingName -> Just (siblingConnections state siblingName)
+    Nothing -> case state.hoveredNode of
+      Just nodeKey -> Just (nodeConnections state nodeKey)
+      Nothing -> Nothing
+
+-- | Connections for a hovered sibling (uses moduleCalls for the focused module)
+siblingConnections :: State -> String -> Set.Set NodeKey
+siblingConnections state siblingName =
+  let calls = state.input.moduleCalls
+      moduleName = state.input.moduleName
+      callees = calls
+        # Array.filter (\c -> c.callerName == siblingName)
+        # map (\c -> c.calleeModule <> "." <> c.calleeName)
+      internalCallers = calls
+        # Array.filter (\c -> c.calleeName == siblingName && not c.isCrossModule)
+        # map (\c -> moduleName <> "." <> c.callerName)
+      selfKey = moduleName <> "." <> siblingName
+  in Set.fromFoldable (callees <> internalCallers <> [selfKey])
+
+-- | Connections for a hovered caller/callee node (uses prebuilt call index)
+nodeConnections :: State -> NodeKey -> Set.Set NodeKey
+nodeConnections state nodeKey =
+  let outgoing = fromMaybe Set.empty (Map.lookup nodeKey state.callsFrom)
+      incoming = fromMaybe Set.empty (Map.lookup nodeKey state.callsTo)
+  in Set.insert nodeKey (Set.union outgoing incoming)
+
+-- | Build bidirectional call index from the loaded allCalls data.
+-- | callsFrom: "mod.decl" → set of "mod.decl" it calls
+-- | callsTo: "mod.decl" → set of "mod.decl" that call it
+buildCallIndex
+  :: Map.Map Int (Array Loader.V2FunctionCall)
+  -> Map.Map String Int
+  -> { callsFrom :: Map.Map NodeKey (Set.Set NodeKey)
+     , callsTo :: Map.Map NodeKey (Set.Set NodeKey)
+     }
+buildCallIndex allCalls moduleNameToId =
+  let
+    -- Build reverse map: id → module name
+    nameEntries :: Array (Tuple String Int)
+    nameEntries = Map.toUnfoldable moduleNameToId
+    idToName :: Map.Map Int String
+    idToName = Map.fromFoldable $ map (\(Tuple k v) -> Tuple v k) nameEntries
+    -- Process all calls
+    callEntries :: Array (Tuple Int (Array Loader.V2FunctionCall))
+    callEntries = Map.toUnfoldable allCalls
+    allEntries = Array.concatMap (\(Tuple modId calls) ->
+      case Map.lookup modId idToName of
+        Just modName -> calls <#> \c ->
+          { from: modName <> "." <> c.callerName
+          , to: c.calleeModule <> "." <> c.calleeName
+          }
+        Nothing -> []
+      ) callEntries
+    -- Build forward index
+    callsFrom = Array.foldl (\acc e ->
+      Map.alter (Just <<< Set.insert e.to <<< fromMaybe Set.empty) e.from acc
+    ) Map.empty allEntries
+    -- Build reverse index
+    callsTo = Array.foldl (\acc e ->
+      Map.alter (Just <<< Set.insert e.from <<< fromMaybe Set.empty) e.to acc
+    ) Map.empty allEntries
+  in { callsFrom, callsTo }
+
+-- =============================================================================
+-- Helpers
+-- =============================================================================
+
 isEffectful :: Loader.UsageNode -> Boolean
-isEffectful node = case node.typeSignature of
+isEffectful node = isEffectfulSig node.typeSignature
+
+isEffectfulSig :: Maybe String -> Boolean
+isEffectfulSig = case _ of
   Just sig -> String.contains (String.Pattern "Effect") sig
            || String.contains (String.Pattern "Aff") sig
   Nothing -> false
 
--- | Try to render a compact siglet for a usage node
 renderSigletHtml :: Loader.UsageNode -> Maybe String
 renderSigletHtml node = do
   sig <- node.typeSignature
   ast <- parseToRenderType sig
   pure $ SigTree.renderSiglet { ast }
-
--- =============================================================================
--- Helpers
--- =============================================================================
 
 groupByHop :: Array Loader.UsageNode -> Map.Map Int (Array Loader.UsageNode)
 groupByHop nodes =
@@ -316,6 +524,19 @@ shortModuleName name =
     Just short -> short
     Nothing -> name
 
+kindOrder :: String -> Int
+kindOrder = case _ of
+  "data"         -> 0
+  "newtype"      -> 1
+  "type_class"   -> 2
+  "type_synonym" -> 3
+  "value"        -> 4
+  "foreign"      -> 5
+  _              -> 6
+
+sortByKind :: Array Loader.V2Declaration -> Array Loader.V2Declaration
+sortByKind = Array.sortWith (\d -> Tuple (kindOrder d.kind) d.name)
+
 -- =============================================================================
 -- Action Handlers
 -- =============================================================================
@@ -324,6 +545,9 @@ handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Out
 handleAction = case _ of
   Initialize -> do
     state <- H.get
+    -- Build bidirectional call index from allCalls data
+    let idx = buildCallIndex state.input.allCalls state.input.moduleNameToId
+    H.modify_ _ { callsFrom = idx.callsFrom, callsTo = idx.callsTo }
     fetchUsage state.input
 
   Receive input -> do
@@ -338,6 +562,17 @@ handleAction = case _ of
   ClickNode moduleName declName -> do
     state <- H.get
     H.raise (NodeClicked state.input.packageName moduleName declName)
+
+  ClickSibling declName -> do
+    state <- H.get
+    H.modify_ _ { hoveredSibling = Nothing }
+    H.raise (NodeClicked state.input.packageName state.input.moduleName declName)
+
+  HoverSibling mName -> do
+    H.modify_ _ { hoveredSibling = mName }
+
+  HoverNode mKey -> do
+    H.modify_ _ { hoveredNode = mKey }
 
   ClickModule moduleName -> do
     H.raise (ModuleClicked moduleName)
@@ -358,10 +593,13 @@ fetchUsage input = do
   log $ "[DeclarationUsageGraph] Fetching usage for " <> input.moduleName <> "." <> input.declarationName
   result <- liftAff $ Loader.fetchDeclarationUsage input.moduleName input.declarationName
   case result of
-    Right usage ->
+    Right usage -> do
       if usage.callerCount == 0 && usage.calleeCount == 0
         then H.modify_ _ { loadState = Empty }
-        else H.modify_ _ { loadState = Loaded usage }
+        else do
+          H.modify_ _ { loadState = Loaded usage }
+          -- Scroll focused declaration into view
+          liftEffect $ scrollChildIntoView "usage-graph-spine" "#spine-focus"
     Left err -> do
       log $ "[DeclarationUsageGraph] Error: " <> err
       H.modify_ _ { loadState = Empty }

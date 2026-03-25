@@ -613,14 +613,24 @@ renderScene state =
 
   DeclarationDetail pkgName modName declName ->
     -- Declaration detail: usage graph is self-contained (fetches own data)
-    -- Declarations are optional — used only for the kind badge in breadcrumb
+    -- Declarations and module calls are optional — used for spine and hover
     let decls = fromMaybe [] (Pure.lookupModuleDeclarations state pkgName modName)
+        modId = state.v2Data >>= \v2 ->
+          Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
+            <#> _.id
+        calls = fromMaybe [] (modId >>= \mid -> Map.lookup mid state.packageCalls)
+        modNameToId = case state.v2Data of
+          Just v2 -> Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.id
+          Nothing -> Map.empty
     in
     HH.slot _declarationDetailViz unit DeclarationDetailViz.component
       { packageName: pkgName
       , moduleName: modName
       , declarationName: declName
       , declarations: decls
+      , moduleCalls: calls
+      , allCalls: state.packageCalls
+      , moduleNameToId: modNameToId
       }
       HandleDeclarationDetailOutput
 
