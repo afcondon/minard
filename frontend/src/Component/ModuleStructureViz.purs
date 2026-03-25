@@ -38,6 +38,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 
+import CE2.Component.AnnotationGuide (renderAnnotationGuide)
 import CE2.Data.Decomposition as Dec
 import CE2.Data.Loader as Loader
 import CE2.Data.SubDeclarationAnalysis as SDA
@@ -1009,7 +1010,8 @@ buildThreads anns =
 
 renderAnnotationHeader :: forall m. State -> Array (H.ComponentHTML Action () m)
 renderAnnotationHeader state
-  | Array.null state.annotations = []
+  | Array.null state.annotations =
+      [ renderAnnotationGuide { compact: true } ]
 renderAnnotationHeader state =
   let
     anns = state.annotations

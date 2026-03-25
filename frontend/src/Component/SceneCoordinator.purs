@@ -612,21 +612,17 @@ renderScene state =
           [ HH.text "Loading module declarations..." ]
 
   DeclarationDetail pkgName modName declName ->
-    -- Declaration detail: usage graph + expanded info
-    case Pure.lookupModuleDeclarations state pkgName modName of
-      Just decls ->
-        HH.slot _declarationDetailViz unit DeclarationDetailViz.component
-          { packageName: pkgName
-          , moduleName: modName
-          , declarationName: declName
-          , declarations: decls
-          , knownDeclarations: Pure.buildKnownDeclarations state
-          }
-          HandleDeclarationDetailOutput
-      Nothing ->
-        HH.div
-          [ HP.class_ (HH.ClassName "loading") ]
-          [ HH.text "Loading declaration data..." ]
+    -- Declaration detail: usage graph is self-contained (fetches own data)
+    -- Declarations are optional — used only for the kind badge in breadcrumb
+    let decls = fromMaybe [] (Pure.lookupModuleDeclarations state pkgName modName)
+    in
+    HH.slot _declarationDetailViz unit DeclarationDetailViz.component
+      { packageName: pkgName
+      , moduleName: modName
+      , declarationName: declName
+      , declarations: decls
+      }
+      HandleDeclarationDetailOutput
 
   ModuleStructure pkgName modName ->
     case Pure.lookupModuleDeclarations state pkgName modName of
@@ -1364,6 +1360,25 @@ handleAction = case _ of
     DeclarationDetailViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in detail: " <> declName
       handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+    DeclarationDetailViz.NavigateToModule modName -> do
+      log $ "[SceneCoordinator] Navigate to module from detail: " <> modName
+      st <- H.get
+      case st.v2Data of
+        Just v2 -> case Array.find (\m -> m.name == modName) v2.modules of
+          Just mod -> handleAction (NavigateTo (ModuleStructure mod.package.name modName))
+          Nothing -> log $ "[SceneCoordinator] Module not found: " <> modName
+        Nothing -> pure unit
+    DeclarationDetailViz.NavigateToModuleSignatures modName -> do
+      log $ "[SceneCoordinator] Navigate to signatures from detail: " <> modName
+      st2 <- H.get
+      case st2.v2Data of
+        Just v2 -> case Array.find (\m -> m.name == modName) v2.modules of
+          Just mod -> handleAction (NavigateTo (ModuleSignatures mod.package.name modName))
+          Nothing -> log $ "[SceneCoordinator] Module not found: " <> modName
+        Nothing -> pure unit
+    DeclarationDetailViz.NavigateToPackage pkgName -> do
+      log $ "[SceneCoordinator] Navigate to package from detail: " <> pkgName
+      handleAction (NavigateTo (PkgTreemap pkgName))
 
   SetScope targetScope -> do
     log $ "[SceneCoordinator] Setting scope: " <> show targetScope

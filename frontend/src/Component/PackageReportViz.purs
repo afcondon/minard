@@ -29,6 +29,7 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 
+import CE2.Component.AnnotationGuide (renderAnnotationGuide)
 import CE2.Data.Loader as Loader
 import CE2.Util.SVG (svgElem, sa)
 import CE2.Viz.CommitSparkline as Spark
@@ -210,7 +211,10 @@ render state =
       renderSubNav state totalPackages totalAnnotations
     , HH.div
         [ HP.style "max-width: 960px; margin: 0 auto; padding: 24px 24px 80px;" ]
-        [ HH.div
+        [ if totalAnnotations == 0
+            then renderAnnotationBanner
+            else HH.text ""
+        , HH.div
             [ HP.style "display: flex; flex-direction: column; gap: 12px;" ]
             (cards <#> renderCard state)
         , if Array.null cards
@@ -220,6 +224,12 @@ render state =
             else HH.text ""
         ]
     ]
+
+-- | Banner shown when there are no annotations in the codebase
+renderAnnotationBanner :: forall w i. HH.HTML w i
+renderAnnotationBanner =
+  HH.div [ HP.style "margin-bottom: 16px;" ]
+    [ renderAnnotationGuide { compact: false } ]
 
 -- | Sub-navigation bar with title, counts, and filter/sort controls
 renderSubNav :: forall m. State -> Int -> Int -> H.ComponentHTML Action () m

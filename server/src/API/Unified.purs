@@ -1067,8 +1067,12 @@ getDeclarationUsage db moduleName declName = do
       JOIN function_calls fc2 ON fc2.caller_module_id = m2.id AND fc2.caller_name = c.decl_name
       WHERE c.hop < 3
     )
-    SELECT DISTINCT 'callee' as direction, module_name, decl_name, MIN(hop) as hop
-    FROM callees GROUP BY module_name, decl_name
+    SELECT DISTINCT 'callee' as direction, c.module_name, c.decl_name, MIN(c.hop) as hop,
+           COALESCE(d.kind, 'value') as kind, d.type_signature
+    FROM callees c
+    LEFT JOIN modules m3 ON m3.name = c.module_name
+    LEFT JOIN declarations d ON d.module_id = m3.id AND d.name = c.decl_name
+    GROUP BY c.module_name, c.decl_name, d.kind, d.type_signature
   """ [unsafeToForeign moduleName, unsafeToForeign declName]
 
   -- Callers: who calls this declaration (transitive, depth 3)
@@ -1087,14 +1091,27 @@ getDeclarationUsage db moduleName declName = do
       JOIN modules m2 ON fc2.caller_module_id = m2.id
       WHERE c.hop < 3
     )
-    SELECT DISTINCT 'caller' as direction, module_name, decl_name, MIN(hop) as hop
-    FROM callers GROUP BY module_name, decl_name
+    SELECT DISTINCT 'caller' as direction, c.module_name, c.decl_name, MIN(c.hop) as hop,
+           COALESCE(d.kind, 'value') as kind, d.type_signature
+    FROM callers c
+    LEFT JOIN modules m3 ON m3.name = c.module_name
+    LEFT JOIN declarations d ON d.module_id = m3.id AND d.name = c.decl_name
+    GROUP BY c.module_name, c.decl_name, d.kind, d.type_signature
   """ [unsafeToForeign moduleName, unsafeToForeign declName]
 
-  let json = runFn2 buildDeclarationUsageJson callers callees
+  -- Focus declaration's own type signature
+  focusRows <- queryAllParams db """
+    SELECT d.type_signature
+    FROM declarations d
+    JOIN modules m ON d.module_id = m.id
+    WHERE m.name = ? AND d.name = ?
+    LIMIT 1
+  """ [unsafeToForeign moduleName, unsafeToForeign declName]
+
+  let json = runFn3 buildDeclarationUsageJson callers callees focusRows
   ok' jsonHeaders json
 
-foreign import buildDeclarationUsageJson :: Fn2 (Array Foreign) (Array Foreign) String
+foreign import buildDeclarationUsageJson :: Fn3 (Array Foreign) (Array Foreign) (Array Foreign) String
 
 -- =============================================================================
 -- GET /api/v2/git/status

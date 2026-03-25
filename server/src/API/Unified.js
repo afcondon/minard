@@ -621,24 +621,31 @@ export const buildTypeClassStatsJson = (rows) => {
 // Declaration Usage (cross-module call graph)
 // =============================================================================
 
-export const buildDeclarationUsageJson = (callerRows, calleeRows) => {
+export const buildDeclarationUsageJson = (callerRows, calleeRows, focusRows) => {
   const callers = (callerRows || []).map(row => ({
     moduleName: row.module_name,
     declName: row.decl_name,
-    hop: Number(row.hop) || 1
+    hop: Number(row.hop) || 1,
+    kind: row.kind || 'value',
+    typeSignature: row.type_signature || null
   }));
 
   const callees = (calleeRows || []).map(row => ({
     moduleName: row.module_name,
     declName: row.decl_name,
-    hop: Number(row.hop) || 1
+    hop: Number(row.hop) || 1,
+    kind: row.kind || 'value',
+    typeSignature: row.type_signature || null
   }));
+
+  const focusTypeSignature = (focusRows && focusRows.length > 0 && focusRows[0].type_signature) || null;
 
   return JSON.stringify({
     callers,
     callees,
     callerCount: callers.length,
-    calleeCount: callees.length
+    calleeCount: callees.length,
+    focusTypeSignature
   });
 };
 

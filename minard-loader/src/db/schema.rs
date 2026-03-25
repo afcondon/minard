@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS function_calls (
     callee_name         VARCHAR NOT NULL,
     is_cross_module     BOOLEAN DEFAULT TRUE,
     call_count          INTEGER DEFAULT 1,
+    source_span         JSON,
     UNIQUE(caller_module_id, caller_name, callee_module, callee_name)
 );
 

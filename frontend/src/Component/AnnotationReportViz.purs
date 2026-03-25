@@ -32,6 +32,7 @@ import CE2.Util.SVG (svgElem, sa)
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 
+import CE2.Component.AnnotationGuide (renderAnnotationGuide)
 import CE2.Data.Loader as Loader
 import CE2.Viz.CommitSparkline as Spark
 import CE2.Viz.ModuleTreemapEnriched (DeclarationCircle, ChildCircle, kindColor, childKindColor, packDeclarations)
@@ -182,14 +183,26 @@ render state =
     [ renderFilterBar state filtered
     , HH.div
         [ HP.class_ (HH.ClassName "annotation-report-body") ]
-        (if Array.null filtered
-          then [ HH.div
-                   [ HP.style "text-align: center; padding: 60px 20px; color: #999; font-size: 13px;" ]
-                   [ HH.text "No annotations match the current filters." ]
-               ]
-          else Array.concatMap (renderPackageSection state) grouped
+        (if Array.null state.annotations
+          then [ renderNoAnnotationsGuide ]
+          else if Array.null filtered
+            then [ HH.div
+                     [ HP.style "text-align: center; padding: 60px 20px; color: #999; font-size: 13px;" ]
+                     [ HH.text "No annotations match the current filters." ]
+                 ]
+            else Array.concatMap (renderPackageSection state) grouped
         )
     ]
+
+-- =============================================================================
+-- Empty State Guide
+-- =============================================================================
+
+renderNoAnnotationsGuide :: forall w i. HH.HTML w i
+renderNoAnnotationsGuide =
+  HH.div
+    [ HP.style "max-width: 700px; margin: 60px auto; padding: 0 20px;" ]
+    [ renderAnnotationGuide { compact: false } ]
 
 -- =============================================================================
 -- Filter Bar

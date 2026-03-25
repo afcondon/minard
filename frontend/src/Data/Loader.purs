@@ -1590,6 +1590,8 @@ type UsageNode =
   { moduleName :: String
   , declName :: String
   , hop :: Int
+  , kind :: String
+  , typeSignature :: Maybe String
   }
 
 -- | Bidirectional cross-module usage for a declaration
@@ -1598,6 +1600,7 @@ type DeclarationUsage =
   , callees :: Array UsageNode
   , callerCount :: Int
   , calleeCount :: Int
+  , focusTypeSignature :: Maybe String
   }
 
 -- | Fetch cross-module usage for a declaration (callers + callees, transitive)
