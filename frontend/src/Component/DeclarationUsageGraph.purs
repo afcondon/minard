@@ -321,21 +321,12 @@ renderUsageGraph input usage highlightSet =
   navBox :: H.ComponentHTML Action () m
   navBox =
     HH.div
-      [ HP.style "border: 1px solid #d8d0bc; border-radius: 4px; padding: 8px 12px; background: rgba(255,255,255,0.5); display: flex; flex-direction: column; gap: 4px; font-size: 11px;" ]
-      [ navLink "Open in editor" ClickOpenInEditor
-      , navLink "Module structure" (ClickModule input.moduleName)
-      , navLink "Signature map" ClickViewSignatures
-      , navLink "Package treemap" ClickViewPackage
-      ]
-
-  navLink :: String -> Action -> H.ComponentHTML Action () m
-  navLink label action =
-    HH.div
-      [ HP.style "color: #2a5a8a; cursor: pointer; text-align: left; padding: 3px 4px; font-weight: 600; border-radius: 2px; transition: background 100ms ease;"
-      , HE.onClick \_ -> action
-      ]
-      [ HH.text "\x2192 "
-      , HH.text label
+      [ HP.style "text-align: center; font-size: 11px;" ]
+      [ HH.span
+          [ HP.style "color: #2a5a8a; cursor: pointer; font-weight: 600;"
+          , HE.onClick \_ -> ClickOpenInEditor
+          ]
+          [ HH.text "\x2192 Open in editor" ]
       ]
 
   -- -------------------------------------------------------------------------

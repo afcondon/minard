@@ -638,12 +638,16 @@ renderScene state =
     case Pure.lookupModuleDeclarations state pkgName modName of
       Just decls ->
         let anns = fromMaybe [] (Map.lookup modName state.moduleAnnotations)
+            modNameToId2 = case state.v2Data of
+              Just v2 -> Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.id
+              Nothing -> Map.empty
         in HH.slot _moduleStructureViz unit ModuleStructureViz.component
           { packageName: pkgName
           , moduleName: modName
           , declarations: decls
           , annotations: anns
           , functionCalls: state.packageCalls
+          , moduleNameToId: modNameToId2
           }
           HandleModuleStructureOutput
       Nothing ->

@@ -38,7 +38,10 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 
+import Type.Proxy (Proxy(..))
+
 import CE2.Component.AnnotationGuide (renderAnnotationGuide)
+import CE2.Component.DeclarationUsageGraph as DeclarationUsageGraph
 import CE2.Data.Decomposition as Dec
 import CE2.Data.Loader as Loader
 import CE2.Data.SubDeclarationAnalysis as SDA
@@ -67,6 +70,7 @@ type Input =
   , declarations :: Array Loader.V2Declaration
   , annotations :: Array Loader.V2Annotation
   , functionCalls :: Map Int (Array Loader.V2FunctionCall)
+  , moduleNameToId :: Map String Int
   }
 
 data Output
@@ -82,6 +86,13 @@ data Output
   | CompareSnapshotsClicked                  -- User wants cross-snapshot comparison
 
 type Slot = H.Slot Query Output
+
+type ChildSlots =
+  ( declarationUsageGraph :: DeclarationUsageGraph.Slot Unit
+  )
+
+_declarationUsageGraph :: Proxy "declarationUsageGraph"
+_declarationUsageGraph = Proxy
 
 data Query a = NoQuery a
 
@@ -118,6 +129,7 @@ type State =
   , helpSection :: Maybe FocusedSection
   , sourcePreview :: Maybe { declarationName :: String }
   , cachedModuleSource :: Maybe String
+  , focusedDeclaration :: Maybe String
   }
 
 data Action
@@ -145,6 +157,8 @@ data Action
   | ClosePreview
   | OpenPreviewInEditor
   | PreviewFullDetail
+  | FocusDeclaration (Maybe String)
+  | HandleUsageGraphOutput DeclarationUsageGraph.Output
 
 -- =============================================================================
 -- Component
@@ -189,13 +203,14 @@ initialState input =
   , helpSection: Nothing
   , sourcePreview: Nothing
   , cachedModuleSource: Nothing
+  , focusedDeclaration: Nothing
   }
 
 -- =============================================================================
 -- Render
 -- =============================================================================
 
-render :: forall m. State -> H.ComponentHTML Action () m
+render :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
 render state =
   HH.div
     [ HP.class_ (HH.ClassName "module-structure")
@@ -221,10 +236,56 @@ render state =
                     renderDiagramSection state
                 ]
             ]
+    -- Embedded declaration usage graph (unfolds when a declaration is focused)
+    , renderEmbeddedUsageGraph state
     ]
 
+-- | Embedded declaration usage graph — appears below diagrams when a declaration is focused
+renderEmbeddedUsageGraph :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
+renderEmbeddedUsageGraph state = case state.focusedDeclaration of
+  Nothing -> HH.text ""
+  Just declName ->
+    let
+      input = state.lastInput
+      mDecl = Array.find (\d -> d.name == declName) input.declarations
+      modId = Map.lookup input.moduleName input.moduleNameToId
+      calls = fromMaybe [] (modId >>= \mid -> Map.lookup mid input.functionCalls)
+    in
+    HH.div
+      [ HP.style "margin-top: 16px; border-top: 2px solid #c8c0a8; padding-top: 12px;"
+      , HP.id "embedded-usage-graph"
+      ]
+      [ -- Header with close button
+        HH.div
+          [ HP.style "display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 0 4px;" ]
+          [ HH.span
+              [ HP.style "font-size: 12px; font-weight: 600; color: #555; font-family: 'Courier New', Courier, monospace;" ]
+              [ HH.text $ "Dependencies: " <> declName ]
+          , HH.span
+              [ HP.style "font-size: 14px; color: #999; cursor: pointer; padding: 2px 6px;"
+              , HE.onClick \_ -> FocusDeclaration Nothing
+              ]
+              [ HH.text "\x00D7" ]
+          ]
+      -- Usage graph
+      , HH.div
+          [ HP.style "height: 500px; border: 1px solid #e8e4d8; border-radius: 4px; overflow: hidden;" ]
+          [ HH.slot _declarationUsageGraph unit DeclarationUsageGraph.component
+              { packageName: input.packageName
+              , moduleName: input.moduleName
+              , declarationName: declName
+              , focusTypeSignature: mDecl >>= _.typeSignature
+              , declarations: input.declarations
+              , moduleCalls: calls
+              , allCalls: input.functionCalls
+              , moduleNameToId: input.moduleNameToId
+              }
+              HandleUsageGraphOutput
+          ]
+      ]
+
 -- | Wrapper that adds a focus/unfocus click target and help toggle to a section
-renderFocusableSection :: forall m. FocusedSection -> State -> H.ComponentHTML Action () m -> H.ComponentHTML Action () m
+renderFocusableSection :: forall m. FocusedSection -> State -> H.ComponentHTML Action ChildSlots m -> H.ComponentHTML Action ChildSlots m
 renderFocusableSection section state content =
   let
     isFocused = state.focusedSection == Just section
@@ -259,7 +320,7 @@ renderFocusableSection section state content =
       ]
 
 -- | Help content for each section
-renderSectionHelp :: forall m. FocusedSection -> H.ComponentHTML Action () m
+renderSectionHelp :: forall m. FocusedSection -> H.ComponentHTML Action ChildSlots m
 renderSectionHelp = case _ of
   FocusAnnotations -> helpPanel
     [ "AI-generated report cards summarizing this module's architecture, quality issues, and role in the codebase."
@@ -307,7 +368,7 @@ collapseIcon =
 -- Diagram section: tabs + selected view
 -- =============================================================================
 
-renderDiagramSection :: forall m. State -> H.ComponentHTML Action () m
+renderDiagramSection :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderDiagramSection state =
   let
     hasArc = case state.arcLayout of
@@ -352,7 +413,7 @@ renderDiagramSection state =
       , renderCtaBar declCount
       ]
 
-renderDiagramTab :: forall m. String -> DiagramMode -> DiagramMode -> H.ComponentHTML Action () m
+renderDiagramTab :: forall m. String -> DiagramMode -> DiagramMode -> H.ComponentHTML Action ChildSlots m
 renderDiagramTab label mode activeMode =
   let
     isActive = mode == activeMode
@@ -371,7 +432,7 @@ renderDiagramTab label mode activeMode =
 -- Arc Diagram renderer
 -- =============================================================================
 
-renderArcDiagram :: forall m. State -> H.ComponentHTML Action () m
+renderArcDiagram :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderArcDiagram state = case state.arcLayout of
   Nothing -> emptyMessage "No intra-module function calls between exported declarations"
   Just layout
@@ -397,7 +458,7 @@ renderArcDiagram state = case state.arcLayout of
 emptyMessage :: forall m w. String -> HH.HTML w m
 emptyMessage msg = HH.div [ HP.style "padding: 24px; color: #999; font-size: 12px; text-align: center;" ] [ HH.text msg ]
 
-renderLayerDiagram :: forall m. State -> H.ComponentHTML Action () m
+renderLayerDiagram :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderLayerDiagram state = case state.layerLayout of
   Nothing -> emptyMessage "No internal call hierarchy — declarations do not call each other"
   Just layout
@@ -478,7 +539,7 @@ renderLayerEdge state _layout edge =
         , HP.style "transition: stroke-opacity 150ms ease, stroke-width 150ms ease;"
         ] []
 
-renderLayerNode :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action () m
+renderLayerNode :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action ChildSlots m
 renderLayerNode state _layout node =
   let
     isHovered = state.hoveredLayerNode == Just node.name
@@ -503,7 +564,7 @@ renderLayerNode state _layout node =
     , HE.onClick \_ -> DiagramNodeClicked node.name
     ] []
 
-renderLayerLabel :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action () m
+renderLayerLabel :: forall m. State -> LayerDiagram.LayerLayout -> LayerDiagram.LayerNode -> H.ComponentHTML Action ChildSlots m
 renderLayerLabel state _layout node =
   let
     isConnected = case state.hoveredLayerNode of
@@ -575,7 +636,7 @@ layerNodeConnected a b = case _ of
     (e.fromName == a && e.toName == b) || (e.fromName == b && e.toName == a)
     ) layout.edges
 
-renderArcEdge :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcEdge -> H.ComponentHTML Action () m
+renderArcEdge :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcEdge -> H.ComponentHTML Action ChildSlots m
 renderArcEdge state _layout edge =
   let
     strokeW = Num.min 3.0 (0.75 + Int.toNumber edge.count * 0.5)
@@ -594,7 +655,7 @@ renderArcEdge state _layout edge =
       ]
       []
 
-renderArcNode :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcNode -> H.ComponentHTML Action () m
+renderArcNode :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcNode -> H.ComponentHTML Action ChildSlots m
 renderArcNode state layout node =
   let
     isHovered = state.hoveredArcNode == Just node.name
@@ -621,7 +682,7 @@ renderArcNode state layout node =
       ]
       []
 
-renderArcLabel :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcNode -> H.ComponentHTML Action () m
+renderArcLabel :: forall m. State -> ArcDiagram.ArcLayout -> ArcDiagram.ArcNode -> H.ComponentHTML Action ChildSlots m
 renderArcLabel state layout node =
   let
     isConnected = case state.hoveredArcNode of
@@ -649,7 +710,7 @@ renderArcLabel state layout node =
       [ HH.text label ]
 
 -- | CTA bar shown below the arc diagram with scroll hint and editor stub.
-renderCtaBar :: forall m. Int -> H.ComponentHTML Action () m
+renderCtaBar :: forall m. Int -> H.ComponentHTML Action ChildSlots m
 renderCtaBar declCount =
   HH.div
     [ HP.style "display: flex; justify-content: space-between; align-items: center; margin: 4px 0 0 0;" ]
@@ -735,7 +796,7 @@ findDeclKind declName decls =
     else Nothing
   ) decls
 
-renderSourcePreview :: forall m. State -> H.ComponentHTML Action () m
+renderSourcePreview :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderSourcePreview state = case state.sourcePreview of
   Nothing -> HH.text ""
   Just sp ->
@@ -781,7 +842,7 @@ renderSourcePreview state = case state.sourcePreview of
 -- Bridge Analysis Panel (below Declarations diagram)
 -- =============================================================================
 
-renderBridgeAnalysis :: forall m. State -> H.ComponentHTML Action () m
+renderBridgeAnalysis :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderBridgeAnalysis state =
   case state.declDecomp, state.declGraph of
     Just info, Just graph ->
@@ -829,7 +890,7 @@ renderBridgeAnalysis state =
             )
     _, _ -> HH.text ""
 
-renderBridgeCard :: forall m. String -> String -> Dec.DecompInfo -> Dec.SimpleGraph String -> Array Loader.V2FunctionCall -> H.ComponentHTML Action () m
+renderBridgeCard :: forall m. String -> String -> Dec.DecompInfo -> Dec.SimpleGraph String -> Array Loader.V2FunctionCall -> H.ComponentHTML Action ChildSlots m
 renderBridgeCard from to info graph _allCalls =
   let
     sideA = reachableWithout from to graph
@@ -880,7 +941,7 @@ isCompilerGenerated name =
 -- Commit Sparkline
 -- =============================================================================
 
-renderSparklineRow :: forall m. State -> H.ComponentHTML Action () m
+renderSparklineRow :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderSparklineRow state
   | Array.null state.sparklineBars && Array.null state.lastInput.declarations = HH.div [] []  -- placeholder for stable child structure
 renderSparklineRow state =
@@ -900,7 +961,7 @@ renderSparklineRow state =
     )
 
 -- | Inline SVG sparkline — pure Halogen, no Canvas FFI
-renderSparklineSvg :: forall m. State -> H.ComponentHTML Action () m
+renderSparklineSvg :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderSparklineSvg state =
   let nBars = Array.length state.sparklineBars
       -- viewBox width scales with bar count for adequate spacing
@@ -929,7 +990,7 @@ renderSparklineSvg state =
 -- Module Bubblepack Glyph
 -- =============================================================================
 
-renderModuleBubblepack :: forall m. State -> H.ComponentHTML Action () m
+renderModuleBubblepack :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderModuleBubblepack state =
   let decls = state.lastInput.declarations
   in if Array.null decls then HH.text ""
@@ -1008,7 +1069,7 @@ buildThreads anns =
       in direct <> Array.concatMap (\r -> collectChain r.id) direct
   in roots <#> \root -> { root, replies: collectChain root.id }
 
-renderAnnotationHeader :: forall m. State -> Array (H.ComponentHTML Action () m)
+renderAnnotationHeader :: forall m. State -> Array (H.ComponentHTML Action ChildSlots m)
 renderAnnotationHeader state
   | Array.null state.annotations =
       [ renderAnnotationGuide { compact: true } ]
@@ -1095,7 +1156,7 @@ sourceTag "human" = " (human)"
 sourceTag s = if s == "" then "" else " (" <> s <> ")"
 
 -- | Render annotation text content (sentences with inline refs)
-renderAnnotationContent :: forall m. Int -> Loader.V2Annotation -> Array MSM.MeasuredCell -> H.ComponentHTML Action () m
+renderAnnotationContent :: forall m. Int -> Loader.V2Annotation -> Array MSM.MeasuredCell -> H.ComponentHTML Action ChildSlots m
 renderAnnotationContent annIdx ann cells =
   HH.ul
     [ HP.style "margin: 0; padding: 0 0 0 16px; list-style: disc; color: #444; font-size: 12px; line-height: 1.5;" ]
@@ -1106,7 +1167,7 @@ renderAnnotationContent annIdx ann cells =
     )
 
 -- | Reply input textarea + buttons
-renderReplyInput :: forall m. State -> H.ComponentHTML Action () m
+renderReplyInput :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderReplyInput state =
   HH.div
     [ HP.style "margin-top: 8px; padding: 8px; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 4px;" ]
@@ -1140,7 +1201,7 @@ statusBorderColor = case _ of
   _           -> "#bdbdbd"
 
 -- | Status-dependent footer for an annotation card, with Reply button
-renderAnnotationFooter :: forall m. State -> Loader.V2Annotation -> H.ComponentHTML Action () m
+renderAnnotationFooter :: forall m. State -> Loader.V2Annotation -> H.ComponentHTML Action ChildSlots m
 renderAnnotationFooter state ann =
   let
     replyBtn =
@@ -1231,11 +1292,11 @@ findTextMatches text cells =
 
 -- | Render annotation text with inline siglet placeholders where declaration
 -- | names appear. Returns a mixed array of HH.text and inline spans.
-annotateText :: forall m. Int -> String -> Array MSM.MeasuredCell -> Array (H.ComponentHTML Action () m)
+annotateText :: forall m. Int -> String -> Array MSM.MeasuredCell -> Array (H.ComponentHTML Action ChildSlots m)
 annotateText annIdx text cells =
   let
     matches = findTextMatches text cells
-    go :: Int -> Int -> Array TextMatch -> Array (H.ComponentHTML Action () m)
+    go :: Int -> Int -> Array TextMatch -> Array (H.ComponentHTML Action ChildSlots m)
     go cursor refIdx remaining = case Array.uncons remaining of
       Nothing ->
         let rest = SCU.drop cursor text
@@ -1253,7 +1314,7 @@ annotateText annIdx text cells =
 -- | Shows the declaration name as a styled label. (Siglet rendering via
 -- | innerHTML is used for lane cards but not here — inline-flex siglets
 -- | inside flowing text can collapse parent layout in some browsers.)
-renderInlineRef :: forall m. Int -> Int -> MSM.MeasuredCell -> H.ComponentHTML Action () m
+renderInlineRef :: forall m. Int -> Int -> MSM.MeasuredCell -> H.ComponentHTML Action ChildSlots m
 renderInlineRef _annIdx _refIdx cell =
   HH.span
     [ HP.style $ "padding: 1px 4px; border-radius: 3px;"
@@ -1268,7 +1329,7 @@ renderInlineRef _annIdx _refIdx cell =
 -- Action Handlers
 -- =============================================================================
 
-handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Output m Unit
+handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action ChildSlots Output m Unit
 handleAction = case _ of
   Initialize -> do
     state <- H.get
@@ -1408,24 +1469,8 @@ handleAction = case _ of
     H.modify_ _ { helpSection = newHelp }
 
   DiagramNodeClicked declName -> do
-    state <- H.get
-    log $ "[DiagramClick] " <> declName <> " clicked, opening in VS Code"
-    result <- liftAff $ Loader.fetchSourceLocation state.lastInput.moduleName
-    case result of
-      Right loc -> do
-        let startLine = case findDeclStartLine declName state.lastInput.declarations state.cachedModuleSource of
-              Just l -> Just l
-              Nothing -> findBranchStartLine declName state.subDeclAnalysis
-        log $ "[DiagramClick] path=" <> loc.filePath <> " line=" <> show startLine
-        let uri = "vscode://file/" <> loc.filePath <> case startLine of
-              Just l -> ":" <> show l
-              Nothing -> ""
-        log $ "[DiagramClick] URI: " <> uri
-        liftEffect $ openUri uri
-      Left err -> do
-        log $ "[DiagramClick] fetchSourceLocation failed: " <> err <> ", falling back to preview"
-        H.modify_ _ { sourcePreview = Just { declarationName: declName } }
-        liftEffect $ DOMHelpers.scrollChildIntoView "source-preview-body" ".ps-focused"
+    log $ "[DiagramClick] " <> declName <> " → focusing dependency graph"
+    handleAction (FocusDeclaration (Just declName))
 
   ClosePreview ->
     H.modify_ _ { sourcePreview = Nothing }
@@ -1460,8 +1505,43 @@ handleAction = case _ of
         H.modify_ _ { sourcePreview = Nothing }
         H.raise (DeclarationClicked state.lastInput.packageName state.lastInput.moduleName sp.declarationName)
 
+  FocusDeclaration mDecl -> do
+    H.modify_ _ { focusedDeclaration = mDecl }
+    case mDecl of
+      Just _ -> liftEffect $ DOMHelpers.scrollElementIntoView "embedded-usage-graph"
+      Nothing -> pure unit
+
+  HandleUsageGraphOutput output -> case output of
+    DeclarationUsageGraph.NodeClicked _pkgName modName declName -> do
+      state <- H.get
+      if modName == state.lastInput.moduleName
+        then handleAction (FocusDeclaration (Just declName))
+        else H.raise (DeclarationClicked state.lastInput.packageName modName declName)
+    DeclarationUsageGraph.ModuleClicked modName -> do
+      state <- H.get
+      H.raise (DeclarationClicked state.lastInput.packageName modName "")
+    DeclarationUsageGraph.OpenFocusInEditor -> do
+      state <- H.get
+      case state.focusedDeclaration of
+        Nothing -> pure unit
+        Just declName -> do
+          result <- liftAff $ Loader.fetchSourceLocation state.lastInput.moduleName
+          case result of
+            Right loc -> do
+              let startLine = findDeclStartLine declName state.lastInput.declarations state.cachedModuleSource
+              let uri = "vscode://file/" <> loc.filePath <> case startLine of
+                    Just l -> ":" <> show l
+                    Nothing -> ""
+              liftEffect $ openUri uri
+            Left _ -> pure unit
+    DeclarationUsageGraph.ViewModuleSignatures modName -> do
+      state <- H.get
+      H.raise (DeclarationClicked state.lastInput.packageName modName "")
+    DeclarationUsageGraph.ViewPackage pkgName -> do
+      H.raise (DeclarationClicked pkgName "" "")
+
 -- | Fetch numstat data for sparkline (pure SVG render happens via Halogen re-render)
-loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action () Output m Unit
+loadSparkline :: forall m. MonadAff m => String -> String -> H.HalogenM State Action ChildSlots Output m Unit
 loadSparkline pkgName modName = do
   result <- liftAff $ Loader.fetchModuleNumstat 500 pkgName
   case result of
@@ -1473,7 +1553,7 @@ loadSparkline pkgName modName = do
       H.modify_ _ { sparklineBars = bars }
 
 -- | Prepare cells, compute arc layout, then update state.
-renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action () Output m Unit
+renderSignatureMap :: forall m. MonadAff m => Input -> H.HalogenM State Action ChildSlots Output m Unit
 renderSignatureMap input = do
   state <- H.get
   let onDeclClick = makeDeclarationClickCallback state.actionListener
@@ -1584,7 +1664,7 @@ chooseDiagramMode mLayerLayout declDecomp hasConcerns =
 -- =============================================================================
 
 -- | Render the declaration structure (biconnected components) into a HATS container
-renderDeclStructure :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
+renderDeclStructure :: forall m. MonadAff m => H.HalogenM State Action ChildSlots Output m Unit
 renderDeclStructure = do
   state <- H.get
   case state.declGraph, state.declDecomp of
@@ -1607,7 +1687,7 @@ renderDeclStructure = do
 
 -- | Render the concern-clustered graph into a HATS container.
 -- | Fetches module source if not yet analyzed.
-renderConcernClusters :: forall m. MonadAff m => H.HalogenM State Action () Output m Unit
+renderConcernClusters :: forall m. MonadAff m => H.HalogenM State Action ChildSlots Output m Unit
 renderConcernClusters = do
   state <- H.get
   case state.subDeclAnalysis of
@@ -1637,7 +1717,7 @@ renderConcernClusters = do
           H.modify_ _ { subDeclAnalysis = Just analysis, subDeclGraph = Just graph }
           renderConcernGraph analysis
 
-renderConcernGraph :: forall m. MonadAff m => SDA.SubDeclAnalysis -> H.HalogenM State Action () Output m Unit
+renderConcernGraph :: forall m. MonadAff m => SDA.SubDeclAnalysis -> H.HalogenM State Action ChildSlots Output m Unit
 renderConcernGraph analysis = do
   state <- H.get
   if Array.null analysis.caseExpressions then
