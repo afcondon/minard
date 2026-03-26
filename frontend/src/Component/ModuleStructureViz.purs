@@ -71,6 +71,7 @@ type Input =
   , annotations :: Array Loader.V2Annotation
   , functionCalls :: Map Int (Array Loader.V2FunctionCall)
   , moduleNameToId :: Map String Int
+  , diagramsOnly :: Boolean  -- when true, render only the diagram section (no annotations, sparkline, source preview, embedded usage graph)
   }
 
 data Output

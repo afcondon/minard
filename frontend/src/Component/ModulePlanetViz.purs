@@ -32,6 +32,8 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Type.Proxy (Proxy(..))
 
+import CE2.Component.CutpointsPanel as CutpointsPanel
+import CE2.Component.LayerDiagramPanel as LayerDiagramPanel
 import CE2.Component.ModuleAnnotationsViz as AnnotationsViz
 import CE2.Component.ModuleSignaturesViz as SignaturesViz
 import CE2.Viz.BlameRibbon as BlameRibbon
@@ -70,7 +72,7 @@ type Slot = H.Slot Query Output
 data Query a = NoQuery a
 
 -- | Which panels are currently open
-data Panel = PanelSignatures | PanelDependencies | PanelAnnotations
+data Panel = PanelSignatures | PanelDependencies | PanelLayers | PanelCutpoints | PanelAnnotations
 
 derive instance eqPanel :: Eq Panel
 derive instance ordPanel :: Ord Panel
@@ -78,6 +80,8 @@ derive instance ordPanel :: Ord Panel
 type ChildSlots =
   ( signatures :: SignaturesViz.Slot Unit
   , dependencies :: UsageGraphViz.Slot Unit
+  , layers :: LayerDiagramPanel.Slot Unit
+  , cutpoints :: CutpointsPanel.Slot Unit
   , annotations :: AnnotationsViz.Slot Unit
   )
 
@@ -86,6 +90,12 @@ _signatures = Proxy
 
 _dependencies :: Proxy "dependencies"
 _dependencies = Proxy
+
+_layers :: Proxy "layers"
+_layers = Proxy
+
+_cutpoints :: Proxy "cutpoints"
+_cutpoints = Proxy
 
 _annotations :: Proxy "annotations"
 _annotations = Proxy
@@ -112,6 +122,8 @@ data Action
   | NavigateToGit
   | HandleSignaturesOutput SignaturesViz.Output
   | HandleDependenciesOutput UsageGraphViz.Output
+  | HandleLayersOutput LayerDiagramPanel.Output
+  | HandleCutpointsOutput CutpointsPanel.Output
   | HandleAnnotationsOutput AnnotationsViz.Output
 
 -- =============================================================================
@@ -179,6 +191,12 @@ render state =
                   , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
                       then Just (renderDependenciesPanel state)
                       else Nothing
+                  , if isPanelOpen PanelLayers state
+                      then Just (renderLayersPanel state)
+                      else Nothing
+                  , if isPanelOpen PanelCutpoints state
+                      then Just (renderCutpointsPanel state)
+                      else Nothing
                   , if isPanelOpen PanelAnnotations state
                       then Just (renderAnnotationsPanel state)
                       else Nothing
@@ -197,6 +215,8 @@ renderPanelBar state =
         [ HH.text $ shortModuleName state.lastInput.moduleName ]
     , panelToggle "Signatures" PanelSignatures state
     , panelToggle "Dependencies" PanelDependencies state
+    , panelToggle "Layers" PanelLayers state
+    , panelToggle "Cutpoints" PanelCutpoints state
     , panelToggle "Annotations" PanelAnnotations state
     , HH.span [ HP.style "flex: 1;" ] []
     , HH.span
@@ -279,6 +299,34 @@ renderDependenciesPanel state =
             }
             HandleDependenciesOutput
         ]
+    ]
+
+renderLayersPanel :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
+renderLayersPanel state =
+  let input = state.lastInput
+  in
+  HH.div
+    [ HP.style "border-bottom: 2px solid #e8e4d8;" ]
+    [ HH.slot _layers unit LayerDiagramPanel.component
+        { moduleName: input.moduleName
+        , declarations: input.declarations
+        , functionCalls: input.functionCalls
+        }
+        HandleLayersOutput
+    ]
+
+renderCutpointsPanel :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
+renderCutpointsPanel state =
+  let input = state.lastInput
+  in
+  HH.div
+    [ HP.style "border-bottom: 2px solid #e8e4d8;" ]
+    [ HH.slot _cutpoints unit CutpointsPanel.component
+        { moduleName: input.moduleName
+        , declarations: input.declarations
+        , functionCalls: input.functionCalls
+        }
+        HandleCutpointsOutput
     ]
 
 renderAnnotationsPanel :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
@@ -575,6 +623,16 @@ handleAction = case _ of
         H.modify_ _ { openPanels = Set.insert PanelSignatures state.openPanels }
     UsageGraphViz.ViewPackage pkgName -> do
       H.raise (DeclarationClicked pkgName "" "")
+
+  HandleLayersOutput output -> case output of
+    LayerDiagramPanel.DeclarationClicked declName -> do
+      handleAction (FocusDeclaration (Just declName))
+    LayerDiagramPanel.DeclarationHovered _ ->
+      pure unit
+
+  HandleCutpointsOutput output -> case output of
+    CutpointsPanel.DeclarationClicked declName -> do
+      handleAction (FocusDeclaration (Just declName))
 
   HandleAnnotationsOutput output -> case output of
     AnnotationsViz.AnnotationStatusChanged annId newStatus -> do
