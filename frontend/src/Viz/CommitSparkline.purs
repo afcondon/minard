@@ -11,6 +11,7 @@ module CE2.Viz.CommitSparkline
   , SparklineRect
   , prepareData
   , toSvgRects
+  , renderSparkline
   ) where
 
 import Prelude
@@ -21,7 +22,10 @@ import Data.Int (toNumber)
 import Data.Maybe (fromMaybe)
 import Data.Number (log) as Num
 import Foreign.Object as Object
+import Halogen.HTML as HH
+import Halogen.HTML.Properties as HP
 import CE2.Data.Loader as Loader
+import CE2.Util.SVG (svgElem, sa)
 
 -- =============================================================================
 -- Types
@@ -116,3 +120,36 @@ toSvgRects dims bars =
 -- | Log scale: log(1 + n) to compress wide ranges while keeping 0 as 0
 logScale :: Number -> Number
 logScale n = Num.log (1.0 + n)
+
+-- =============================================================================
+-- HTML Rendering (pure Halogen, no Canvas FFI)
+-- =============================================================================
+
+-- | Render a sparkline as an inline SVG element.
+-- | Shows a diverging bar chart: additions above center (green), deletions below (red).
+renderSparkline :: forall w i. Array SparklineBar -> HH.HTML w i
+renderSparkline bars =
+  let nBars = Array.length bars
+      vbWidth = max (toNumber nBars) 200.0
+      vbHeight = 72.0
+      rects = toSvgRects { width: vbWidth, height: vbHeight } bars
+  in
+  if nBars == 0
+    then HH.text ""
+    else HH.div [ HP.style "flex: 1; min-width: 0;" ]
+      [ svgElem "svg"
+          [ sa "viewBox" ("0 0 " <> show vbWidth <> " " <> show vbHeight)
+          , sa "preserveAspectRatio" "none"
+          , HP.style "width: 100%; height: 44px; display: block; border-radius: 3px; border: 1px solid #b8ad90; background: #e8e0cf;"
+          ]
+          ( rects <#> \r ->
+              svgElem "rect"
+                [ sa "x" (show r.x)
+                , sa "y" (show r.y)
+                , sa "width" (show r.width)
+                , sa "height" (show r.height)
+                , sa "fill" r.fill
+                ]
+                []
+          )
+      ]

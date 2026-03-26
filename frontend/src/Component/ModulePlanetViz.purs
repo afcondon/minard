@@ -15,13 +15,14 @@ module CE2.Component.ModulePlanetViz
 import Prelude
 
 import Data.Array as Array
+import Data.Either (Either(..))
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
 import Data.Tuple (Tuple(..))
-import Effect.Aff.Class (class MonadAff)
+import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class.Console (log)
 import Halogen as H
 import Halogen.HTML as HH
@@ -31,6 +32,8 @@ import Type.Proxy (Proxy(..))
 
 import CE2.Component.ModuleAnnotationsViz as AnnotationsViz
 import CE2.Component.ModuleSignaturesViz as SignaturesViz
+import CE2.Viz.BlameRibbon as BlameRibbon
+import CE2.Viz.CommitSparkline as Spark
 import CE2.Component.DeclarationUsageGraph as UsageGraphViz
 import CE2.Data.Loader as Loader
 
@@ -88,10 +91,14 @@ type State =
   { lastInput :: Input
   , openPanels :: Set Panel
   , focusedDeclaration :: Maybe String
+  , blameData :: Maybe Loader.BlameResult
+  , blameLoading :: Boolean
+  , sparklineBars :: Array Spark.SparklineBar
   }
 
 data Action
-  = Receive Input
+  = Initialize
+  | Receive Input
   | TogglePanel Panel
   | FocusDeclaration (Maybe String)
   | HandleSignaturesOutput SignaturesViz.Output
@@ -110,14 +117,18 @@ component =
     , eval: H.mkEval $ H.defaultEval
         { handleAction = handleAction
         , receive = Just <<< Receive
+        , initialize = Just Initialize
         }
     }
 
 initialState :: Input -> State
 initialState input =
   { lastInput: input
-  , openPanels: Set.fromFoldable [PanelSignatures]  -- Signatures open by default
+  , openPanels: Set.fromFoldable [PanelSignatures]
   , focusedDeclaration: Nothing
+  , blameData: Nothing
+  , blameLoading: false
+  , sparklineBars: []
   }
 
 -- =============================================================================
@@ -126,27 +137,38 @@ initialState input =
 
 render :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
 render state =
-  let input = state.lastInput
-  in
   HH.div
     [ HP.style "display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden;" ]
-    [ -- Panel toggle bar
+    [ -- Sparkline + panel toggle bar
       renderPanelBar state
-    -- Panel content area
+    -- Main area: blame ribbon (left) + panels (right)
     , HH.div
-        [ HP.style "flex: 1; min-height: 0; overflow-y: auto;" ]
-        ( Array.catMaybes
-            [ if isPanelOpen PanelSignatures state
-                then Just (renderSignaturesPanel state)
-                else Nothing
-            , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
-                then Just (renderDependenciesPanel state)
-                else Nothing
-            , if isPanelOpen PanelAnnotations state
-                then Just (renderAnnotationsPanel state)
-                else Nothing
-            ]
-        )
+        [ HP.style "flex: 1; min-height: 0; display: flex;" ]
+        [ -- Left edge: blame ribbon (persistent)
+          HH.div
+              [ HP.style "flex-shrink: 0; overflow-y: auto;" ]
+              [ BlameRibbon.renderBlameRibbon
+                  { blameData: state.blameData
+                  , loading: state.blameLoading
+                  , onLineClick: \_ -> TogglePanel PanelSignatures -- no-op for now
+                  }
+              ]
+        -- Right: scrollable panel stack
+        , HH.div
+            [ HP.style "flex: 1; min-width: 0; overflow-y: auto;" ]
+            ( Array.catMaybes
+                [ if isPanelOpen PanelSignatures state
+                    then Just (renderSignaturesPanel state)
+                    else Nothing
+                , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
+                    then Just (renderDependenciesPanel state)
+                    else Nothing
+                , if isPanelOpen PanelAnnotations state
+                    then Just (renderAnnotationsPanel state)
+                    else Nothing
+                ]
+            )
+        ]
     ]
 
 -- | Top bar with panel toggle buttons
@@ -160,10 +182,13 @@ renderPanelBar state =
     , panelToggle "Signatures" PanelSignatures state
     , panelToggle "Dependencies" PanelDependencies state
     , panelToggle "Annotations" PanelAnnotations state
-    , HH.span [ HP.style "flex: 1;" ] []
+    , -- Sparkline (fills available space)
+      Spark.renderSparkline state.sparklineBars
     , HH.span
-        [ HP.style "font-size: 10px; color: #888;" ]
-        [ HH.text $ show (Array.length state.lastInput.declarations) <> " declarations" ]
+        [ HP.style "font-size: 10px; color: #888; white-space: nowrap; margin-left: 8px;" ]
+        [ HH.text $ show (Array.length state.lastInput.declarations) <> " decls"
+            <> (if Array.length state.sparklineBars > 0 then " \x00B7 " <> show (Array.length state.sparklineBars) <> " commits" else "")
+        ]
     ]
 
 panelToggle :: forall m. String -> Panel -> State -> H.ComponentHTML Action ChildSlots m
@@ -280,8 +305,17 @@ firstValueDecl decls =
 
 handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action ChildSlots Output m Unit
 handleAction = case _ of
+  Initialize -> do
+    state <- H.get
+    loadModuleData state.lastInput
+
   Receive input -> do
+    state <- H.get
+    let moduleChanged = input.moduleName /= state.lastInput.moduleName
     H.modify_ _ { lastInput = input }
+    when moduleChanged do
+      H.modify_ _ { blameData = Nothing, blameLoading = false, sparklineBars = [], focusedDeclaration = Nothing }
+      loadModuleData input
 
   TogglePanel panel -> do
     state <- H.get
@@ -340,3 +374,24 @@ handleAction = case _ of
       H.raise (AnnotationReplyCreated reply)
     AnnotationsViz.DeclarationClicked declName -> do
       handleAction (FocusDeclaration (Just declName))
+
+-- | Fetch blame and sparkline data for the current module
+loadModuleData :: forall m. MonadAff m => Input -> H.HalogenM State Action ChildSlots Output m Unit
+loadModuleData input = do
+  -- Fetch blame
+  H.modify_ _ { blameLoading = true }
+  void $ H.fork do
+    blameResult <- liftAff $ Loader.fetchModuleBlame input.moduleName
+    case blameResult of
+      Right blame -> H.modify_ _ { blameData = Just blame, blameLoading = false }
+      Left _ -> H.modify_ _ { blameLoading = false }
+  -- Fetch sparkline
+  void $ H.fork do
+    -- Find the package name for numstat fetch
+    let pkgName = input.packageName
+    numstatResult <- liftAff $ Loader.fetchModuleNumstat 500 pkgName
+    case numstatResult of
+      Right commits -> do
+        let bars = Spark.prepareData input.moduleName commits
+        H.modify_ _ { sparklineBars = bars }
+      Left _ -> pure unit
