@@ -128,9 +128,13 @@ initialState input =
 
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
+  let rootStyle = if state.lastInput.showModuleHeader
+        then "overflow-y: auto; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
+        else "overflow-y: auto; width: 100%; box-sizing: border-box;"
+  in
   HH.div
     [ HP.class_ (HH.ClassName "module-signatures")
-    , HP.style "overflow-y: auto; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
+    , HP.style rootStyle
     ]
     [ -- Module header row with bubblepack glyph (hidden when planet provides its own)
       if state.lastInput.showModuleHeader then renderModuleHeader state else HH.text ""

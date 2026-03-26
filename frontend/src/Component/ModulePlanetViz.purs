@@ -229,9 +229,7 @@ renderSignaturesPanel state =
   let input = state.lastInput
   in
   HH.div
-    [ HP.style $ "border-bottom: 2px solid #e8e4d8; position: relative;"
-        <> if Array.null input.declarations then " height: 60px;" else " height: 80vh;"
-    ]
+    [ HP.style "border-bottom: 2px solid #e8e4d8;" ]
     [ HH.slot _signatures unit SignaturesViz.component
         { packageName: input.packageName
         , moduleName: input.moduleName
