@@ -56,6 +56,8 @@ type Input =
   , moduleName :: String
   , declarations :: Array Loader.V2Declaration
   , functionCalls :: Map Int (Array Loader.V2FunctionCall)
+  , showBlameRibbon :: Boolean
+  , showModuleHeader :: Boolean
   }
 
 data Output
@@ -130,8 +132,8 @@ render state =
     [ HP.class_ (HH.ClassName "module-signatures")
     , HP.style "overflow-y: auto; position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-sizing: border-box;"
     ]
-    [ -- Module header row with bubblepack glyph
-      renderModuleHeader state
+    [ -- Module header row with bubblepack glyph (hidden when planet provides its own)
+      if state.lastInput.showModuleHeader then renderModuleHeader state else HH.text ""
     -- Kind filter bar
     , renderKindFilter state
     -- Blame ribbon + signatures layout

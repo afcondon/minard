@@ -139,36 +139,29 @@ render :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
 render state =
   HH.div
     [ HP.style "display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden;" ]
-    [ -- Sparkline + panel toggle bar
+    [ -- Module header + panel toggles (merged)
       renderPanelBar state
-    -- Main area: blame ribbon (left) + panels (right)
+    -- Sparkline strip
+    , if Array.length state.sparklineBars > 0
+        then HH.div
+          [ HP.style "padding: 4px 16px; background: #f0ece0; border-bottom: 1px solid #d8d0bc; flex-shrink: 0;" ]
+          [ Spark.renderSparkline state.sparklineBars ]
+        else HH.text ""
+    -- Panel content area
     , HH.div
-        [ HP.style "flex: 1; min-height: 0; display: flex;" ]
-        [ -- Left edge: blame ribbon (persistent)
-          HH.div
-              [ HP.style "flex-shrink: 0; overflow-y: auto;" ]
-              [ BlameRibbon.renderBlameRibbon
-                  { blameData: state.blameData
-                  , loading: state.blameLoading
-                  , onLineClick: \_ -> TogglePanel PanelSignatures -- no-op for now
-                  }
-              ]
-        -- Right: scrollable panel stack
-        , HH.div
-            [ HP.style "flex: 1; min-width: 0; overflow-y: auto;" ]
-            ( Array.catMaybes
-                [ if isPanelOpen PanelSignatures state
-                    then Just (renderSignaturesPanel state)
-                    else Nothing
-                , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
-                    then Just (renderDependenciesPanel state)
-                    else Nothing
-                , if isPanelOpen PanelAnnotations state
-                    then Just (renderAnnotationsPanel state)
-                    else Nothing
-                ]
-            )
-        ]
+        [ HP.style "flex: 1; min-height: 0; overflow-y: auto;" ]
+        ( Array.catMaybes
+            [ if isPanelOpen PanelSignatures state
+                then Just (renderSignaturesPanel state)
+                else Nothing
+            , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
+                then Just (renderDependenciesPanel state)
+                else Nothing
+            , if isPanelOpen PanelAnnotations state
+                then Just (renderAnnotationsPanel state)
+                else Nothing
+            ]
+        )
     ]
 
 -- | Top bar with panel toggle buttons
@@ -182,13 +175,10 @@ renderPanelBar state =
     , panelToggle "Signatures" PanelSignatures state
     , panelToggle "Dependencies" PanelDependencies state
     , panelToggle "Annotations" PanelAnnotations state
-    , -- Sparkline (fills available space)
-      Spark.renderSparkline state.sparklineBars
+    , HH.span [ HP.style "flex: 1;" ] []
     , HH.span
-        [ HP.style "font-size: 10px; color: #888; white-space: nowrap; margin-left: 8px;" ]
-        [ HH.text $ show (Array.length state.lastInput.declarations) <> " decls"
-            <> (if Array.length state.sparklineBars > 0 then " \x00B7 " <> show (Array.length state.sparklineBars) <> " commits" else "")
-        ]
+        [ HP.style "font-size: 10px; color: #888; white-space: nowrap;" ]
+        [ HH.text $ show (Array.length state.lastInput.declarations) <> " declarations" ]
     ]
 
 panelToggle :: forall m. String -> Panel -> State -> H.ComponentHTML Action ChildSlots m
@@ -222,6 +212,8 @@ renderSignaturesPanel state =
         , moduleName: input.moduleName
         , declarations: input.declarations
         , functionCalls: input.functionCalls
+        , showBlameRibbon: false
+        , showModuleHeader: false
         }
         HandleSignaturesOutput
     ]

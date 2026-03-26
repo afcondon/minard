@@ -660,6 +660,8 @@ renderScene state =
           , moduleName: modName
           , declarations: decls
           , functionCalls: state.packageCalls
+          , showBlameRibbon: true
+          , showModuleHeader: true
           }
           HandleModuleSignaturesOutput
       Nothing ->
