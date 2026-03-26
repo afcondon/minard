@@ -1271,6 +1271,9 @@ handleAction = case _ of
           log $ "[SceneCoordinator] Failed to create reply: " <> err
     ModulePlanetViz.CompareSnapshotsClicked ->
       pure unit  -- Not yet supported in Planet view
+    ModulePlanetViz.NavigateToGitView pkgName -> do
+      log $ "[SceneCoordinator] Planet → Git view for " <> pkgName
+      handleAction (NavigateTo (CommitModuleGrid pkgName))
 
   HandleModuleSignaturesOutput output -> case output of
     ModuleSignaturesViz.DeclarationClicked pkgName modName declName -> do

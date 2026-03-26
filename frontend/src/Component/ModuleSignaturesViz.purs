@@ -139,8 +139,8 @@ render state =
     -- Blame ribbon + signatures layout
     , HH.div
         [ HP.style "display: flex; gap: 12px; min-height: 0; padding: 0 16px 12px 16px;" ]
-        [ -- Left: blame ribbon
-          renderBlameRibbon state
+        [ -- Left: blame ribbon (hidden when parent provides its own)
+          if state.lastInput.showBlameRibbon then renderBlameRibbon state else HH.text ""
         -- Right: signature cards
         , HH.div
             [ HP.style "flex: 1; min-width: 0;" ]
@@ -148,7 +148,7 @@ render state =
                 then [ HH.div [ HP.style "padding: 24px; color: #999; font-size: 12px; text-align: center;" ]
                          [ HH.text "No declarations" ] ]
                 else state.lanes <#> renderLane state)
-            <> [ renderInternalDeclarations state ]
+            <> (if state.lastInput.showBlameRibbon then [ renderInternalDeclarations state ] else [])
             )
         ]
     ]

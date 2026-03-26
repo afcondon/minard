@@ -16,8 +16,10 @@ import Prelude
 
 import Data.Array as Array
 import Data.Either (Either(..))
+import Data.Int as Int
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Number (log) as Num
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
@@ -61,6 +63,7 @@ data Output
       , supersedes :: Int
       }
   | CompareSnapshotsClicked
+  | NavigateToGitView String  -- packageName → git commit grid
 
 type Slot = H.Slot Query Output
 
@@ -94,6 +97,9 @@ type State =
   , blameData :: Maybe Loader.BlameResult
   , blameLoading :: Boolean
   , sparklineBars :: Array Spark.SparklineBar
+  , hoveredCommit :: Maybe String    -- highlighted commit hash (from blame or dot hover)
+  , hoveredDeclName :: Maybe String  -- hovered declaration name (for tooltip + blame highlight)
+  , allDeclNames :: Array String     -- all declaration names including internals from calls
   }
 
 data Action
@@ -101,6 +107,9 @@ data Action
   | Receive Input
   | TogglePanel Panel
   | FocusDeclaration (Maybe String)
+  | HoverBlame (Maybe String)     -- commit hash from blame ribbon
+  | HoverDecl (Maybe String)      -- declaration name from dot cloud
+  | NavigateToGit
   | HandleSignaturesOutput SignaturesViz.Output
   | HandleDependenciesOutput UsageGraphViz.Output
   | HandleAnnotationsOutput AnnotationsViz.Output
@@ -129,6 +138,9 @@ initialState input =
   , blameData: Nothing
   , blameLoading: false
   , sparklineBars: []
+  , hoveredCommit: Nothing
+  , hoveredDeclName: Nothing
+  , allDeclNames: buildAllDeclNames input
   }
 
 -- =============================================================================
@@ -139,29 +151,40 @@ render :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
 render state =
   HH.div
     [ HP.style "display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden;" ]
-    [ -- Module header + panel toggles (merged)
+    [ -- Header: panel toggles + sparkline (merged row)
       renderPanelBar state
-    -- Sparkline strip
-    , if Array.length state.sparklineBars > 0
-        then HH.div
-          [ HP.style "padding: 4px 16px; background: #f0ece0; border-bottom: 1px solid #d8d0bc; flex-shrink: 0;" ]
-          [ Spark.renderSparkline state.sparklineBars ]
-        else HH.text ""
-    -- Panel content area
+    -- Main area: blame ribbon (left, persistent) + panels (right)
     , HH.div
-        [ HP.style "flex: 1; min-height: 0; overflow-y: auto;" ]
-        ( Array.catMaybes
-            [ if isPanelOpen PanelSignatures state
-                then Just (renderSignaturesPanel state)
-                else Nothing
-            , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
-                then Just (renderDependenciesPanel state)
-                else Nothing
-            , if isPanelOpen PanelAnnotations state
-                then Just (renderAnnotationsPanel state)
-                else Nothing
-            ]
-        )
+        [ HP.style "flex: 1; min-height: 0; display: flex; overflow: hidden;" ]
+        [ -- Left: persistent blame ribbon (scrolls with panels)
+          renderBlameColumn state
+        -- Right: scrollable panel stack
+        , HH.div
+            [ HP.style "flex: 1; min-width: 0; overflow-y: auto;" ]
+            ( -- Sparkline strip (click → git view)
+              (if Array.length state.sparklineBars > 0
+                then [ HH.div
+                    [ HP.style "padding: 4px 16px; background: #f0ece0; border-bottom: 1px solid #d8d0bc; cursor: pointer;"
+                    , HE.onClick \_ -> NavigateToGit
+                    ]
+                    [ Spark.renderSparkline state.sparklineBars ]
+                  ]
+                else [])
+              -- Declaration map (all declarations as colored dots)
+              <> [ renderDeclarationMap state ]
+              <> Array.catMaybes
+                  [ if isPanelOpen PanelSignatures state
+                      then Just (renderSignaturesPanel state)
+                      else Nothing
+                  , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
+                      then Just (renderDependenciesPanel state)
+                      else Nothing
+                  , if isPanelOpen PanelAnnotations state
+                      then Just (renderAnnotationsPanel state)
+                      else Nothing
+                  ]
+            )
+        ]
     ]
 
 -- | Top bar with panel toggle buttons
@@ -206,7 +229,9 @@ renderSignaturesPanel state =
   let input = state.lastInput
   in
   HH.div
-    [ HP.style "border-bottom: 2px solid #e8e4d8; position: relative; height: 80vh;" ]
+    [ HP.style $ "border-bottom: 2px solid #e8e4d8; position: relative;"
+        <> if Array.null input.declarations then " height: 60px;" else " height: 80vh;"
+    ]
     [ HH.slot _signatures unit SignaturesViz.component
         { packageName: input.packageName
         , moduleName: input.moduleName
@@ -292,6 +317,186 @@ firstValueDecl decls =
       Nothing -> "component"
 
 -- =============================================================================
+-- Blame Column (persistent left strip)
+-- =============================================================================
+
+renderBlameColumn :: forall m. State -> H.ComponentHTML Action ChildSlots m
+renderBlameColumn state =
+  HH.div
+    [ HP.style "flex-shrink: 0; overflow-y: auto; cursor: pointer;" ]
+    [ case state.blameData of
+        Nothing ->
+          if state.blameLoading
+            then HH.div [ HP.style "width: 80px; display: flex; align-items: center; justify-content: center; color: #999; font-size: 10px; padding: 8px;" ] [ HH.text "..." ]
+            else HH.text ""
+        Just blame ->
+          HH.div
+            [ HP.style "width: 80px; border: 1px solid #d5d0c4; border-radius: 4px; background: #faf8f3;" ]
+            [ HH.div [ HP.style "display: flex; flex-direction: column;" ]
+                (Array.mapWithIndex (\idx blameLine ->
+                  let
+                    age = BlameRibbon.blameLineAge blame.oldestTime blame.newestTime blameLine.authorTime
+                    bgColor = recencyColor age
+                    prevHash = Array.index blame.lines (idx - 1) <#> _.hash
+                    isGroupStart = idx > 0 && prevHash /= Just blameLine.hash
+                    isHighlighted = state.hoveredCommit == Just blameLine.hash
+                    opacity = if isHighlighted then "1.0" else case state.hoveredCommit of
+                      Nothing -> "1.0"
+                      Just _ -> "0.3"
+                  in HH.div
+                    [ HP.style $ "height: 2px; background: " <> bgColor <> "; opacity: " <> opacity <> "; transition: opacity 100ms ease;"
+                        <> (if isGroupStart then " border-top: 1px solid rgba(0,0,0,0.15);" else "")
+                    , HP.title (blameLine.shortHash <> " \x00B7 " <> BlameRibbon.formatRelativeTime blameLine.authorTime <> "\n" <> blameLine.summary)
+                    , HE.onMouseEnter \_ -> HoverBlame (Just blameLine.hash)
+                    , HE.onMouseLeave \_ -> HoverBlame Nothing
+                    , HE.onClick \_ -> NavigateToGit
+                    ]
+                    []
+                ) blame.lines)
+            ]
+    ]
+
+-- =============================================================================
+-- Declaration Map (all declarations as dots)
+-- =============================================================================
+
+-- | Info needed to render each dot in the declaration map
+type DeclDot =
+  { name :: String
+  , exported :: Boolean
+  , sourceSpan :: Maybe { start :: Array Int, end :: Array Int, name :: String }
+  , loc :: Int  -- lines of code (0 if unknown)
+  }
+
+renderDeclarationMap :: forall m. State -> H.ComponentHTML Action ChildSlots m
+renderDeclarationMap state =
+  let
+    decls = state.lastInput.declarations
+    internalNames = state.allDeclNames
+    exportedNames = Set.fromFoldable $ decls <#> _.name
+    -- Build dots for all declarations
+    exportedDots :: Array DeclDot
+    exportedDots = decls <#> \d ->
+      { name: d.name
+      , exported: true
+      , sourceSpan: d.sourceSpan
+      , loc: spanLoc d.sourceSpan
+      }
+    internalDots :: Array DeclDot
+    internalDots = Array.filter (\n -> not (Set.member n exportedNames)) internalNames <#> \n ->
+      { name: n, exported: false, sourceSpan: Nothing, loc: 0 }
+    allDots = exportedDots <> internalDots
+  in
+  if Array.null allDots then HH.text ""
+  else HH.div
+    [ HP.style "padding: 6px 16px; border-bottom: 1px solid #e8e4d8; background: #faf8f3;"
+    , HE.onMouseLeave \_ -> HoverDecl Nothing
+    ]
+    [ HH.div
+        [ HP.style "display: flex; flex-wrap: wrap; gap: 3px; align-items: center;" ]
+        (allDots <#> \d ->
+          let
+            age = declBlameAge state d.sourceSpan
+            color = recencyColor age
+            isHovered = state.hoveredDeclName == Just d.name
+            commitMatch = case state.hoveredCommit of
+              Nothing -> true
+              Just hash -> declMatchesCommit state d.sourceSpan hash
+            -- Size by LOC: min 6px, max 20px, log-scaled
+            baseSize = if d.loc > 0
+              then max 6.0 (min 20.0 (4.0 + logScale (Int.toNumber d.loc) * 4.0))
+              else if d.exported then 10.0 else 6.0
+            sizeStr = show baseSize <> "px"
+            border = if d.exported then "border: 1.5px solid rgba(0,0,0,0.25); " else ""
+            dimmed = case state.hoveredCommit of
+              Nothing -> false
+              Just _ -> not commitMatch
+            opac = if dimmed then "0.15" else "1.0"
+          in
+          HH.span
+            [ HP.style $ "display: inline-block; width: " <> sizeStr <> "; height: " <> sizeStr <> "; border-radius: 50%; cursor: pointer; background: " <> color <> "; " <> border <> "opacity: " <> opac <> "; transition: opacity 100ms ease, transform 100ms ease;"
+                <> (if isHovered then " transform: scale(1.5); z-index: 1;" else "")
+            , HP.title d.name
+            , HE.onMouseEnter \_ -> HoverDecl (Just d.name)
+            , HE.onClick \_ -> FocusDeclaration (Just d.name)
+            ]
+            []
+        )
+    ]
+
+-- | Compute LOC from source span
+spanLoc :: Maybe { start :: Array Int, end :: Array Int, name :: String } -> Int
+spanLoc = case _ of
+  Just span -> case Array.index span.start 0, Array.index span.end 0 of
+    Just s, Just e -> max 1 (e - s + 1)
+    _, _ -> 0
+  Nothing -> 0
+
+-- | Log scale for LOC sizing
+logScale :: Number -> Number
+logScale n = Num.log (1.0 + n)
+
+-- | Get the blame age for a declaration based on its source span
+declBlameAge :: State -> Maybe { start :: Array Int, end :: Array Int, name :: String } -> Number
+declBlameAge state mSpan = case state.blameData, mSpan of
+  Just blame, Just span ->
+    let startLine = fromMaybe 1 (Array.index span.start 0)
+        endLine = fromMaybe startLine (Array.index span.end 0)
+        declLines = Array.filter (\bl -> bl.lineNum >= startLine && bl.lineNum <= endLine) blame.lines
+        avgTime = case declLines of
+          [] -> blame.newestTime
+          ls -> Array.foldl (\acc bl -> acc + bl.authorTime) 0 ls / Array.length ls
+    in BlameRibbon.blameLineAge blame.oldestTime blame.newestTime avgTime
+  _, _ -> 0.5
+
+-- | Check if a declaration's source span includes lines from a given commit
+declMatchesCommit :: State -> Maybe { start :: Array Int, end :: Array Int, name :: String } -> String -> Boolean
+declMatchesCommit state mSpan hash = case state.blameData, mSpan of
+  Just blame, Just span ->
+    let startLine = fromMaybe 1 (Array.index span.start 0)
+        endLine = fromMaybe startLine (Array.index span.end 0)
+    in Array.any (\bl -> bl.lineNum >= startLine && bl.lineNum <= endLine && bl.hash == hash) blame.lines
+  _, _ -> false
+
+-- | Build all declaration names: exported + internals from call data
+buildAllDeclNames :: Input -> Array String
+buildAllDeclNames input =
+  let exportedNames = Set.fromFoldable $ input.declarations <#> _.name
+      modId = Map.lookup input.moduleName input.moduleNameToId
+      calls = fromMaybe [] (modId >>= \mid -> Map.lookup mid input.functionCalls)
+      callNames = Array.concatMap (\c -> [c.callerName, c.calleeName]) calls
+      internalNames = Array.nub $ Array.filter (\n -> not (Set.member n exportedNames) && not (isCompilerGenerated n)) callNames
+  in Array.sort internalNames
+
+isCompilerGenerated :: String -> Boolean
+isCompilerGenerated name =
+  String.take 7 name == "discard" || String.take 4 name == "bind" || String.take 2 name == "$$"
+
+-- | Find the most recent commit hash for a declaration by name
+findDeclCommit :: State -> String -> Maybe String
+findDeclCommit state name = do
+  blame <- state.blameData
+  decl <- Array.find (\d -> d.name == name) state.lastInput.declarations
+  span <- decl.sourceSpan
+  startLine <- Array.index span.start 0
+  endLine <- Array.index span.end 0
+  let declLines = Array.filter (\bl -> bl.lineNum >= startLine && bl.lineNum <= endLine) blame.lines
+  newest <- Array.foldl (\acc bl -> case acc of
+    Nothing -> Just bl
+    Just prev -> if bl.authorTime > prev.authorTime then Just bl else acc
+    ) Nothing declLines
+  pure newest.hash
+
+-- | Recency color: bright red = very recent, warm orange = medium, pale yellow = old
+recencyColor :: Number -> String
+recencyColor age
+  | age > 0.9  = "#e63946"
+  | age > 0.75 = "#e76f51"
+  | age > 0.5  = "#f4a261"
+  | age > 0.25 = "#e9c46a"
+  | otherwise  = "#f0e6c8"
+
+-- =============================================================================
 -- Action Handlers
 -- =============================================================================
 
@@ -304,9 +509,9 @@ handleAction = case _ of
   Receive input -> do
     state <- H.get
     let moduleChanged = input.moduleName /= state.lastInput.moduleName
-    H.modify_ _ { lastInput = input }
+    H.modify_ _ { lastInput = input, allDeclNames = buildAllDeclNames input }
     when moduleChanged do
-      H.modify_ _ { blameData = Nothing, blameLoading = false, sparklineBars = [], focusedDeclaration = Nothing }
+      H.modify_ _ { blameData = Nothing, blameLoading = false, sparklineBars = [], focusedDeclaration = Nothing, hoveredCommit = Nothing, hoveredDeclName = Nothing }
       loadModuleData input
 
   TogglePanel panel -> do
@@ -318,13 +523,27 @@ handleAction = case _ of
 
   FocusDeclaration mDecl -> do
     H.modify_ _ { focusedDeclaration = mDecl }
-    -- Ensure dependencies panel is open when focusing
     case mDecl of
       Just _ -> do
         state <- H.get
         when (not $ Set.member PanelDependencies state.openPanels) do
           H.modify_ _ { openPanels = Set.insert PanelDependencies state.openPanels }
       Nothing -> pure unit
+
+  HoverBlame mHash -> do
+    H.modify_ _ { hoveredCommit = mHash }
+
+  HoverDecl mName -> do
+    state <- H.get
+    -- When hovering a declaration, find its most recent commit and highlight that
+    let commitHash = case mName of
+          Just name -> findDeclCommit state name
+          Nothing -> Nothing
+    H.modify_ _ { hoveredDeclName = mName, hoveredCommit = commitHash }
+
+  NavigateToGit -> do
+    state <- H.get
+    H.raise (NavigateToGitView state.lastInput.packageName)
 
   HandleSignaturesOutput output -> case output of
     SignaturesViz.DeclarationClicked pkgName modName declName -> do
