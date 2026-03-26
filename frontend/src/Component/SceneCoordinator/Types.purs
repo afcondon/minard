@@ -33,6 +33,7 @@ module CE2.Component.SceneCoordinator.Types
   , _pkgModuleBeeswarmViz
   , _typeClassGridViz
   , _moduleStructureViz
+  , _modulePlanetViz
   , _moduleSignaturesViz
   , _gitOverviewViz
   , _dependencyChordViz
@@ -82,6 +83,7 @@ import CE2.Component.GalaxyTreemapViz as GalaxyTreemapViz
 import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleStructureViz as ModuleStructureViz
+import CE2.Component.ModulePlanetViz as ModulePlanetViz
 import CE2.Component.ModuleSignaturesViz as ModuleSignaturesViz
 import CE2.Component.GitOverviewViz as GitOverviewViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
@@ -292,6 +294,7 @@ type Slots =
   , pkgModuleBeeswarmViz :: PkgModuleBeeswarmViz.Slot Unit
   , typeClassGridViz :: H.Slot TypeClassGridViz.Query TypeClassGridViz.Output Unit
   , moduleStructureViz :: ModuleStructureViz.Slot Unit
+  , modulePlanetViz :: ModulePlanetViz.Slot Unit
   , moduleSignaturesViz :: ModuleSignaturesViz.Slot Unit
   , gitOverviewViz :: GitOverviewViz.Slot Unit
   , dependencyChordViz :: DependencyChordViz.Slot String
@@ -337,6 +340,9 @@ _typeClassGridViz = Proxy
 
 _moduleStructureViz :: Proxy "moduleStructureViz"
 _moduleStructureViz = Proxy
+
+_modulePlanetViz :: Proxy "modulePlanetViz"
+_modulePlanetViz = Proxy
 
 _moduleSignaturesViz :: Proxy "moduleSignaturesViz"
 _moduleSignaturesViz = Proxy
@@ -527,6 +533,7 @@ data Action
   | HandleModuleOverviewOutput ModuleOverviewViz.Output
   | HandleDeclarationDetailOutput DeclarationDetailViz.Output
   | HandleModuleStructureOutput ModuleStructureViz.Output
+  | HandleModulePlanetOutput ModulePlanetViz.Output
   | HandleModuleSignaturesOutput ModuleSignaturesViz.Output
   | HandleGitOverviewOutput GitOverviewViz.Output
   | HandlePackageReportOutput PackageReportViz.Output

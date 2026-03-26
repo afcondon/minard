@@ -458,20 +458,23 @@ renderInternalDeclarations state =
       [ HH.div [ HP.style "border-top: 2px dashed #ccc; margin-bottom: 8px;" ] []
       , HH.div [ HP.style "font-size: 9px; color: #999; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 6px;" ]
           [ HH.text $ "Internal (" <> show (Array.length sorted) <> ")" ]
-      , HH.div [ HP.style "display: flex; flex-wrap: wrap; gap: 4px 12px;" ]
+      , HH.div [ HP.style "display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 0;" ]
           (sorted <#> \name ->
-            let mLine = findDeclLine name state
-            in HH.span
-              [ HP.style "font-family: 'Fira Code', monospace; font-size: 11px; color: #666; cursor: pointer;"
-              , HP.title $ "Internal: " <> name
+            HH.span
+              [ HP.style $ "display: inline-block; width: 8px; height: 8px; border-radius: 50%; cursor: pointer; transition: transform 100ms ease; background: " <> internalDotColor name <> ";"
+              , HP.title name
               , HE.onClick \_ -> SignatureClicked name
               ]
-              [ HH.text $ name <> case mLine of
-                  Just l -> ":" <> show l
-                  Nothing -> ""
-              ]
+              []
           )
       ]
+
+-- | Muted color for internal declaration dots, based on name length
+internalDotColor :: String -> String
+internalDotColor name =
+  let colors = ["#8b9dc3", "#9bb59c", "#c4a882", "#b8929a", "#a3a0c4", "#8cb8b0", "#c4b078", "#b5a0a8"]
+      idx = SCU.length name `mod` Array.length colors
+  in fromMaybe "#999" (Array.index colors idx)
 
 isCompilerGenerated :: String -> Boolean
 isCompilerGenerated name =

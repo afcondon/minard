@@ -38,6 +38,7 @@ import Web.UIEvent.KeyboardEvent as KE
 
 -- PSD3 Imports
 import Hylograph.HATS.InterpreterTick (clearContainer, clearAllHighlights)
+import CE2.Viz.DOMHelpers (setDocumentTitle)
 
 -- Child visualization components
 import CE2.Component.BubblePackBeeswarmViz as BubblePackBeeswarmViz
@@ -49,6 +50,7 @@ import CE2.Component.GalaxyTreemapViz as GalaxyTreemapViz
 import CE2.Component.PkgModuleBeeswarmViz as PkgModuleBeeswarmViz
 import CE2.Component.TypeClassGridViz as TypeClassGridViz
 import CE2.Component.ModuleStructureViz as ModuleStructureViz
+import CE2.Component.ModulePlanetViz as ModulePlanetViz
 import CE2.Component.ModuleSignaturesViz as ModuleSignaturesViz
 import CE2.Component.GitOverviewViz as GitOverviewViz
 import CE2.Component.AnnotationReportViz as AnnotationReportViz
@@ -635,25 +637,20 @@ renderScene state =
       HandleDeclarationDetailOutput
 
   ModuleStructure pkgName modName ->
-    case Pure.lookupModuleDeclarations state pkgName modName of
-      Just decls ->
-        let anns = fromMaybe [] (Map.lookup modName state.moduleAnnotations)
-            modNameToId2 = case state.v2Data of
-              Just v2 -> Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.id
-              Nothing -> Map.empty
-        in HH.slot _moduleStructureViz unit ModuleStructureViz.component
-          { packageName: pkgName
-          , moduleName: modName
-          , declarations: decls
-          , annotations: anns
-          , functionCalls: state.packageCalls
-          , moduleNameToId: modNameToId2
-          }
-          HandleModuleStructureOutput
-      Nothing ->
-        HH.div
-          [ HP.class_ (HH.ClassName "loading") ]
-          [ HH.text "Loading module declarations..." ]
+    let decls = fromMaybe [] (Pure.lookupModuleDeclarations state pkgName modName)
+        anns = fromMaybe [] (Map.lookup modName state.moduleAnnotations)
+        modNameToId2 = case state.v2Data of
+          Just v2 -> Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.id
+          Nothing -> Map.empty
+    in HH.slot _modulePlanetViz unit ModulePlanetViz.component
+      { packageName: pkgName
+      , moduleName: modName
+      , declarations: decls
+      , annotations: anns
+      , functionCalls: state.packageCalls
+      , moduleNameToId: modNameToId2
+      }
+      HandleModulePlanetOutput
 
   ModuleSignatures pkgName modName ->
     case Pure.lookupModuleDeclarations state pkgName modName of
@@ -1021,6 +1018,9 @@ handleAction = case _ of
       , coChangeClusterData = Nothing  -- Clear stale co-change clusters (package-specific)
       }
 
+    -- Update browser tab title for debugging
+    liftEffect $ setDocumentTitle $ "Minard — " <> show targetScene
+
     -- Push to browser history (enables back/forward buttons)
     -- ViewMode resets to PrimaryView on scene change; preserve focal and scope
     currentState <- H.get
@@ -1236,6 +1236,39 @@ handleAction = case _ of
             Left err ->
               log $ "[SceneCoordinator] Failed to fetch snapshots: " <> err
         _ -> pure unit
+
+  HandleModulePlanetOutput output -> case output of
+    ModulePlanetViz.DeclarationClicked pkgName modName declName -> do
+      log $ "[SceneCoordinator] Planet declaration clicked: " <> declName
+      -- Navigate to declaration detail for cross-module clicks
+      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+    ModulePlanetViz.AnnotationStatusChanged annId newStatus -> do
+      log $ "[SceneCoordinator] Planet annotation " <> show annId <> " -> " <> newStatus
+      void $ liftAff $ Loader.patchAnnotationStatus annId newStatus
+      st3 <- H.get
+      let updated = map (map (\a -> if a.id == annId then a { status = newStatus } else a))
+                        st3.moduleAnnotations
+      H.modify_ _ { moduleAnnotations = updated }
+    ModulePlanetViz.AnnotationReplyCreated reply -> do
+      log $ "[SceneCoordinator] Planet creating reply on " <> reply.targetId
+      result <- liftAff $ Loader.createAnnotation
+        { targetType: reply.targetType
+        , targetId: reply.targetId
+        , kind: reply.kind
+        , value: reply.value
+        , source: "human"
+        , supersedes: Just reply.supersedes
+        }
+      case result of
+        Right newAnn -> do
+          st4 <- H.get
+          let modAnns = fromMaybe [] (Map.lookup reply.targetId st4.moduleAnnotations)
+              updatedAnns = Array.snoc modAnns newAnn
+          H.modify_ _ { moduleAnnotations = Map.insert reply.targetId updatedAnns st4.moduleAnnotations }
+        Left err ->
+          log $ "[SceneCoordinator] Failed to create reply: " <> err
+    ModulePlanetViz.CompareSnapshotsClicked ->
+      pure unit  -- Not yet supported in Planet view
 
   HandleModuleSignaturesOutput output -> case output of
     ModuleSignaturesViz.DeclarationClicked pkgName modName declName -> do
