@@ -36,6 +36,8 @@ import Web.HTML.Window (document, toEventTarget) as Win
 import Web.UIEvent.KeyboardEvent (toEvent, key, repeat, metaKey, ctrlKey, shiftKey, altKey)
 import Web.UIEvent.KeyboardEvent as KE
 
+import Halogen.HTML.Events as HE
+
 -- PSD3 Imports
 import Hylograph.HATS.InterpreterTick (clearContainer, clearAllHighlights)
 import CE2.Viz.DOMHelpers (setDocumentTitle)
@@ -382,6 +384,26 @@ renderDeclarationLegend =
 renderFooterControls :: forall m. State -> H.ComponentHTML Action Slots m
 renderFooterControls _state = HH.text ""
 
+-- | Deprecated scene notice — shown when navigating to old module views
+renderDeprecatedScene :: forall m. String -> String -> String -> H.ComponentHTML Action Slots m
+renderDeprecatedScene sceneName pkgName modName =
+  HH.div
+    [ HP.style "display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; background: #fff3cd;" ]
+    [ HH.div
+        [ HP.style "text-align: center; padding: 40px; max-width: 500px;" ]
+        [ HH.div [ HP.style "font-size: 48px; margin-bottom: 16px;" ] [ HH.text "\x26A0\xFE0F" ]
+        , HH.div [ HP.style "font-size: 18px; font-weight: 700; color: #856404; margin-bottom: 8px;" ]
+            [ HH.text $ sceneName <> " has moved" ]
+        , HH.div [ HP.style "font-size: 13px; color: #856404; margin-bottom: 20px; line-height: 1.5;" ]
+            [ HH.text "This view has been merged into ModulePlanet. All its features are available as panels on the unified module page." ]
+        , HH.div
+            [ HP.style "font-size: 13px; color: #0E4C8A; cursor: pointer; font-weight: 600; padding: 8px 16px; border: 1px solid #0E4C8A; border-radius: 4px; display: inline-block;"
+            , HE.onClick \_ -> NavigateTo (ModuleStructure pkgName modName)
+            ]
+            [ HH.text "\x2192 Go to ModulePlanet" ]
+        ]
+    ]
+
 -- | Render the current scene using child component slots
 -- | Streamlined to 6 scenes for teaser navigation
 renderScene :: forall m. MonadAff m => State -> H.ComponentHTML Action Slots m
@@ -595,20 +617,7 @@ renderScene state =
           [ HH.text "Loading module data..." ]
 
   ModuleOverview pkgName modName ->
-    -- Module overview: bubble pack + declaration listing
-    case Pure.lookupModuleDeclarations state pkgName modName of
-      Just decls ->
-        HH.slot _moduleOverviewViz unit ModuleOverviewViz.component
-          { packageName: pkgName
-          , moduleName: modName
-          , declarations: decls
-          , functionCalls: state.packageCalls
-          }
-          HandleModuleOverviewOutput
-      Nothing ->
-        HH.div
-          [ HP.class_ (HH.ClassName "loading") ]
-          [ HH.text "Loading module declarations..." ]
+    renderDeprecatedScene "ModuleOverview" pkgName modName
 
   DeclarationDetail pkgName modName declName ->
     -- Declaration detail: usage graph is self-contained (fetches own data)
@@ -650,21 +659,7 @@ renderScene state =
       HandleModulePlanetOutput
 
   ModuleSignatures pkgName modName ->
-    case Pure.lookupModuleDeclarations state pkgName modName of
-      Just decls ->
-        HH.slot _moduleSignaturesViz unit ModuleSignaturesViz.component
-          { packageName: pkgName
-          , moduleName: modName
-          , declarations: decls
-          , functionCalls: state.packageCalls
-          , showBlameRibbon: true
-          , showModuleHeader: true
-          }
-          HandleModuleSignaturesOutput
-      Nothing ->
-        HH.div
-          [ HP.class_ (HH.ClassName "loading") ]
-          [ HH.text "Loading module declarations..." ]
+    renderDeprecatedScene "ModuleSignatures" pkgName modName
 
   TypeClassGrid ->
     case state.typeClassStats of
@@ -1422,7 +1417,7 @@ handleAction = case _ of
       st2 <- H.get
       case st2.v2Data of
         Just v2 -> case Array.find (\m -> m.name == modName) v2.modules of
-          Just mod -> handleAction (NavigateTo (ModuleSignatures mod.package.name modName))
+          Just mod -> handleAction (NavigateTo (ModuleStructure mod.package.name modName))
           Nothing -> log $ "[SceneCoordinator] Module not found: " <> modName
         Nothing -> pure unit
     DeclarationDetailViz.NavigateToPackage pkgName -> do
