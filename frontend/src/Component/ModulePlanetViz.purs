@@ -25,7 +25,14 @@ import Data.Set as Set
 import Data.String as String
 import Data.Tuple (Tuple(..))
 import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
+import Halogen.Subscription as HS
+import Web.Event.EventTarget as ET
+import Web.HTML (window)
+import Web.HTML.Window as Win
+import Web.UIEvent.KeyboardEvent as KE
+import Web.UIEvent.KeyboardEvent.EventTypes as KET
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
@@ -37,6 +44,7 @@ import CE2.Component.CutpointsPanel as CutpointsPanel
 import CE2.Component.LayerDiagramPanel as LayerDiagramPanel
 import CE2.Component.ModuleAnnotationsViz as AnnotationsViz
 import CE2.Component.ModuleSignaturesViz as SignaturesViz
+import CE2.Util.SVG (svgElem, sa)
 import CE2.Viz.BlameRibbon as BlameRibbon
 import CE2.Viz.CommitSparkline as Spark
 import CE2.Component.DeclarationUsageGraph as UsageGraphViz
@@ -129,6 +137,7 @@ data Action
   | HandleDependenciesOutput UsageGraphViz.Output
   | HandleLayersOutput LayerDiagramPanel.Output
   | HandleCutpointsOutput CutpointsPanel.Output
+  | KeyPressed String
   | HandleConcernsOutput ConcernsPanel.Output
   | HandleAnnotationsOutput AnnotationsViz.Output
 
@@ -171,25 +180,33 @@ render state =
     [ HP.style "display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden;" ]
     [ -- Header: panel toggles + sparkline (merged row)
       renderPanelBar state
-    -- Main area: blame ribbon (left, persistent) + panels (right)
+    -- Sparkline row: git corner label + sparkline strip
+    , HH.div
+        [ HP.style "display: flex; flex-shrink: 0;" ]
+        [ -- Git corner label (diagonal split: Blame \ Commits)
+          renderGitCorner
+        -- Sparkline strip
+        , HH.div
+            [ HP.style "flex: 1; min-width: 0; cursor: pointer;"
+            , HE.onClick \_ -> NavigateToGit
+            ]
+            [ if Array.length state.sparklineBars > 0
+                then HH.div
+                  [ HP.style "padding: 4px 16px; background: #f0ece0; border-bottom: 1px solid #d8d0bc;" ]
+                  [ Spark.renderSparkline state.sparklineBars ]
+                else HH.div [ HP.style "height: 52px; background: #f0ece0; border-bottom: 1px solid #d8d0bc;" ] []
+            ]
+        ]
+    -- Main area: blame ribbon (left) + panels (right)
     , HH.div
         [ HP.style "flex: 1; min-height: 0; display: flex; overflow: hidden;" ]
-        [ -- Left: persistent blame ribbon (scrolls with panels)
+        [ -- Left: persistent blame ribbon
           renderBlameColumn state
         -- Right: scrollable panel stack
         , HH.div
             [ HP.style "flex: 1; min-width: 0; overflow-y: auto;" ]
-            ( -- Sparkline strip (click → git view)
-              (if Array.length state.sparklineBars > 0
-                then [ HH.div
-                    [ HP.style "padding: 4px 16px; background: #f0ece0; border-bottom: 1px solid #d8d0bc; cursor: pointer;"
-                    , HE.onClick \_ -> NavigateToGit
-                    ]
-                    [ Spark.renderSparkline state.sparklineBars ]
-                  ]
-                else [])
-              -- Declaration map (all declarations as colored dots)
-              <> [ renderDeclarationMap state ]
+            ( -- Declaration map (all declarations as colored dots)
+              [ renderDeclarationMap state ]
               <> Array.catMaybes
                   [ if isPanelOpen PanelSignatures state
                       then Just (renderSignaturesPanel state)
@@ -219,23 +236,20 @@ renderPanelBar :: forall m. State -> H.ComponentHTML Action ChildSlots m
 renderPanelBar state =
   HH.div
     [ HP.style "display: flex; align-items: center; gap: 2px; padding: 6px 12px; background: #e8e4d8; border-bottom: 1px solid #d8d0bc; flex-shrink: 0;" ]
-    [ HH.span
-        [ HP.style "font-size: 12px; font-weight: 700; color: #555; margin-right: 12px; font-family: 'Courier New', Courier, monospace;" ]
-        [ HH.text $ shortModuleName state.lastInput.moduleName ]
-    , panelToggle "Signatures" PanelSignatures state
-    , panelToggle "Dependencies" PanelDependencies state
-    , panelToggle "Layers" PanelLayers state
-    , panelToggle "Cutpoints" PanelCutpoints state
-    , panelToggle "Concerns" PanelConcerns state
-    , panelToggle "Annotations" PanelAnnotations state
+    [ panelToggle "Signatures" "S" PanelSignatures state
+    , panelToggle "Dependencies" "D" PanelDependencies state
+    , panelToggle "Layers" "L" PanelLayers state
+    , panelToggle "Cutpoints" "X" PanelCutpoints state
+    , panelToggle "Concerns" "C" PanelConcerns state
+    , panelToggle "Annotations" "A" PanelAnnotations state
     , HH.span [ HP.style "flex: 1;" ] []
     , HH.span
         [ HP.style "font-size: 10px; color: #888; white-space: nowrap;" ]
         [ HH.text $ show (Array.length state.lastInput.declarations) <> " declarations" ]
     ]
 
-panelToggle :: forall m. String -> Panel -> State -> H.ComponentHTML Action ChildSlots m
-panelToggle label panel state =
+panelToggle :: forall m. String -> String -> Panel -> State -> H.ComponentHTML Action ChildSlots m
+panelToggle label hotkey panel state =
   let isOpen = isPanelOpen panel state
       style = if isOpen
         then "font-size: 11px; font-weight: 600; color: #333; background: #fff; border: 1px solid #c8c0a8; border-radius: 3px; padding: 3px 10px; cursor: pointer;"
@@ -244,8 +258,11 @@ panelToggle label panel state =
   HH.span
     [ HP.style style
     , HE.onClick \_ -> TogglePanel panel
+    , HP.title $ hotkey <> " to toggle"
     ]
-    [ HH.text label ]
+    [ HH.text label
+    , HH.span [ HP.style "font-size: 9px; color: #bbb; margin-left: 4px;" ] [ HH.text hotkey ]
+    ]
 
 isPanelOpen :: Panel -> State -> Boolean
 isPanelOpen panel state = Set.member panel state.openPanels
@@ -366,6 +383,43 @@ renderAnnotationsPanel state =
 -- =============================================================================
 -- Helpers
 -- =============================================================================
+
+-- | Git corner label — diagonal split rectangle at the junction of blame ribbon and sparkline
+renderGitCorner :: forall m. H.ComponentHTML Action ChildSlots m
+renderGitCorner =
+  HH.div
+    [ HP.style "width: 80px; height: 52px; flex-shrink: 0; background: #e8e0cf; border-bottom: 1px solid #d8d0bc; border-right: 1px solid #d8d0bc; cursor: pointer; position: relative; overflow: hidden;"
+    , HE.onClick \_ -> NavigateToGit
+    ]
+    [ svgElem "svg"
+        [ sa "viewBox" "0 0 80 52"
+        , sa "width" "80", sa "height" "52"
+        , HP.style "display: block;"
+        ]
+        [ -- Diagonal line
+          svgElem "line"
+            [ sa "x1" "0", sa "y1" "0", sa "x2" "80", sa "y2" "52"
+            , sa "stroke" "#c8b890", sa "stroke-width" "0.5"
+            ] []
+        -- "Blame" label (bottom-left triangle, vertical reading)
+        , svgElem "text"
+            [ sa "x" "14", sa "y" "44"
+            , sa "font-size" "8", sa "fill" "#998860"
+            , sa "font-family" "system-ui, sans-serif"
+            , sa "font-weight" "500"
+            , sa "transform" "rotate(-90, 14, 44)"
+            ]
+            [ HH.text "Blame" ]
+        -- "Commits" label (top-right triangle)
+        , svgElem "text"
+            [ sa "x" "42", sa "y" "18"
+            , sa "font-size" "8", sa "fill" "#998860"
+            , sa "font-family" "system-ui, sans-serif"
+            , sa "font-weight" "500"
+            ]
+            [ HH.text "Commits" ]
+        ]
+    ]
 
 shortModuleName :: String -> String
 shortModuleName name =
@@ -569,6 +623,15 @@ handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action ChildS
 handleAction = case _ of
   Initialize -> do
     state <- H.get
+    -- Set up keyboard listener for panel hotkeys
+    win <- liftEffect window
+    let target = Win.toEventTarget win
+    { emitter, listener } <- liftEffect HS.create
+    el <- liftEffect $ ET.eventListener \evt -> case KE.fromEvent evt of
+      Just ke -> HS.notify listener (KeyPressed (KE.key ke))
+      Nothing -> pure unit
+    liftEffect $ ET.addEventListener KET.keydown el false target
+    void $ H.subscribe emitter
     loadModuleData state.lastInput
 
   Receive input -> do
@@ -605,6 +668,15 @@ handleAction = case _ of
           Just name -> findDeclCommit state name
           Nothing -> Nothing
     H.modify_ _ { hoveredDeclName = mName, hoveredCommit = commitHash }
+
+  KeyPressed key -> case key of
+    "s" -> handleAction (TogglePanel PanelSignatures)
+    "d" -> handleAction (TogglePanel PanelDependencies)
+    "l" -> handleAction (TogglePanel PanelLayers)
+    "x" -> handleAction (TogglePanel PanelCutpoints)
+    "c" -> handleAction (TogglePanel PanelConcerns)
+    "a" -> handleAction (TogglePanel PanelAnnotations)
+    _ -> pure unit
 
   NavigateToGit -> do
     state <- H.get

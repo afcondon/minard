@@ -150,7 +150,7 @@ renderConcernGraph state layout =
         [ sa "viewBox" (show layout.viewBox.x <> " " <> show layout.viewBox.y <> " " <> show layout.viewBox.w <> " " <> show layout.viewBox.h)
         , sa "width" "100%"
         , sa "preserveAspectRatio" "xMidYMid meet"
-        , HP.style "display: block; border: 1px solid #d5d0c4; border-radius: 4px; background: #f0ede6; min-height: 300px;"
+        , HP.style "display: block; border: 1px solid #d5d0c4; border-radius: 4px; background: #f0ede6; max-height: 500px;"
         ]
         ( -- Group background circles
           (layout.groups <#> renderGroupBg)
@@ -167,7 +167,7 @@ renderGroupBg :: forall w i. GroupInfo -> HH.HTML w i
 renderGroupBg g =
   svgElem "circle"
     [ sa "cx" (show g.center.x), sa "cy" (show g.center.y)
-    , sa "r" (show (g.radius + 14.0))
+    , sa "r" (show g.radius)
     , sa "fill" (blockColor g.index), sa "fill-opacity" "0.08"
     , sa "stroke" (blockColor g.index), sa "stroke-opacity" "0.2"
     , sa "stroke-width" "1.5"
@@ -176,8 +176,8 @@ renderGroupBg g =
 renderGroupLabel :: forall w i. GroupInfo -> HH.HTML w i
 renderGroupLabel g =
   svgElem "text"
-    [ sa "x" (show g.center.x), sa "y" (show (g.center.y - g.radius - 22.0))
-    , sa "text-anchor" "middle", sa "font-size" "11px"
+    [ sa "x" (show g.center.x), sa "y" (show (g.center.y - g.radius - 14.0))
+    , sa "text-anchor" "middle", sa "font-size" "9px"
     , sa "font-weight" "600"
     , sa "fill" (blockColor g.index), sa "font-family" "system-ui, sans-serif"
     ]
@@ -229,7 +229,7 @@ renderNode state _layout node =
       Nothing -> true
       Just hovered -> hovered == node.name || nodesConnected hovered node.name _layout.edges
     opacity = if isConnected then "1" else "0.2"
-    r = if isHovered then "7" else "5"
+    r = if isHovered then "5" else "3.5"
   in
   svgElem "g" [ sa "cursor" "pointer" ]
     [ svgElem "circle"
@@ -301,7 +301,7 @@ computeLayout analysis =
 
       -- Group radii
       groupRadii = mapWithIndex (\_ ce ->
-        max 25.0 (Number.sqrt (Int.toNumber (Array.length ce.branches)) * 18.0)
+        max 20.0 (Number.sqrt (Int.toNumber (Array.length ce.branches)) * 12.0)
       ) caseExprs
 
       -- Force layout
@@ -323,7 +323,7 @@ computeLayout analysis =
         case groupCenters Array.!! gi of
           Nothing -> Nothing
           Just center ->
-            let r = max 25.0 (Number.sqrt (Int.toNumber (Array.length ce.branches)) * 18.0)
+            let r = max 20.0 (Number.sqrt (Int.toNumber (Array.length ce.branches)) * 12.0)
             in Just { index: gi, functionName: ce.functionName, branchCount: Array.length ce.branches, center, radius: r }
       ) (mapWithIndex Tuple caseExprs)
 
@@ -332,7 +332,7 @@ computeLayout analysis =
         let
           center = fromMaybe { x: centerX, y: centerY } (groupCenters Array.!! gi)
           n = Array.length ce.branches
-          r = max 25.0 (Number.sqrt (Int.toNumber n) * 18.0)
+          r = max 20.0 (Number.sqrt (Int.toNumber n) * 12.0)
         in foldl (\a (Tuple ni branch) ->
           let
             angle = 2.0 * Number.pi * Int.toNumber ni / Int.toNumber (max n 1) - Number.pi / 2.0
@@ -360,8 +360,8 @@ computeLayout analysis =
 
       -- Bounding box
       groupExtents = groups <#> \g ->
-        let r = g.radius + 22.0
-        in { minX: g.center.x - r, maxX: g.center.x + r, minY: g.center.y - r - 16.0, maxY: g.center.y + r }
+        let r = g.radius + 16.0
+        in { minX: g.center.x - r, maxX: g.center.x + r, minY: g.center.y - r - 10.0, maxY: g.center.y + r }
       bbox = foldl (\acc e ->
         { minX: min acc.minX e.minX, maxX: max acc.maxX e.maxX
         , minY: min acc.minY e.minY, maxY: max acc.maxY e.maxY }
@@ -403,8 +403,8 @@ forceLayoutGroups bounds weights radii initial iterations =
                 let dx = ni.x - nj.x
                     dy = ni.y - nj.y
                     dist = max 1.0 (Number.sqrt (dx * dx + dy * dy))
-                    minDist = (fromMaybe 30.0 (radii Array.!! i)) + (fromMaybe 30.0 (radii Array.!! j)) + 20.0
-                    force = if dist < minDist then (minDist - dist) * 0.5 * alpha else 800.0 * alpha / (dist * dist)
+                    minDist = (fromMaybe 30.0 (radii Array.!! i)) + (fromMaybe 30.0 (radii Array.!! j)) + 60.0
+                    force = if dist < minDist then (minDist - dist) * 1.0 * alpha else 1500.0 * alpha / (dist * dist)
                 in { x: acc.x + dx / dist * force, y: acc.y + dy / dist * force, vx: 0.0, vy: 0.0 }
           ) ni (Array.range 0 (n - 1))
         ) nodes
