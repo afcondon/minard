@@ -130,9 +130,8 @@ sceneBreadcrumbs = case _ of
   PkgTreemap pkg      -> [mapsSeg, galaxySeg, solarSeg pkg]
   PkgModuleBeeswarm p -> [mapsSeg, galaxySeg, solarSeg p]
   ModuleStructure p m -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m]
-  ModuleSignatures p m -> [gitSeg, gitPkgSeg p, gitModSeg p m, { kind: "", label: "Signatures", scene: ModuleSignatures p m }]
-  ModuleOverview p m  -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
-                                  , { kind: "", label: "Overview", scene: ModuleOverview p m }]
+  ModuleSignatures p m -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m]
+  ModuleOverview p m  -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m]
   DeclarationDetail p m d -> [mapsSeg, galaxySeg, solarSeg p, planetSeg p m
                                   , { kind: "Decl", label: d, scene: DeclarationDetail p m d }]
   CompareModules p1 m1 _ m2 -> [mapsSeg, galaxySeg, solarSeg p1, { kind: "", label: shortModuleName m1 <> " vs " <> shortModuleName m2, scene: CompareModules p1 m1 p1 m2 }]
@@ -166,7 +165,7 @@ sceneBreadcrumbs = case _ of
     projectsSeg = { kind: "", label: "Projects", scene: ProjectSetup }
     gitSeg = { kind: "", label: "Git", scene: GitOverview }
     gitPkgSeg pkg = { kind: "Package", label: pkg, scene: CommitModuleGrid pkg }
-    gitModSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleSignatures p m }
+    gitModSeg p m = { kind: "Module", label: shortModuleName m, scene: ModuleStructure p m }
     solarSeg pkg = { kind: "SolarSystem", label: pkg, scene: PkgTreemap pkg }
     planetSeg p m = { kind: "Planet", label: shortModuleName m, scene: ModuleStructure p m }
 
