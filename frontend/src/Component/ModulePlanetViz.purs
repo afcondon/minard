@@ -32,6 +32,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Type.Proxy (Proxy(..))
 
+import CE2.Component.ConcernsPanel as ConcernsPanel
 import CE2.Component.CutpointsPanel as CutpointsPanel
 import CE2.Component.LayerDiagramPanel as LayerDiagramPanel
 import CE2.Component.ModuleAnnotationsViz as AnnotationsViz
@@ -72,7 +73,7 @@ type Slot = H.Slot Query Output
 data Query a = NoQuery a
 
 -- | Which panels are currently open
-data Panel = PanelSignatures | PanelDependencies | PanelLayers | PanelCutpoints | PanelAnnotations
+data Panel = PanelSignatures | PanelDependencies | PanelLayers | PanelCutpoints | PanelConcerns | PanelAnnotations
 
 derive instance eqPanel :: Eq Panel
 derive instance ordPanel :: Ord Panel
@@ -82,6 +83,7 @@ type ChildSlots =
   , dependencies :: UsageGraphViz.Slot Unit
   , layers :: LayerDiagramPanel.Slot Unit
   , cutpoints :: CutpointsPanel.Slot Unit
+  , concerns :: ConcernsPanel.Slot Unit
   , annotations :: AnnotationsViz.Slot Unit
   )
 
@@ -96,6 +98,9 @@ _layers = Proxy
 
 _cutpoints :: Proxy "cutpoints"
 _cutpoints = Proxy
+
+_concerns :: Proxy "concerns"
+_concerns = Proxy
 
 _annotations :: Proxy "annotations"
 _annotations = Proxy
@@ -124,6 +129,7 @@ data Action
   | HandleDependenciesOutput UsageGraphViz.Output
   | HandleLayersOutput LayerDiagramPanel.Output
   | HandleCutpointsOutput CutpointsPanel.Output
+  | HandleConcernsOutput ConcernsPanel.Output
   | HandleAnnotationsOutput AnnotationsViz.Output
 
 -- =============================================================================
@@ -197,6 +203,9 @@ render state =
                   , if isPanelOpen PanelCutpoints state
                       then Just (renderCutpointsPanel state)
                       else Nothing
+                  , if isPanelOpen PanelConcerns state
+                      then Just (renderConcernsPanel state)
+                      else Nothing
                   , if isPanelOpen PanelAnnotations state
                       then Just (renderAnnotationsPanel state)
                       else Nothing
@@ -217,6 +226,7 @@ renderPanelBar state =
     , panelToggle "Dependencies" PanelDependencies state
     , panelToggle "Layers" PanelLayers state
     , panelToggle "Cutpoints" PanelCutpoints state
+    , panelToggle "Concerns" PanelConcerns state
     , panelToggle "Annotations" PanelAnnotations state
     , HH.span [ HP.style "flex: 1;" ] []
     , HH.span
@@ -327,6 +337,15 @@ renderCutpointsPanel state =
         , functionCalls: input.functionCalls
         }
         HandleCutpointsOutput
+    ]
+
+renderConcernsPanel :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
+renderConcernsPanel state =
+  HH.div
+    [ HP.style "border-bottom: 2px solid #e8e4d8;" ]
+    [ HH.slot _concerns unit ConcernsPanel.component
+        { moduleName: state.lastInput.moduleName }
+        HandleConcernsOutput
     ]
 
 renderAnnotationsPanel :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
@@ -632,6 +651,10 @@ handleAction = case _ of
 
   HandleCutpointsOutput output -> case output of
     CutpointsPanel.DeclarationClicked declName -> do
+      handleAction (FocusDeclaration (Just declName))
+
+  HandleConcernsOutput output -> case output of
+    ConcernsPanel.DeclarationClicked declName -> do
       handleAction (FocusDeclaration (Just declName))
 
   HandleAnnotationsOutput output -> case output of

@@ -245,10 +245,7 @@ renderHeaderBar state =
                   , onArmSync: ArmSync
                   , onConfirmSync: ConfirmSync
                   }
-              <> [ HH.span
-                     [ HP.style "font-size: 9px; opacity: 0.6;" ]
-                     [ HH.text $ "[" <> Pure.canonicalStateCode state <> "]" ]
-                 ]
+              <> []
             )
         ]
     -- Row 2: contextual controls (hidden when empty)
