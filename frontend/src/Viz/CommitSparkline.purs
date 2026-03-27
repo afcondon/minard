@@ -140,7 +140,7 @@ renderSparkline bars =
       [ svgElem "svg"
           [ sa "viewBox" ("0 0 " <> show vbWidth <> " " <> show vbHeight)
           , sa "preserveAspectRatio" "none"
-          , HP.style "width: 100%; height: 44px; display: block; border-radius: 3px; border: 1px solid #b8ad90; background: #e8e0cf;"
+          , HP.style "width: 100%; height: 52px; display: block; background: #e8e0cf;"
           ]
           ( rects <#> \r ->
               svgElem "rect"

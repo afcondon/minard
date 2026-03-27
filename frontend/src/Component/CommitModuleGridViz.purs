@@ -314,7 +314,7 @@ handleAction = case _ of
 
   ClickModule modName -> do
     state <- H.get
-    H.raise (NavigateToScene (Scene.ModuleSignatures state.packageName modName))
+    H.raise (NavigateToScene (Scene.ModuleStructure state.packageName modName))
 
   LoadMore -> do
     state <- H.get

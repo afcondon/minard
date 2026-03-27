@@ -552,6 +552,7 @@ handleAction = case _ of
   Receive input -> do
     state <- H.get
     let changed = input.moduleName /= state.lastInput.moduleName
+              || Array.length input.declarations /= Array.length state.lastInput.declarations
     H.modify_ _ { lastInput = input }
     when (changed && state.initialized) do
       H.modify_ _ { lanes = [], measuredCells = [], blameData = Nothing, blameLoading = false, moduleSource = Nothing, filePath = Nothing }

@@ -192,7 +192,7 @@ render state =
             ]
             [ if Array.length state.sparklineBars > 0
                 then HH.div
-                  [ HP.style "padding: 4px 16px; background: #f0ece0; border-bottom: 1px solid #d8d0bc;" ]
+                  [ HP.style "background: #f0ece0; border-bottom: 1px solid #d8d0bc;" ]
                   [ Spark.renderSparkline state.sparklineBars ]
                 else HH.div [ HP.style "height: 52px; background: #f0ece0; border-bottom: 1px solid #d8d0bc;" ] []
             ]

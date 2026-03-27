@@ -69,6 +69,7 @@ type Config =
   , cellContents :: CellContents     -- What to render in cells (Circle/Text/Empty)
   , onRectClick :: Maybe (String -> Effect Unit)    -- Click handler for rect → package treemap
   , onCircleClick :: Maybe (String -> Effect Unit)  -- Click handler for circle → neighborhood/SolarSwarm
+  , onModuleClick :: Maybe (String -> String -> Effect Unit)  -- Click handler for module circle (pkgName, moduleName) → ModuleStructure
   , infraLayerThreshold :: Int       -- Hide deps to packages with topoLayer < threshold (0 = show all, 2 = hide layers 0-1)
   , modulesByPackage :: Map String (Array ModuleCircleData)  -- Module data grouped by package name
   , gitStatus :: Maybe GitStatusData                         -- Git status for module coloring
@@ -982,30 +983,52 @@ renderModuleCirclesInCell config colors (PackageRenderData d) =
                       _ -> "1.5"
                     _ -> "0.5"
             in
-              elem Circle
-                [ thunkedNum "cx" cx
-                , thunkedNum "cy" cy
-                , thunkedNum "r" r
-                , thunkedStr "fill" fillColor
-                , thunkedStr "stroke" strokeColor
-                , thunkedStr "stroke-width" strokeW
-                , staticStr "class" "module-circle"
-                ]
-                []
+              let baseCircle = elem Circle
+                    [ thunkedNum "cx" cx
+                    , thunkedNum "cy" cy
+                    , thunkedNum "r" r
+                    , thunkedStr "fill" fillColor
+                    , thunkedStr "stroke" strokeColor
+                    , thunkedStr "stroke-width" strokeW
+                    , staticStr "class" "module-circle"
+                    ]
+                    []
+                  -- Short module name for tooltip (last segment)
+                  shortName = case Array.last (String.split (String.Pattern ".") m.name) of
+                    Just s -> s
+                    Nothing -> m.name
+                  tooltipContent = shortName <> " (" <> show (floor m.loc) <> " LOC)"
+              in case config.onModuleClick of
+                Just handler ->
+                  withBehaviors
+                    [ onClick (handler d.name m.name)
+                    , onCoordinatedHighlightWithTooltip
+                        { identify: "mod:" <> m.name
+                        , classify: \_ -> Neutral
+                        , group: Just "modules"
+                        , tooltip: Just { content: tooltipContent, showWhen: OnHover, borderColor: Nothing }
+                        }
+                    ]
+                    baseCircle
+                Nothing ->
+                  withBehaviors
+                    [ onCoordinatedHighlightWithTooltip
+                        { identify: "mod:" <> m.name
+                        , classify: \_ -> Neutral
+                        , group: Just "modules"
+                        , tooltip: Just { content: tooltipContent, showWhen: OnHover, borderColor: Nothing }
+                        }
+                    ]
+                    baseCircle
           )
           modules
           packed.circles
 
-        -- Wrap in a group with optional click handler
         circlesGroup = elem Group
           [ staticStr "class" "module-circles-pack" ]
           moduleElems
-
-        circlesWithClick = case config.onCircleClick of
-          Just handler -> withBehaviors [ onClick (handler d.name) ] circlesGroup
-          Nothing -> circlesGroup
       in
-        elem Group [] [ circlesWithClick, makeLabel ]
+        elem Group [] [ circlesGroup, makeLabel ]
 
 -- | Truncate name to fit
 truncateName :: Int -> String -> String

@@ -312,6 +312,7 @@ renderTreemap theme packages _heroMode onRectClick = do
         , transitivePackages: Set.empty
         , onRectClick: onRectClick
         , onCircleClick: Nothing  -- No circles in this layer (they're in beeswarm layer)
+        , onModuleClick: Nothing  -- No module circles in beeswarm background
         , infraLayerThreshold: 0  -- Beeswarm background treemap doesn't use highlighting
         , modulesByPackage: Map.empty  -- Not needed for text-only treemap background
         , gitStatus: Nothing

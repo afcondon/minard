@@ -619,28 +619,8 @@ renderScene state =
   ModuleOverview pkgName modName ->
     renderDeprecatedScene "ModuleOverview" pkgName modName
 
-  DeclarationDetail pkgName modName declName ->
-    -- Declaration detail: usage graph is self-contained (fetches own data)
-    -- Declarations and module calls are optional — used for spine and hover
-    let decls = fromMaybe [] (Pure.lookupModuleDeclarations state pkgName modName)
-        modId = state.v2Data >>= \v2 ->
-          Array.find (\m -> m.name == modName && m.package.name == pkgName) v2.modules
-            <#> _.id
-        calls = fromMaybe [] (modId >>= \mid -> Map.lookup mid state.packageCalls)
-        modNameToId = case state.v2Data of
-          Just v2 -> Map.fromFoldable $ v2.modules <#> \m -> Tuple m.name m.id
-          Nothing -> Map.empty
-    in
-    HH.slot _declarationDetailViz unit DeclarationDetailViz.component
-      { packageName: pkgName
-      , moduleName: modName
-      , declarationName: declName
-      , declarations: decls
-      , moduleCalls: calls
-      , allCalls: state.packageCalls
-      , moduleNameToId: modNameToId
-      }
-      HandleDeclarationDetailOutput
+  DeclarationDetail pkgName modName _declName ->
+    renderDeprecatedScene "DeclarationDetail" pkgName modName
 
   ModuleStructure pkgName modName ->
     let decls = fromMaybe [] (Pure.lookupModuleDeclarations state pkgName modName)
@@ -1149,6 +1129,9 @@ handleAction = case _ of
     GalaxyTreemapViz.RectClicked pkgName -> do
       log $ "[SceneCoordinator] GalaxyTreemap rect clicked: " <> pkgName
       handleAction (NavigateTo (PkgTreemap pkgName))
+    GalaxyTreemapViz.ModuleClicked pkgName modName -> do
+      log $ "[SceneCoordinator] GalaxyTreemap module clicked: " <> pkgName <> "/" <> modName
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     GalaxyTreemapViz.PackageHovered mPkgName ->
       H.modify_ _ { hoveredPackage = mPkgName }
 
@@ -1160,19 +1143,19 @@ handleAction = case _ of
       pure unit  -- Future: coordinated hover
     ModuleTreemapEnrichedViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in treemap: " <> pkgName <> "/" <> modName <> "/" <> declName
-      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
 
   HandleModuleOverviewOutput output -> case output of
     ModuleOverviewViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in overview: " <> declName
-      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     ModuleOverviewViz.DeclarationHovered _ ->
       pure unit
 
   HandleModuleStructureOutput output -> case output of
     ModuleStructureViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in signature map: " <> declName
-      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     ModuleStructureViz.AnnotationStatusChanged annId newStatus -> do
       log $ "[SceneCoordinator] Annotation " <> show annId <> " -> " <> newStatus
       void $ liftAff $ Loader.patchAnnotationStatus annId newStatus
@@ -1234,8 +1217,8 @@ handleAction = case _ of
   HandleModulePlanetOutput output -> case output of
     ModulePlanetViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Planet declaration clicked: " <> declName
-      -- Navigate to declaration detail for cross-module clicks
-      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+      -- Navigate to the target module's planet page
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     ModulePlanetViz.AnnotationStatusChanged annId newStatus -> do
       log $ "[SceneCoordinator] Planet annotation " <> show annId <> " -> " <> newStatus
       void $ liftAff $ Loader.patchAnnotationStatus annId newStatus
@@ -1270,7 +1253,7 @@ handleAction = case _ of
   HandleModuleSignaturesOutput output -> case output of
     ModuleSignaturesViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in signatures: " <> declName
-      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     ModuleSignaturesViz.NavigateToStructure -> do
       state <- H.get
       case state.scene of
@@ -1384,7 +1367,7 @@ handleAction = case _ of
       state <- H.get
       case state.scene of
         ModuleAnatomy pkg mod ->
-          handleAction (NavigateTo (DeclarationDetail pkg mod declName))
+          handleAction (NavigateTo (ModuleStructure pkg mod))
         _ -> pure unit
     ModuleAnatomyViz.CompareWith targetMod -> do
       state <- H.get
@@ -1403,7 +1386,7 @@ handleAction = case _ of
           pure unit  -- Shouldn't happen
     DeclarationDetailViz.DeclarationClicked pkgName modName declName -> do
       log $ "[SceneCoordinator] Declaration clicked in detail: " <> declName
-      handleAction (NavigateTo (DeclarationDetail pkgName modName declName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     DeclarationDetailViz.NavigateToModule modName -> do
       log $ "[SceneCoordinator] Navigate to module from detail: " <> modName
       st <- H.get

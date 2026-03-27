@@ -61,6 +61,7 @@ type Input =
 data Output
   = CircleClicked String          -- Circle click → SolarSwarm neighborhood
   | RectClicked String            -- Rect click → PkgTreemap drill-in
+  | ModuleClicked String String   -- Module bubble click (pkgName, moduleName) → ModuleStructure
   | PackageHovered (Maybe String) -- Future: coordinated hover
 
 -- | Slot type for parent component
@@ -85,6 +86,7 @@ data Action
   | Finalize
   | HandleCircleClick String   -- Circle click → neighborhood view
   | HandleRectClick String     -- Rect click → package treemap view
+  | HandleModuleClick String String  -- Module bubble click (pkgName, moduleName)
 
 -- =============================================================================
 -- Component
@@ -200,6 +202,10 @@ handleAction = case _ of
     log $ "[GalaxyTreemapViz] Rect clicked: " <> packageName
     H.raise (RectClicked packageName)
 
+  HandleModuleClick pkgName modName -> do
+    log $ "[GalaxyTreemapViz] Module clicked: " <> pkgName <> "/" <> modName
+    H.raise (ModuleClicked pkgName modName)
+
   Finalize -> do
     log "[GalaxyTreemapViz] Finalizing"
     liftEffect $ Treemap.cleanup C.galaxyTreemapContainer
@@ -216,8 +222,9 @@ renderTreemap input = do
   -- Build click handlers using action listener
   let onCircleClick = makeClickHandler state.actionListener HandleCircleClick
       onRectClick = makeClickHandler state.actionListener HandleRectClick
+      onModuleClick = makeModuleClickHandler state.actionListener HandleModuleClick
 
-  let config = buildTreemapConfigWithHandlers input onRectClick onCircleClick
+  let config = buildTreemapConfigWithHandlers input onRectClick onCircleClick onModuleClick
 
   log $ "[GalaxyTreemapViz] Rendering treemap with " <> show (Array.length input.packages)
       <> " packages, threshold=" <> show input.infraLayerThreshold
@@ -252,6 +259,7 @@ buildTreemapConfig input =
   , cellContents: CellModuleCircles
   , onRectClick: Nothing
   , onCircleClick: Nothing
+  , onModuleClick: Nothing
   , infraLayerThreshold: input.infraLayerThreshold
   , modulesByPackage: buildModulesByPackage input.modules
   , gitStatus: input.gitStatus
@@ -261,8 +269,8 @@ buildTreemapConfig input =
   }
 
 -- | Build treemap config from input with click handlers
-buildTreemapConfigWithHandlers :: Input -> Maybe (String -> Effect Unit) -> Maybe (String -> Effect Unit) -> Treemap.Config
-buildTreemapConfigWithHandlers input onRectClick onCircleClick =
+buildTreemapConfigWithHandlers :: Input -> Maybe (String -> Effect Unit) -> Maybe (String -> Effect Unit) -> Maybe (String -> String -> Effect Unit) -> Treemap.Config
+buildTreemapConfigWithHandlers input onRectClick onCircleClick onModuleClick =
   { containerSelector: C.galaxyTreemapContainer
   , width: 1650.0
   , height: 900.0
@@ -272,6 +280,7 @@ buildTreemapConfigWithHandlers input onRectClick onCircleClick =
   , cellContents: CellModuleCircles
   , onRectClick: onRectClick
   , onCircleClick: onCircleClick
+  , onModuleClick: onModuleClick
   , infraLayerThreshold: input.infraLayerThreshold
   , modulesByPackage: buildModulesByPackage input.modules
   , gitStatus: input.gitStatus
@@ -285,6 +294,12 @@ makeClickHandler :: Maybe (HS.Listener Action) -> (String -> Action) -> Maybe (S
 makeClickHandler mListener mkAction = case mListener of
   Just listener -> Just $ \packageName ->
     HS.notify listener (mkAction packageName)
+  Nothing -> Nothing
+
+makeModuleClickHandler :: Maybe (HS.Listener Action) -> (String -> String -> Action) -> Maybe (String -> String -> Effect Unit)
+makeModuleClickHandler mListener mkAction = case mListener of
+  Just listener -> Just $ \pkgName modName ->
+    HS.notify listener (mkAction pkgName modName)
   Nothing -> Nothing
 
 -- =============================================================================
