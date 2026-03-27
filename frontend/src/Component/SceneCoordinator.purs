@@ -826,8 +826,16 @@ renderScene state =
   ProjectAnatomy ->
     case state.packageSetData of
       Just psData ->
-        HH.slot _projectAnatomyViz unit ProjectAnatomyViz.component
-          { packages: psData.packages }
+        let analyzedPkgs = case state.v2Data of
+              Just v2 ->
+                -- A package is "analyzed" if it has modules with function call data loaded
+                let modsWithCalls = Array.filter (\m ->
+                      Map.member m.id state.packageCalls
+                    ) v2.modules
+                in Array.nub $ map (_.package >>> _.name) modsWithCalls
+              Nothing -> []
+        in HH.slot _projectAnatomyViz unit ProjectAnatomyViz.component
+          { packages: psData.packages, analyzedPackages: analyzedPkgs }
           HandleProjectAnatomyOutput
       Nothing ->
         HH.div
@@ -1342,10 +1350,13 @@ handleAction = case _ of
   HandleProjectAnatomyOutput output -> case output of
     ProjectAnatomyViz.PackageClicked pkgName -> do
       log $ "[SceneCoordinator] Anatomy package clicked: " <> pkgName
+      handleAction (NavigateTo (PkgTreemap pkgName))
+    ProjectAnatomyViz.PackageAnatomyClicked pkgName -> do
+      log $ "[SceneCoordinator] Anatomy deep-dive clicked: " <> pkgName
       handleAction (NavigateTo (PackageAnatomy pkgName))
     ProjectAnatomyViz.ModuleClicked pkgName modName -> do
       log $ "[SceneCoordinator] Anatomy module clicked: " <> modName
-      handleAction (NavigateTo (ModuleAnatomy pkgName modName))
+      handleAction (NavigateTo (ModuleStructure pkgName modName))
     ProjectAnatomyViz.NavigateToGalaxy -> do
       log "[SceneCoordinator] Anatomy → Galaxy"
       handleAction (NavigateTo GalaxyTreemap)

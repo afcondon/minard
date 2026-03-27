@@ -38,11 +38,13 @@ import Halogen.HTML.Events as HE
 
 type Input =
   { packages :: Array Loader.PackageSetPackage
+  , analyzedPackages :: Array String  -- packages with full analysis (declarations loaded)
   }
 
 data Output
   = PackageClicked String
   | ModuleClicked String String  -- packageName, moduleName
+  | PackageAnatomyClicked String -- deep-dive for analyzed packages
   | NavigateToGalaxy
   | NavigateToProjects
 
@@ -71,6 +73,7 @@ derive instance eqAnatomyView :: Eq AnatomyView
 type State =
   { packages :: Array Loader.PackageSetPackage
   , unusedPackages :: Array Loader.PackageSetPackage
+  , analyzedPackages :: Array String
   , stats :: AnatomyStats
   , handle :: Maybe Beeswarm.BeeswarmHandle
   , actionListener :: Maybe (HS.Listener Action)
@@ -84,6 +87,7 @@ data Action
   | Receive Input
   | Finalize
   | HandlePackageClick String
+  | HandlePackageAnatomyClick String
   | HandleModuleClick String
   | GoToGalaxy
   | GoToProjects
@@ -111,6 +115,7 @@ initialState :: Input -> State
 initialState input =
   { packages: input.packages
   , unusedPackages: []
+  , analyzedPackages: input.analyzedPackages
   , stats: computeStats input.packages 0
   , handle: Nothing
   , actionListener: Nothing
@@ -210,9 +215,23 @@ render state =
                     <> "the transitive infrastructure that supports them \x2014 the deeper "
                     <> "in the graph, the lighter the shade."
                 ]
-            , HH.p
-                [ HP.style "margin: 0; color: #888; font-style: italic;" ]
-                [ HH.text "Click any package to explore its modules." ]
+            , if Array.length state.analyzedPackages > 0
+                then HH.p
+                  [ HP.style "margin: 4px 0 0; padding: 8px 12px; background: #f0ece0; border-radius: 4px; border-left: 3px solid #d4a017;" ]
+                  ( [ HH.span [ HP.style "color: #555;" ]
+                        [ HH.text "Package anatomy available for " ]
+                    ]
+                    <> Array.intercalate [ HH.text ", " ]
+                        (state.analyzedPackages <#> \name ->
+                          [ HH.span
+                              [ HP.style "font-weight: 600; color: #2563eb; cursor: pointer;"
+                              , HE.onClick \_ -> HandlePackageAnatomyClick name
+                              ]
+                              [ HH.text name ]
+                          ]
+                        )
+                  )
+                else HH.text ""
             ]
           else
             [ HH.p
@@ -432,6 +451,7 @@ handleAction = case _ of
         totalModulesOld = foldl (\acc p -> acc + p.moduleCount) 0 state.packages
         dataChanged = Array.length input.packages /= Array.length state.packages
                    || totalModulesNew /= totalModulesOld
+    H.modify_ _ { analyzedPackages = input.analyzedPackages }
     when dataChanged do
       let stats = computeStats input.packages (Array.length state.unusedPackages)
       H.modify_ _ { packages = input.packages, stats = stats }
@@ -440,6 +460,10 @@ handleAction = case _ of
   HandlePackageClick pkgName -> do
     log $ "[ProjectAnatomyViz] Package clicked: " <> pkgName
     H.raise (PackageClicked pkgName)
+
+  HandlePackageAnatomyClick pkgName -> do
+    log $ "[ProjectAnatomyViz] Package anatomy clicked: " <> pkgName
+    H.raise (PackageAnatomyClicked pkgName)
 
   HandleModuleClick modName -> do
     log $ "[ProjectAnatomyViz] Module clicked: " <> modName

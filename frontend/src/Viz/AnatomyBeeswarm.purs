@@ -33,8 +33,9 @@ import Effect.Class.Console (log)
 import Effect.Ref as Ref
 
 -- HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onClick)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlightWithTooltip, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
+import Hylograph.Internal.Behavior.Types (TooltipTrigger(..), HighlightClass(..))
 import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Simulation.HATS (tickUpdate)
 
@@ -425,11 +426,30 @@ createNodesTree config nodes =
 nodeHATS :: Config -> AnatomyNode -> Tree
 nodeHATS config node =
   let
+    isApp = node.pkg.bundleModule /= Nothing
+
     clickBehaviors = case config.onClick of
       Just handler -> [ onClick (handler node.pkg.name) ]
       Nothing -> []
 
-    isApp = node.pkg.bundleModule /= Nothing
+    cursor = "pointer"
+
+    -- Tooltip with package info
+    catLabel = case node.category of
+      Workspace -> "workspace"
+      DirectDep -> "direct dependency"
+      Transitive -> "transitive dependency"
+    tooltipContent = node.pkg.name <> " \x00B7 " <> show node.pkg.moduleCount <> " modules, "
+      <> show node.pkg.totalLoc <> " LOC \x00B7 " <> catLabel
+
+    tooltipBehavior =
+      [ onCoordinatedHighlightWithTooltip
+          { identify: "pkg:" <> node.pkg.name
+          , classify: \_ -> Neutral
+          , group: Just "anatomy-packages"
+          , tooltip: Just { content: tooltipContent, showWhen: OnHover, borderColor: Nothing }
+          }
+      ]
   in
     elem Group
       [ thunkedStr "transform" ("translate(" <> show node.x <> "," <> show node.y <> ")")
@@ -441,7 +461,7 @@ nodeHATS config node =
         -- Workspace apps: rounded rect; others: circle
         if node.category == Workspace && isApp
         then
-          [ withBehaviors clickBehaviors $
+          [ withBehaviors (clickBehaviors <> tooltipBehavior) $
               elem Rect
                 [ thunkedNum "x" (-(node.r * 0.8))
                 , thunkedNum "y" (-(node.r * 0.6))
@@ -452,13 +472,13 @@ nodeHATS config node =
                 , thunkedStr "fill" node.color
                 , thunkedStr "stroke" node.strokeColor
                 , thunkedNum "stroke-width" 1.5
-                , staticStr "cursor" "pointer"
+                , thunkedStr "cursor" cursor
                 , staticStr "class" "anatomy-circle app-rect"
                 ]
                 []
           ]
         else
-          [ withBehaviors clickBehaviors $
+          [ withBehaviors (clickBehaviors <> tooltipBehavior) $
               elem Circle
                 [ staticStr "cx" "0"
                 , staticStr "cy" "0"
@@ -466,27 +486,11 @@ nodeHATS config node =
                 , thunkedStr "fill" node.color
                 , thunkedStr "stroke" node.strokeColor
                 , thunkedNum "stroke-width" (if node.category == Workspace then 1.5 else 0.5)
-                , staticStr "cursor" "pointer"
+                , thunkedStr "cursor" cursor
                 , staticStr "class" "anatomy-circle"
                 ]
                 []
           ]
-      <>
-      [ -- Package name label (workspace always visible, others on hover via CSS)
-        withBehaviors clickBehaviors $
-          elem Text
-            [ staticStr "x" "0"
-            , thunkedStr "y" (show (node.r + 12.0))
-            , staticStr "text-anchor" "middle"
-            , staticStr "font-size" "11"
-            , staticStr "font-family" "'Courier New', monospace"
-            , staticStr "fill" "#555"
-            , staticStr "cursor" "pointer"
-            , thunkedStr "class" (if node.category == Workspace then "anatomy-label anatomy-label-always" else "anatomy-label")
-            , thunkedStr "textContent" node.pkg.name
-            ]
-            []
-      ]
       )
 
 -- =============================================================================

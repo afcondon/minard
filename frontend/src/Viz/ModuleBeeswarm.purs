@@ -48,8 +48,9 @@ import Effect.Class.Console (log)
 import Effect.Ref as Ref
 
 -- PSD3 HATS Imports
-import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onClick)
+import Hylograph.HATS (Tree, elem, staticStr, staticNum, thunkedStr, thunkedNum, forEach, withBehaviors, onCoordinatedHighlightWithTooltip, onClick)
 import Hylograph.HATS.InterpreterTick (rerender, clearContainer)
+import Hylograph.Internal.Behavior.Types (TooltipTrigger(..), HighlightClass(..))
 import Hylograph.Internal.Element.Types (ElementType(..))
 import Hylograph.Simulation.HATS (tickUpdate)
 
@@ -1003,6 +1004,16 @@ anatomyModuleNodeHATS config node =
       Nothing -> []
 
     shortName = lastSegment node.mod.name
+    locStr = show (fromMaybe 0 node.mod.loc)
+    tooltipContent = shortName <> " \x00B7 " <> node.pkgName <> " \x00B7 " <> locStr <> " LOC"
+    tooltipBehavior =
+      [ onCoordinatedHighlightWithTooltip
+          { identify: "mod:" <> node.mod.name
+          , classify: \_ -> Neutral
+          , group: Just "anatomy-modules"
+          , tooltip: Just { content: tooltipContent, showWhen: OnHover, borderColor: Nothing }
+          }
+      ]
   in
     elem Group
       [ thunkedStr "transform" ("translate(" <> show node.x <> "," <> show node.y <> ")")
@@ -1011,7 +1022,7 @@ anatomyModuleNodeHATS config node =
       , thunkedStr "data-name" node.mod.name
       , thunkedStr "data-package" node.pkgName
       ]
-      [ withBehaviors clickBehaviors $
+      [ withBehaviors (clickBehaviors <> tooltipBehavior) $
           elem Circle
             [ staticStr "cx" "0"
             , staticStr "cy" "0"
