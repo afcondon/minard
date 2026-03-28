@@ -10,77 +10,89 @@ Named for [Charles Joseph Minard](https://en.wikipedia.org/wiki/Charles_Joseph_M
 
 Point Minard at a PureScript workspace. It scans your source, parses every module, resolves the full dependency graph from your lock file, and loads everything into a DuckDB database. Then you explore.
 
-The frontend is a single-page Halogen app with 13 interconnected views. Navigation follows a "Powers of Ten" pattern — start at the full package universe, drill into a package, into a module, into a declaration, down to individual call sites. Each level answers different questions.
+The frontend is a single-page Halogen app with interconnected views across four lenses (Maps, Reports, Anatomy, Git) at three depth levels (Project, Package, Module). Navigation follows a "Powers of Ten" pattern — start at the full package universe, drill into a package, into a module, into individual declarations. Each level answers different questions.
 
 ### Views
 
-| Level | View | What you see |
-|-------|------|--------------|
-| Universe | Galaxy Treemap | Every package in your dependency set, sized by LOC, colored by namespace or cluster |
-| Universe | Galaxy Beeswarm | Same packages arranged by topological layer, filterable by scope |
-| Universe | Project Anatomy | Your workspace vs. direct vs. transitive deps, with colored spago.yaml blocks |
-| Neighborhood | Solar Swarm | Bubble-packed modules within packages |
-| Package | Package Treemap | Modules as cells in a treemap, with enriched circle-packed declarations inside |
-| Package | Module Beeswarm | Modules arranged by internal dependency depth |
-| Module | Module Signature Map | Every exported declaration with full rendered type signatures (via [sigil](https://github.com/afcondon/purescript-sigil)) |
-| Module | Module Overview | Bubble pack + declaration listing |
-| Declaration | Declaration Detail | Arc diagram showing call relationships, purity coloring |
-| Cross-cutting | Type Class Grid | All type classes with method counts, instance counts, inheritance |
-| Cross-cutting | Annotation Report | AI and human annotations on every module, threaded discussion |
-| Cross-cutting | Project Management | Onboard new projects, validate prerequisites, trigger loader |
+| Level | Lens | View | What you see |
+|-------|------|------|--------------|
+| Project | Maps | Galaxy Treemap | Every package as a rectangle with module bubbles inside — two levels of structure, each clickable |
+| Project | Reports | Package Report | AI-generated quality observations for each module, with human review workflow |
+| Project | Anatomy | Project Anatomy | Your dependency universe as a force-directed beeswarm — workspace, direct deps, transitive deps |
+| Project | Git | Git Overview | Commit activity across all modules, showing where development energy is concentrated |
+| Package | Maps | Module Treemap | Modules as rectangles, declarations as bubbles — hover for tooltips, click to drill in. Toggle overlays for git status, reachability, purity, clustering, coupling, change frequency, co-change, and cross-module call links |
+| Package | Reports | Annotation Report | AI and human annotations across all modules, filterable by status, kind, and thread |
+| Package | Anatomy | Package Anatomy | Biconnected component decomposition revealing structural blocks and bridges |
+| Package | Git | Commit Grid | Per-module commit history as a dot-matrix heatmap, showing co-change patterns |
+| Module | All | Module Planet | Unified module view combining signatures, dependencies, layers, concerns, cutpoints, annotations, blame, and sparkline — all as togglable panels with keyboard shortcuts |
+
+### Module Planet
+
+The integrated module page (Module Planet) merges what were previously separate views into a single panel-based layout:
+
+- **Signatures (S)** — type signatures with blame-age coloring, click to focus
+- **Dependencies (D)** — cross-module call graph for the focused declaration
+- **Layers (L)** — call hierarchy organized into dependency layers
+- **Cutpoints (X)** — articulation points and bridges in the module's call graph
+- **Concerns (C)** — declarations clustered by shared calling patterns
+- **Annotations (A)** — AI and human observations with threaded discussion
+
+Each panel toggles independently via button or hotkey. The blame ribbon and commit sparkline are always visible.
 
 ### Interaction
 
 - **Click** any package, module, or declaration to drill down
-- **Hold R** on any treemap for reachability overlay — see which modules are actually used
-- **Hold P** for purity overlay — blue for pure, amber for effectful
-- **Color modes** on treemaps: namespace, topological layer, community cluster
-- **Search** with typeahead across declarations
+- **Hover** module bubbles in the Galaxy Treemap for tooltips showing module name and LOC
+- **U** on the Module Treemap to toggle cross-module dependency links
+- **R** for reachability overlay — which modules are actually used from the entry point
+- **P** for purity overlay — blue for pure, amber for effectful
+- **G** for git status, **H** for change frequency, **K** for clusters, **C** for coupling, **X** for co-change
+- **O** for source overlay — registry vs local vs workspace packages
+- **Search** with typeahead across declarations, modules, and packages
 
 ## Current State
 
-**Pre-release. Works locally. PureScript only.**
+**Pre-release / technology preview. Works locally. PureScript only.**
 
-The tool indexes its own codebase (117 packages, 864 modules) and navigates fluidly between all 13 views. The annotation system supports AI-generated module summaries with human review and threaded discussion. Project onboarding works end-to-end from the browser.
+The tool indexes its own codebase (437 packages in the dependency universe, 81 workspace modules, 34k LOC) and navigates fluidly between all views. The annotation system supports AI-generated module summaries with human review and threaded discussion. All 81 workspace modules have AI-generated summary annotations.
 
-What's not done: no hosted demo, no install story beyond "clone and build," no support for projects outside the local filesystem. The database schema is stable but not documented for external use.
+What's not done: no hosted demo, no install story beyond "clone and build," no support for languages other than PureScript. The database schema is stable but not documented for external use.
 
 ## Architecture
 
 ```
 minard/
-├── frontend/        23k LOC PureScript — Halogen app, Hylograph visualizations
+├── frontend/        34k LOC PureScript — Halogen app, Hylograph visualizations
 ├── server/           3k LOC PureScript/JS — HTTPurple REST API over DuckDB
 ├── minard-loader/    7k LOC Rust — scans PureScript workspaces, loads DuckDB
-├── database/         DuckDB file (schema v3.4)
+├── database/         DuckDB file
 ├── vscode-extension/ Jump between visualization and source
 ├── site-explorer/    Route analysis for Halogen SPAs
-└── tools/            CLI utilities (minard-reach, minard-annotate)
+└── docs/skills/      Claude Code skills (annotate)
 ```
 
 ### Frontend (PureScript + Halogen + Hylograph)
 
-21 visualization modules using [Hylograph](https://github.com/afcondon/hylograph) — a PureScript visualization library built on D3 with a declarative AST (HATS) for bindings, selections, transitions, and force simulations. Type signatures rendered by [sigil](https://github.com/afcondon/purescript-sigil).
+81 modules using [Hylograph](https://github.com/afcondon/hylograph) — a PureScript visualization library built on D3 with a declarative AST (HATS) for bindings, selections, transitions, and force simulations. Type signatures rendered by [sigil](https://github.com/afcondon/purescript-sigil).
 
 ### Server (PureScript + HTTPurple)
 
 REST API serving package, module, declaration, import, and annotation data from DuckDB. Runs as a Node.js process.
 
 Key endpoints:
+- `/api/v2/stats` — project-wide statistics (packages, modules, declarations, calls)
 - `/api/v2/packages` — packages with stats, dependencies, topological layers
-- `/api/v2/modules/:pkg` — modules with import counts, LOC, content hashes
-- `/api/v2/declarations/:pkg/:module` — declarations with type signatures, call data
+- `/api/v2/modules` — modules with LOC, declaration counts, package info
 - `/api/v2/all-imports`, `/api/v2/all-calls` — bulk graphs for cross-package analysis
-- `/api/v2/annotations` — AI/human annotations with threading
+- `/api/v2/annotations` — AI/human annotations with threading and review status
+- `/api/v2/module-source` — read module source files (for AI annotation)
+- `/api/v2/git/blame`, `/api/v2/git/commit-files` — git history and blame data
+- `/api/v2/report` — generated markdown codebase report
 - `/api/v2/projects/*` — project management (list, validate, load, delete)
 
 ### Loader (Rust)
 
-Scans a PureScript workspace: parses `spago.yaml` and `spago.lock`, reads compiler output (`docs.json`, `externs.json`), resolves the registry snapshot, computes topological layers, extracts function calls, and bulk-loads everything into DuckDB via the Appender API. Full scan of a 117-package workspace runs in ~3 seconds.
-
-### VS Code Extension
-
-Bridges the visualization and the editor. Jump from a declaration view to the source line, open a package folder, or open a module file. Planned: navigation from editor to visualization (select a symbol, see it in context).
+Scans a PureScript workspace: parses `spago.yaml` and `spago.lock`, reads compiler output (`docs.json`, `externs.json`), resolves the registry snapshot, computes topological layers, extracts function calls, and bulk-loads everything into DuckDB via the Appender API. Full scan of a 437-package workspace runs in ~3 seconds.
 
 ### Database (DuckDB)
 
@@ -89,6 +101,13 @@ Columnar analytics database. Schema supports multiple projects and snapshots. Ta
 ## Running Locally
 
 Prerequisites: PureScript toolchain (spago, purs), Node.js, Rust toolchain (for the loader).
+
+```bash
+make bootstrap    # check prereqs, build everything, self-scan
+make start        # start server (port 3000) + frontend (port 3001)
+```
+
+Or manually:
 
 ```bash
 # Build the loader
@@ -111,13 +130,13 @@ cd frontend && npx serve public -p 3001
 
 Open http://localhost:3001.
 
-Alternatively, skip the loader and use the browser's project management page to onboard a project after starting the server with an empty database.
-
 ## AI Collaboration
 
-Minard's annotation system is designed for dialogue between AI and human developers. AI agents read source code and write structured annotations (module summaries, quality observations, architecture notes). Humans review, confirm, dispute, or extend with their own context. Each annotation is threaded — replies form a conversation, and disagreements surface where code structure doesn't match architectural intent.
+Minard's annotation system is designed for dialogue between AI and human developers. AI agents read source code via the API and write structured annotations — module summaries, quality observations, architecture notes, coupling analysis. Humans review, confirm, dispute, or extend with their own context. Each annotation is threaded — replies form a conversation, and disagreements surface where code structure doesn't match architectural intent.
 
-The annotation API is REST, so any tool that can `curl` can participate. A Claude Code skill (`/annotate`) is included for generating and reviewing annotations from the CLI.
+The full structural database is available via REST API. An AI agent can query module dependencies, find articulation points, trace call graphs, read prior annotations, and get module summaries — the same data the visualizations use — without reading a single source file.
+
+A Claude Code skill (`/annotate`) is included for generating and reviewing annotations from the CLI. See `docs/skills/annotate.md`.
 
 ## Design Principles
 
@@ -125,6 +144,7 @@ The annotation API is REST, so any tool that can `curl` can participate. A Claud
 2. **CLI + Viz.** The AI needs queryable data. The human needs pictures. Same database, different interfaces.
 3. **Declarative.** Visualizations describe what, not how. Hylograph's HATS AST handles bindings and transitions.
 4. **Multi-scale.** No single view suffices. Fluid navigation across levels is the core interaction.
+5. **AI as participant.** Cached structural analysis in the database means AI agents don't re-derive understanding from source every conversation.
 
 ## License
 
