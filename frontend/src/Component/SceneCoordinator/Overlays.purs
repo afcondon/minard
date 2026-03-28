@@ -16,6 +16,7 @@ module CE2.Component.SceneCoordinator.Overlays
   , handleTogglePurityPeek
   , handleToggleCouplingPeek
   , handleToggleSourcePeek
+  , handleToggleDependencyLinksPeek
   , handleOverlayPeekOn
   , handleOverlayPeekOff
   , computeAndStoreClusters
@@ -235,6 +236,11 @@ handleToggleSourcePeek = do
   state <- H.get
   H.modify_ _ { sourcePeek = not state.sourcePeek }
 
+handleToggleDependencyLinksPeek :: forall m. MonadAff m => H.HalogenM State Action Slots Output m Unit
+handleToggleDependencyLinksPeek = do
+  state <- H.get
+  H.modify_ _ { dependencyLinksPeek = not state.dependencyLinksPeek }
+
 -- =========================================================================
 -- Momentary Keyboard Peeks (hold key = show overlay, release = revert)
 -- Radio behavior: activating one clears all others
@@ -286,6 +292,9 @@ handleOverlayPeekOn k = do
       "o" -> do
         -- Source overlay toggles independently (composes with other overlays)
         H.modify_ _ { sourcePeek = not state.sourcePeek }
+      "u" -> do
+        -- Dependency links toggle independently (composes with other overlays)
+        H.modify_ _ { dependencyLinksPeek = not state.dependencyLinksPeek }
       "x" -> do
         H.modify_ _ { colorMode = CoChangeCluster }
         when (state.coChangeClusterData == Nothing) $ case state.scene of

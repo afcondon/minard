@@ -141,6 +141,7 @@ initialState input =
   , complexityData: Nothing
   , complexityPeek: false
   , sourcePeek: true
+  , dependencyLinksPeek: false
   , changeFrequencyData: Nothing
   , coChangeClusterData: Nothing
   , sizeByChangeFrequency: false
@@ -266,6 +267,7 @@ renderHeaderBar state =
                   , purityPeek: state.purityPeek
                   , complexityPeek: state.complexityPeek
                   , sourcePeek: state.sourcePeek
+                  , dependencyLinksPeek: state.dependencyLinksPeek
                   }
                   { onNavigateTo: NavigateTo
                   , onSetViewMode: SetViewMode
@@ -279,6 +281,7 @@ renderHeaderBar state =
                   , onTogglePurity: TogglePurityPeek
                   , onToggleCoupling: ToggleCouplingPeek
                   , onToggleSource: ToggleSourcePeek
+                  , onToggleDependencyLinks: ToggleDependencyLinksPeek
                   }
               )
           ]
@@ -559,6 +562,7 @@ renderScene state =
                   , changeFrequencyData: state.changeFrequencyData
                   , coChangeClusterData: state.coChangeClusterData
                   , sizeByChangeFrequency: state.sizeByChangeFrequency
+                  , showDependencyLinks: state.dependencyLinksPeek
                   }
                   HandleModuleTreemapOutput
               Nothing ->
@@ -884,7 +888,7 @@ handleAction = case _ of
     { emitter: keyEmitter, listener: keyListener } <- liftEffect HS.create
     void $ H.subscribe keyEmitter
 
-    let overlayKeys = ["c", "g", "h", "k", "o", "p", "r", "x"]
+    let overlayKeys = ["c", "g", "h", "k", "o", "p", "r", "u", "x"]
         -- Ignore key events when modifier keys are held (Cmd, Ctrl, Shift, Alt)
         -- This prevents Cmd-Shift-4 (screenshot) from triggering overlays
         hasModifier ke = metaKey ke || ctrlKey ke || shiftKey ke || altKey ke
@@ -1454,6 +1458,7 @@ handleAction = case _ of
   TogglePurityPeek -> Overlays.handleTogglePurityPeek
   ToggleCouplingPeek -> Overlays.handleToggleCouplingPeek
   ToggleSourcePeek -> Overlays.handleToggleSourcePeek
+  ToggleDependencyLinksPeek -> Overlays.handleToggleDependencyLinksPeek
   OverlayPeekOn k -> Overlays.handleOverlayPeekOn k
   OverlayPeekOff -> Overlays.handleOverlayPeekOff
 

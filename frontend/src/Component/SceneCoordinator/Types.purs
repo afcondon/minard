@@ -488,6 +488,9 @@ type State =
     -- Source overlay (shows registry vs local vs workspace)
   , sourcePeek :: Boolean
 
+    -- Dependency links overlay (show cross-module call lines in treemap)
+  , dependencyLinksPeek :: Boolean
+
     -- Change frequency data (lazy loaded from git commit history)
   , changeFrequencyData :: Maybe (Map.Map String Number)
 
@@ -566,6 +569,7 @@ data Action
   | TogglePurityPeek                     -- Click toggle for purity peek
   | ToggleCouplingPeek                   -- Click toggle for coupling peek
   | ToggleSourcePeek                    -- Click toggle for source overlay (registry/local/workspace)
+  | ToggleDependencyLinksPeek           -- Click toggle for dependency links overlay
   -- Momentary keyboard peeks (hold key = show, release = revert)
   | OverlayPeekOn String                  -- Key pressed — activate overlay by key name
   | OverlayPeekOff                        -- Any overlay key released — revert to default

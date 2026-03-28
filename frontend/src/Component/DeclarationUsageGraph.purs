@@ -147,25 +147,22 @@ render state = case state.loadState of
 renderUsageGraph :: forall m. Input -> Loader.DeclarationUsage -> Maybe (Set.Set String) -> H.ComponentHTML Action () m
 renderUsageGraph input usage highlightSet =
   HH.div
-    [ HP.style "display: flex; align-items: stretch; width: 100%; height: 100%; font-family: 'Courier New', Courier, monospace;" ]
-    [ -- Left pane: callers
-      HH.div
-        [ HP.style "flex: 1; overflow-x: auto; overflow-y: auto; display: flex; justify-content: flex-end;" ]
-        [ HH.div
-            [ HP.style "display: flex; align-items: stretch;" ]
+    [ HP.style "width: 100%; height: 100%; overflow-x: auto; overflow-y: auto;" ]
+    [ HH.div
+        [ HP.style "display: flex; align-items: stretch; min-width: min-content; margin: 0 auto; font-family: 'Courier New', Courier, monospace; height: 100%; justify-content: center;" ]
+        [ -- Left pane: callers
+          HH.div
+            [ HP.style "display: flex; align-items: stretch; justify-content: flex-end; flex-shrink: 0;" ]
             callerColumns
-        ]
 
-    -- Center: module spine (or single focus for cross-package)
-    , if Array.null input.declarations
-        then focusColumnSingle
-        else focusColumnSpine
+        -- Center: module spine (or single focus for cross-package)
+        , if Array.null input.declarations
+            then focusColumnSingle
+            else focusColumnSpine
 
-    -- Right pane: callees
-    , HH.div
-        [ HP.style "flex: 1; overflow-x: auto; overflow-y: auto; display: flex; justify-content: flex-start;" ]
-        [ HH.div
-            [ HP.style "display: flex; align-items: stretch;" ]
+        -- Right pane: callees
+        , HH.div
+            [ HP.style "display: flex; align-items: stretch; justify-content: flex-start; flex-shrink: 0;" ]
             calleeColumns
         ]
     ]

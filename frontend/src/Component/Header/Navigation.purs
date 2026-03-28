@@ -70,6 +70,7 @@ type Row2State =
   , purityPeek :: Boolean
   , complexityPeek :: Boolean
   , sourcePeek :: Boolean
+  , dependencyLinksPeek :: Boolean
   }
 
 type Row2Actions i =
@@ -87,6 +88,7 @@ type Row2Actions i =
   , onTogglePurity :: i
   , onToggleCoupling :: i
   , onToggleSource :: i
+  , onToggleDependencyLinks :: i
   }
 
 -- | Whether Row 2 should be rendered for this scene
@@ -115,7 +117,7 @@ renderRow2 state actions =
 
     -- Package treemap: all overlays, alphabetical
     PkgTreemap _pkg ->
-      overlayGroup [ changesOverlay, clusterOverlay, coChangeOverlay, couplingOverlay, gitOverlay, purityOverlay, reachOverlay ]
+      overlayGroup [ changesOverlay, clusterOverlay, coChangeOverlay, couplingOverlay, depLinksOverlay, gitOverlay, purityOverlay, reachOverlay ]
 
     PkgModuleBeeswarm _pkg ->
       overlayGroup [ changesOverlay, clusterOverlay, coChangeOverlay, couplingOverlay, gitOverlay, purityOverlay, reachOverlay ]
@@ -170,6 +172,10 @@ renderRow2 state actions =
   reachOverlay :: HH.HTML w i
   reachOverlay = overlayButton "Reach" "R" actions.onToggleReachability
     (state.reachabilityPeek || state.colorMode == Reachability)
+
+  depLinksOverlay :: HH.HTML w i
+  depLinksOverlay = overlayButton "Uses" "U" actions.onToggleDependencyLinks
+    state.dependencyLinksPeek
 
   sourceOverlay :: HH.HTML w i
   sourceOverlay = overlayButton "Source" "O" actions.onToggleSource

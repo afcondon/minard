@@ -85,6 +85,7 @@ type Config =
   , changeFrequencyData :: Maybe (Map String Number)  -- Normalized change frequency per module (0.0–1.0)
   , coChangeClusterData :: Maybe (Map String Int)  -- Co-change community index per module
   , sizeByChangeFrequency :: Boolean  -- When true, treemap area = change frequency instead of LOC
+  , showDependencyLinks :: Boolean   -- When true, show cross-module call links as orange curves
   }
 
 -- | Module with computed treemap position
@@ -713,11 +714,14 @@ buildEnrichedTreemapTree config enriched =
       , staticStr "preserveAspectRatio" "xMidYMid meet"
       , staticStr "style" "background: transparent; display: block; border-radius: 8px;"
       ]
-      [ -- Module cells with declarations (rendered first = behind)
-        forEach "modules" Group enriched _.name (enrichedModuleCell config)
+      ( [ -- Module cells with declarations (rendered first = behind)
+          forEach "modules" Group enriched _.name (enrichedModuleCell config)
+        ]
         -- Dependency links layer (rendered last = on top, but pointer-events: none)
-      , renderDependencyLinks posMap enriched
-      ]
+        <> if config.showDependencyLinks
+            then [ renderDependencyLinks posMap enriched ]
+            else []
+      )
 
 -- =============================================================================
 -- Dependency Links Layer
@@ -815,8 +819,8 @@ linkPath from to fromName toName =
         [ thunkedStr "d" pathD
         , staticStr "fill" "none"
         , staticStr "stroke" "#f59e0b"  -- Amber-500, warm orange
-        , staticStr "stroke-width" "0.75"
-        , staticStr "stroke-opacity" "0.25"
+        , staticStr "stroke-width" "1.0"
+        , staticStr "stroke-opacity" "0.5"
         , staticStr "class" "dependency-link"
         ]
         []
