@@ -94,6 +94,8 @@ render state =
         , renderDistillation
         , ornamentWithAnchor "section-ai"
         , renderAISection
+        , ornamentWithAnchor "section-api"
+        , renderAPITranscript
         , sectionOrnament
         , renderGetStarted state
         ]
@@ -190,6 +192,7 @@ renderScrollInvite =
         , sectionLink "#section-how" "How" "The data pipeline"
         , sectionLink "#section-why" "Why" "Distillation, not dashboard"
         , sectionLink "#section-ai" "AI" "A first-class participant"
+        , sectionLink "#section-api" "API" "6 queries, 0 files read"
         ]
     ]
   where
@@ -338,10 +341,6 @@ renderViewMatrix state =
             [ HH.text description ]
           else HH.text ""
       ]
-
--- =============================================================================
--- Get Started CTA
--- =============================================================================
 
 -- =============================================================================
 -- System Diagram (HATS Sankey)
@@ -507,6 +506,105 @@ renderAISection =
       , HH.p
           [ HP.style "font-size: 12px; color: #888; font-style: italic; margin: 0; line-height: 1.5;" ]
           [ HH.text emphasis ]
+      ]
+
+-- =============================================================================
+-- API Transcript — what an AI learns in 6 queries
+-- =============================================================================
+
+renderAPITranscript :: forall m. H.ComponentHTML Action () m
+renderAPITranscript =
+  HH.div
+    [ HP.style "margin-bottom: 16px;" ]
+    [ HH.h2
+        [ HP.style sectionHeadingStyle ]
+        [ HH.text "What an AI Learns in 6 API Calls" ]
+    , HH.p
+        [ HP.style $ sectionBodyStyle <> " margin-bottom: 24px;" ]
+        [ HH.text "No source files opened. No grep. No token-heavy file reads. Just structured queries to the database." ]
+    -- Transcript
+    , HH.div
+        [ HP.style "max-width: 800px; margin: 0 auto; font-family: 'Fira Code', 'SF Mono', 'Courier New', monospace; font-size: 12px; line-height: 1.6;" ]
+        [ queryBlock "1" "What is this project?"
+            "GET /api/v2/stats"
+            [ "437 packages, 4,556 modules, 50,270 declarations"
+            , "84,177 function calls tracked"
+            , "194 registry packages, 157 local"
+            ]
+            "In one call, the agent knows the scale of the entire dependency universe."
+
+        , queryBlock "2" "Which packages are the actual project code?"
+            "GET /api/v2/packages  \x2192  filter source = \"workspace\""
+            [ "minard-frontend: 81 modules, 34,503 LOC, topo layer 24 [app entry: CE2.Main]"
+            , "minard-server: topo layer 22"
+            , "cartography-database: topo layer 17"
+            , "minard-cst, type-sig-viz: utility packages"
+            ]
+            "Five workspace packages. The frontend is where the code lives. The agent now knows where to focus."
+
+        , queryBlock "3" "What are the biggest modules?"
+            "GET /api/v2/modules  \x2192  sort by LOC descending"
+            [ "CE2.Data.Loader: 2,030 LOC, 100 declarations \x2014 data layer"
+            , "CE2.Component.SceneCoordinator: 1,618 LOC \x2014 navigation orchestrator"
+            , "CE2.Viz.ModuleTreemapEnriched: 1,406 LOC \x2014 treemap rendering"
+            , "CE2.Component.ModuleAnatomyViz: 1,288 LOC \x2014 structural analysis"
+            ]
+            "The agent can now prioritize: these four modules represent the architectural spine."
+
+        , queryBlock "4" "What do the annotations say about the most complex module?"
+            "GET /api/v2/annotations?target_id=CE2.Component.SceneCoordinator"
+            [ "[architecture] Orchestrator. Owns the Scene state machine and dispatches to visualization slots."
+            , "[quality] handleAction has 25+ branches spanning ~900 lines. State has 25+ fields mixing concerns."
+            , "[summary] Central coordinator (1,618 LOC). Manages drill-down: treemap \x2192 beeswarm \x2192 module \x2192 declaration."
+            ]
+            "Previous AI analysis is cached in the database. No need to re-read 1,600 lines to understand the module."
+
+        , queryBlock "5" "What does every module do?"
+            "GET /api/v2/annotations?kind=summary"
+            [ "85 module summaries returned, each 1\x20133 sentences"
+            , "SceneCoordinator: \"Central navigation coordinator... manages Powers-of-Ten drill-down\""
+            , "Data.Loader: \"API client and data transformation engine (2,030 LOC)\""
+            , "ModulePlanetViz: \"Unified module view combining signatures, dependencies, layers, concerns\""
+            ]
+            "A complete map of the codebase in one query. The agent can answer 'where is X handled?' without grep."
+
+        , queryBlock "6" "What are the known architectural concerns?"
+            "GET /api/v2/annotations?kind=architecture"
+            [ "minard-frontend: \"Four-layer architecture: Core types, Data, Viz, Components\""
+            , "SceneCoordinator: \"Orchestrator. All user interactions flow through its action handler.\""
+            , "Data.Loader: \"Single bridge at fetchPackageSetFromV2 separating two cohesive groups\""
+            ]
+            "Structural knowledge that would take hours of code reading, available instantly."
+        ]
+    -- Summary
+    , HH.div
+        [ HP.style "max-width: 800px; margin: 24px auto 0; padding: 16px 20px; background: #fff; border: 1.5px solid #D8D0BC; border-radius: 6px;" ]
+        [ HH.p
+            [ HP.style "font-size: 14px; color: #444; margin: 0; line-height: 1.6; text-align: center;" ]
+            [ HH.text "6 queries. 0 source files. An AI agent now knows the project\x2019s shape, its biggest risks, what every module does, and where to start working \x2014 all from cached structural analysis in the database." ]
+        ]
+    ]
+  where
+  queryBlock num question endpoint responses insight =
+    HH.div
+      [ HP.style "margin-bottom: 28px;" ]
+      [ -- Question
+        HH.div [ HP.style "margin-bottom: 6px;" ]
+          [ HH.span [ HP.style "font-size: 11px; font-weight: 700; color: #C0A870; margin-right: 8px;" ] [ HH.text ("Q" <> num) ]
+          , HH.span [ HP.style "font-size: 13px; font-weight: 600; color: #333; font-family: -apple-system, 'Helvetica Neue', sans-serif;" ] [ HH.text question ]
+          ]
+      -- Endpoint
+      , HH.div [ HP.style "padding: 6px 12px; background: #2C2C2C; color: #8BE9FD; border-radius: 4px 4px 0 0; font-size: 11px;" ]
+          [ HH.text $ "\x276F " <> endpoint ]
+      -- Response
+      , HH.div [ HP.style "padding: 10px 12px; background: #3C3C3C; color: #E0E0E0; border-radius: 0 0 4px 4px; font-size: 11px;" ]
+          (responses <#> \line ->
+            HH.div [ HP.style "margin-bottom: 3px;" ]
+              [ HH.text $ "\x2022 " <> line ]
+          )
+      -- Insight
+      , HH.div [ HP.style "margin-top: 6px; font-size: 12px; color: #888; font-style: italic; font-family: -apple-system, 'Helvetica Neue', sans-serif;" ]
+          [ HH.text insight ]
       ]
 
 -- =============================================================================

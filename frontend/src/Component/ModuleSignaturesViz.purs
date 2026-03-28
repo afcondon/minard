@@ -331,6 +331,14 @@ renderFullCell :: forall m. State -> MSM.MeasuredCell -> H.ComponentHTML Action 
 renderFullCell state cell =
   let
     blameIndicator = renderBlameIndicator state cell
+    editorLink =
+      HH.span
+        [ HP.style "position:absolute; top:3px; right:5px; font-size:10px; color:#999; cursor:pointer; opacity:0.5; transition: opacity 150ms;"
+        , HP.class_ (HH.ClassName "sig-editor-link")
+        , HP.title "Open in editor"
+        , HE.onClick \_ -> SignatureClicked cell.name
+        ]
+        [ HH.text "\x270E" ]
     baseProps =
       [ HP.id ("sig-cell-" <> cell.name)
       , HP.class_ (HH.ClassName "sigmap-cell")
@@ -342,13 +350,15 @@ renderFullCell state cell =
           <> " border:1px solid " <> MSM.kindBorder cell.kind <> ";"
           <> " border-radius:3px;"
           <> " cursor:pointer;"
-      , HE.onClick \_ -> SignatureClicked cell.name
+          <> " position:relative;"
+      , HE.onClick \_ -> HandleDeclarationClick state.lastInput.packageName state.lastInput.moduleName cell.name
       ]
   in case cellHtml cell of
     Just html ->
       HH.div baseProps
         [ blameIndicator
         , HH.div [ HP.prop (PropName "innerHTML") html ] []
+        , editorLink
         ]
     Nothing ->
       HH.div baseProps
@@ -356,6 +366,7 @@ renderFullCell state cell =
         , HH.div
             [ HP.style "font-size:11px; color:#333; font-family:'Fira Code','SF Mono',monospace;" ]
             [ HH.text (cell.name <> if cell.sig == "" then "" else " :: " <> cell.sig) ]
+        , editorLink
         ]
 
 -- | Small colored indicator showing blame age for a declaration

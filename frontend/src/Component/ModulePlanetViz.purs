@@ -31,6 +31,7 @@ import Halogen.Subscription as HS
 import Web.Event.EventTarget as ET
 import Web.HTML (window)
 import Web.HTML.Window as Win
+import Web.HTML.Window (open) as WinOpen
 import Web.UIEvent.KeyboardEvent as KE
 import Web.UIEvent.KeyboardEvent.EventTypes as KET
 import Halogen as H
@@ -702,10 +703,21 @@ handleAction = case _ of
       state <- H.get
       H.raise (DeclarationClicked state.lastInput.packageName modName "")
     UsageGraphViz.OpenFocusInEditor -> do
-      -- Let parent handle VS Code opening
       state <- H.get
-      case state.focusedDeclaration of
-        Just declName -> H.raise (DeclarationClicked state.lastInput.packageName state.lastInput.moduleName declName)
+      case state.blameData of
+        Just blame -> do
+          let mLine = do
+                declName <- state.focusedDeclaration
+                decl <- Array.find (\d -> d.name == declName) state.lastInput.declarations
+                span <- decl.sourceSpan
+                Array.index span.start 0
+              lineArg = case mLine of
+                Just l -> ":" <> show l
+                Nothing -> ""
+              uri = "vscode://file/" <> blame.filePath <> lineArg
+          liftEffect do
+            win <- window
+            void $ WinOpen.open uri "_self" "" win
         Nothing -> pure unit
     UsageGraphViz.ViewModuleSignatures _ -> do
       -- Already visible — ensure signatures panel is open
