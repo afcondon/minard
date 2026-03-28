@@ -35,13 +35,14 @@ data Query (a :: Type)
 
 type Slot = H.Slot Query Output
 
-type State = { dataReady :: Boolean, hoveredView :: Maybe String }
+type State = { dataReady :: Boolean, hoveredView :: Maybe String, showInstallModal :: Boolean }
 
 data Action
   = Initialize
   | Receive Input
   | GoToScene Scene.Scene
   | HoverView (Maybe String)
+  | DismissModal
 
 -- =============================================================================
 -- Component
@@ -60,7 +61,7 @@ component =
     }
 
 initialState :: Input -> State
-initialState input = { dataReady: input.dataReady, hoveredView: Nothing }
+initialState input = { dataReady: input.dataReady, hoveredView: Nothing, showInstallModal: false }
 
 handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Output m Unit
 handleAction = case _ of
@@ -68,8 +69,13 @@ handleAction = case _ of
     liftEffect $ SystemSankey.renderSystemSankey "#system-sankey-container" 900.0 500.0
   Receive input ->
     H.modify_ _ { dataReady = input.dataReady }
-  GoToScene scene ->
-    H.raise (NavigateToScene scene)
+  GoToScene scene -> do
+    state <- H.get
+    if state.dataReady
+      then H.raise (NavigateToScene scene)
+      else H.modify_ _ { showInstallModal = true }
+  DismissModal ->
+    H.modify_ _ { showInstallModal = false }
   HoverView mView ->
     H.modify_ _ { hoveredView = mView }
 
@@ -81,8 +87,9 @@ render :: forall m. State -> H.ComponentHTML Action () m
 render state =
   HH.div
     [ HP.style containerStyle ]
-    [ HH.div
-        [ HP.style "max-width: 1200px; width: 100%; margin: 0 auto; padding: 60px 24px 80px;" ]
+    [ if state.showInstallModal then renderInstallModal else HH.text ""
+    , HH.div
+        [ HP.style "max-width: 1200px; width: 100%; margin: 0 auto; padding: 60px 24px 80px; background: linear-gradient(180deg, #FAFAF8 0%, #F5F0E6 100%);" ]
         [ renderHero state
         , heroOrnament
         , renderScrollInvite
@@ -102,8 +109,7 @@ render state =
     ]
 
 containerStyle :: String
-containerStyle = "width: 100%; height: 100%; overflow-y: auto; "
-  <> "background: linear-gradient(180deg, #FAFAF8 0%, #F5F0E6 100%); "
+containerStyle = "width: 100%; height: 100%; overflow-y: auto; background: #FAFAF8; "
   <> "font-family: -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif; "
   <> "color: #333;"
 
@@ -160,13 +166,11 @@ renderHero state =
       [ HE.onClick \_ -> GoToScene scene
       , HP.style $ "padding: 8px 20px; border: 1px solid "
           <> (if enabled then "#C0BDB4" else "#E0DDD4")
-          <> "; border-radius: 20px; cursor: "
-          <> (if enabled then "pointer" else "default")
+          <> "; border-radius: 20px; cursor: pointer"
           <> "; font-size: 13px; font-weight: 500; background: "
           <> (if enabled then "#fff" else "#FAFAF8")
           <> "; color: " <> (if enabled then "#444" else "#BBB")
           <> "; transition: all 150ms ease;"
-      , HP.disabled (not enabled)
       ]
       [ HH.text label ]
 
@@ -644,13 +648,11 @@ renderGetStarted state =
       [ HE.onClick \_ -> GoToScene scene
       , HP.style $ "padding: 10px 24px; border: 1.5px solid "
           <> (if enabled then "#2D7D46" else "#E0DDD4")
-          <> "; border-radius: 28px; cursor: "
-          <> (if enabled then "pointer" else "default")
+          <> "; border-radius: 28px; cursor: pointer"
           <> "; font-size: 14px; font-weight: 600; background: "
           <> (if enabled then "#2D7D46" else "#FAFAF8")
           <> "; color: " <> (if enabled then "#fff" else "#BBB")
           <> "; transition: all 150ms ease;"
-      , HP.disabled (not enabled)
       ]
       [ HH.text label ]
 
@@ -681,6 +683,33 @@ heroOrnament =
   HH.div
     [ HP.style "text-align: center; margin: 48px 0; color: #B8A880; font-size: 28px; letter-spacing: 16px;" ]
     [ HH.text "\x2767 \x269C \x2619" ]
+
+-- | Modal shown when user clicks a nav button without a backend
+renderInstallModal :: forall m. H.ComponentHTML Action () m
+renderInstallModal =
+  HH.div
+    [ HP.style "position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.4);"
+    , HE.onClick \_ -> DismissModal
+    ]
+    [ HH.div
+        [ HP.style "background: #FAFAF8; border: 2px solid #C9B8A0; border-radius: 12px; padding: 40px 48px; max-width: 520px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.2);" ]
+        [ HH.div
+            [ HP.style "font-size: 36px; margin-bottom: 16px; font-family: 'Georgia', 'Times New Roman', serif; font-weight: 700; color: #2C2C2C;" ]
+            [ HH.text "Minard" ]
+        , HH.p
+            [ HP.style "font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 20px;" ]
+            [ HH.text "Minard needs to be installed locally to run. It\x2019s open source and ready to explore your PureScript codebase." ]
+        , HH.a
+            [ HP.href "https://github.com/afcondon/minard"
+            , HP.target "_blank"
+            , HP.style "display: inline-block; padding: 12px 28px; background: #2D7D46; color: white; border-radius: 28px; font-size: 14px; font-weight: 600; text-decoration: none; letter-spacing: 0.3px; margin-bottom: 12px;"
+            ]
+            [ HH.text "Clone from GitHub" ]
+        , HH.p
+            [ HP.style "font-size: 12px; color: #999; margin: 0;" ]
+            [ HH.text "Click anywhere to dismiss" ]
+        ]
+    ]
 
 sectionHeadingStyle :: String
 sectionHeadingStyle = "font-size: 15px; font-weight: 600; margin: 0 0 8px 0; letter-spacing: 0.3px; color: #555; text-transform: uppercase;"
