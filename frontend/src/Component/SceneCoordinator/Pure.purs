@@ -415,5 +415,5 @@ sceneForResult :: Loader.UnifiedSearchResult -> Scene
 sceneForResult r = case r.entityType of
   "package" -> PkgTreemap r.packageName
   "module" -> ModuleStructure r.packageName (fromMaybe r.name r.moduleName)
-  "declaration" -> DeclarationDetail r.packageName (fromMaybe "" r.moduleName) r.name
+  "declaration" -> ModuleStructure r.packageName (fromMaybe "" r.moduleName)
   _ -> GalaxyTreemap

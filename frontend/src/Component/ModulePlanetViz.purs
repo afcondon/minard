@@ -28,8 +28,10 @@ import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
 import Halogen.Subscription as HS
+import Web.Event.Event as Event
 import Web.Event.EventTarget as ET
 import Web.HTML (window)
+import Web.DOM.Element as Element
 import Web.HTML.Window as Win
 import Web.HTML.Window (open) as WinOpen
 import Web.UIEvent.KeyboardEvent as KE
@@ -42,6 +44,7 @@ import Type.Proxy (Proxy(..))
 
 import CE2.Component.ConcernsPanel as ConcernsPanel
 import CE2.Component.CutpointsPanel as CutpointsPanel
+import CE2.Component.EdgeBundlePanel as EdgeBundlePanel
 import CE2.Component.LayerDiagramPanel as LayerDiagramPanel
 import CE2.Component.ModuleAnnotationsViz as AnnotationsViz
 import CE2.Component.ModuleSignaturesViz as SignaturesViz
@@ -82,7 +85,7 @@ type Slot = H.Slot Query Output
 data Query a = NoQuery a
 
 -- | Which panels are currently open
-data Panel = PanelSignatures | PanelDependencies | PanelLayers | PanelCutpoints | PanelConcerns | PanelAnnotations
+data Panel = PanelSignatures | PanelDependencies | PanelLayers | PanelCutpoints | PanelConcerns | PanelEdgeBundle | PanelAnnotations
 
 derive instance eqPanel :: Eq Panel
 derive instance ordPanel :: Ord Panel
@@ -93,6 +96,7 @@ type ChildSlots =
   , layers :: LayerDiagramPanel.Slot Unit
   , cutpoints :: CutpointsPanel.Slot Unit
   , concerns :: ConcernsPanel.Slot Unit
+  , edgebundle :: EdgeBundlePanel.Slot Unit
   , annotations :: AnnotationsViz.Slot Unit
   )
 
@@ -110,6 +114,9 @@ _cutpoints = Proxy
 
 _concerns :: Proxy "concerns"
 _concerns = Proxy
+
+_edgebundle :: Proxy "edgebundle"
+_edgebundle = Proxy
 
 _annotations :: Proxy "annotations"
 _annotations = Proxy
@@ -140,6 +147,7 @@ data Action
   | HandleCutpointsOutput CutpointsPanel.Output
   | KeyPressed String
   | HandleConcernsOutput ConcernsPanel.Output
+  | HandleEdgeBundleOutput EdgeBundlePanel.Output
   | HandleAnnotationsOutput AnnotationsViz.Output
 
 -- =============================================================================
@@ -212,7 +220,7 @@ render state =
                   [ if isPanelOpen PanelSignatures state
                       then Just (renderSignaturesPanel state)
                       else Nothing
-                  , if isPanelOpen PanelDependencies state || state.focusedDeclaration /= Nothing
+                  , if isPanelOpen PanelDependencies state
                       then Just (renderDependenciesPanel state)
                       else Nothing
                   , if isPanelOpen PanelLayers state
@@ -223,6 +231,9 @@ render state =
                       else Nothing
                   , if isPanelOpen PanelConcerns state
                       then Just (renderConcernsPanel state)
+                      else Nothing
+                  , if isPanelOpen PanelEdgeBundle state
+                      then Just (renderEdgeBundlePanel state)
                       else Nothing
                   , if isPanelOpen PanelAnnotations state
                       then Just (renderAnnotationsPanel state)
@@ -242,6 +253,7 @@ renderPanelBar state =
     , panelToggle "Layers" "L" PanelLayers state
     , panelToggle "Cutpoints" "X" PanelCutpoints state
     , panelToggle "Concerns" "C" PanelConcerns state
+    , panelToggle "Bundle" "B" PanelEdgeBundle state
     , panelToggle "Annotations" "A" PanelAnnotations state
     , HH.span [ HP.style "flex: 1;" ] []
     , HH.span
@@ -355,6 +367,20 @@ renderCutpointsPanel state =
         , functionCalls: input.functionCalls
         }
         HandleCutpointsOutput
+    ]
+
+renderEdgeBundlePanel :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
+renderEdgeBundlePanel state =
+  let input = state.lastInput
+  in
+  HH.div
+    [ HP.style "border-bottom: 2px solid #e8e4d8;" ]
+    [ HH.slot _edgebundle unit EdgeBundlePanel.component
+        { moduleName: input.moduleName
+        , declarations: input.declarations
+        , functionCalls: input.functionCalls
+        }
+        HandleEdgeBundleOutput
     ]
 
 renderConcernsPanel :: forall m. MonadAff m => State -> H.ComponentHTML Action ChildSlots m
@@ -629,7 +655,16 @@ handleAction = case _ of
     let target = Win.toEventTarget win
     { emitter, listener } <- liftEffect HS.create
     el <- liftEffect $ ET.eventListener \evt -> case KE.fromEvent evt of
-      Just ke -> HS.notify listener (KeyPressed (KE.key ke))
+      Just ke -> do
+        -- Skip hotkeys when typing in input fields
+        let mTarget = Event.target (KE.toEvent ke) >>= Element.fromEventTarget
+        let isEditable = case mTarget of
+              Just el ->
+                let tag = Element.tagName el
+                in tag == "INPUT" || tag == "TEXTAREA" || tag == "SELECT"
+              Nothing -> false
+        when (not isEditable) do
+          HS.notify listener (KeyPressed (KE.key ke))
       Nothing -> pure unit
     liftEffect $ ET.addEventListener KET.keydown el false target
     void $ H.subscribe emitter
@@ -649,6 +684,9 @@ handleAction = case _ of
           then Set.delete panel state.openPanels
           else Set.insert panel state.openPanels
     H.modify_ _ { openPanels = newPanels }
+    -- Closing Dependencies also clears the focused declaration
+    when (panel == PanelDependencies && not (Set.member panel newPanels)) do
+      H.modify_ _ { focusedDeclaration = Nothing }
 
   FocusDeclaration mDecl -> do
     H.modify_ _ { focusedDeclaration = mDecl }
@@ -676,6 +714,7 @@ handleAction = case _ of
     "l" -> handleAction (TogglePanel PanelLayers)
     "x" -> handleAction (TogglePanel PanelCutpoints)
     "c" -> handleAction (TogglePanel PanelConcerns)
+    "b" -> handleAction (TogglePanel PanelEdgeBundle)
     "a" -> handleAction (TogglePanel PanelAnnotations)
     _ -> pure unit
 
@@ -735,6 +774,10 @@ handleAction = case _ of
 
   HandleCutpointsOutput output -> case output of
     CutpointsPanel.DeclarationClicked declName -> do
+      handleAction (FocusDeclaration (Just declName))
+
+  HandleEdgeBundleOutput output -> case output of
+    EdgeBundlePanel.DeclarationClicked declName -> do
       handleAction (FocusDeclaration (Just declName))
 
   HandleConcernsOutput output -> case output of

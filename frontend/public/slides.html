@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minard — Code Cartography</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    color: #333;
+    overflow: hidden;
+  }
+
+  .slide {
+    width: 100vw;
+    height: 100vh;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 120px;
+    position: relative;
+  }
+
+  .slide.active { display: flex; }
+
+  /* Backgrounds */
+  .bg-warm { background: linear-gradient(180deg, #FAFAF8 0%, #F5F0E6 100%); }
+  .bg-dark { background: #1a1a2e; color: #e0e0e0; }
+  .bg-blueprint { background: #1e3a5f; color: #c8dce8; }
+  .bg-cream { background: #FAFAF8; }
+
+  /* Typography */
+  .title {
+    font-family: 'EB Garamond', 'Georgia', serif;
+    font-size: 96px;
+    font-weight: 700;
+    letter-spacing: -3px;
+    color: #2C2C2C;
+    margin-bottom: 16px;
+  }
+
+  .subtitle {
+    font-size: 24px;
+    color: #888;
+    font-style: italic;
+    letter-spacing: 0.5px;
+    margin-bottom: 48px;
+  }
+
+  .section-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #C0A870;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 24px;
+  }
+
+  .section-title {
+    font-family: 'EB Garamond', 'Georgia', serif;
+    font-size: 56px;
+    font-weight: 700;
+    color: #2C2C2C;
+    letter-spacing: -1px;
+    margin-bottom: 32px;
+    line-height: 1.15;
+  }
+
+  .dark .section-title { color: #e8e4d8; }
+  .blueprint .section-title { color: #e8e4d8; }
+
+  .body-text {
+    font-size: 22px;
+    line-height: 1.7;
+    color: #555;
+    max-width: 800px;
+    text-align: center;
+  }
+
+  .dark .body-text { color: #b8b4a8; }
+  .blueprint .body-text { color: #a8c4d8; }
+
+  .ornament {
+    font-size: 20px;
+    color: #C0B090;
+    letter-spacing: 12px;
+    margin: 32px 0;
+  }
+
+  .dark .ornament { color: #6a6050; }
+
+  /* Cards */
+  .card-row {
+    display: flex;
+    gap: 24px;
+    margin-top: 32px;
+    max-width: 1000px;
+  }
+
+  .card {
+    flex: 1;
+    padding: 28px 24px;
+    background: #fff;
+    border: 1px solid #E0DDD4;
+    border-radius: 8px;
+    text-align: left;
+  }
+
+  .dark .card {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
+  }
+
+  .card h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #333;
+  }
+
+  .dark .card h3 { color: #e8e4d8; }
+
+  .card p {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #666;
+  }
+
+  .dark .card p { color: #a8a498; }
+
+  .card .emphasis {
+    font-size: 13px;
+    color: #999;
+    font-style: italic;
+    margin-top: 12px;
+  }
+
+  /* Grid for screenshots */
+  .screenshot-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    max-width: 1100px;
+    margin-top: 24px;
+  }
+
+  .screenshot-grid img {
+    width: 100%;
+    height: auto;
+    border-radius: 6px;
+    border: 1px solid #E0DDD4;
+    display: block;
+  }
+
+  .screenshot-grid .caption {
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+    margin-top: 4px;
+  }
+
+  /* Module planet masonry */
+  .masonry-row {
+    display: flex;
+    gap: 12px;
+    max-width: 1100px;
+    margin-top: 24px;
+    align-items: flex-start;
+  }
+
+  .masonry-row img {
+    flex: 1;
+    min-width: 0;
+    height: auto;
+    border-radius: 6px;
+    border: 2px solid #C9B8A0;
+    display: block;
+  }
+
+  .masonry-caption {
+    font-size: 12px;
+    color: #888;
+    text-align: center;
+    margin-top: 6px;
+  }
+
+  /* API transcript */
+  .query-block {
+    max-width: 800px;
+    width: 100%;
+    margin-bottom: 20px;
+    text-align: left;
+  }
+
+  .query-label {
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+
+  .query-label .qnum {
+    font-weight: 700;
+    color: #C0A870;
+    margin-right: 8px;
+  }
+
+  .query-label .qtext {
+    font-weight: 600;
+    color: #e8e4d8;
+  }
+
+  .query-endpoint {
+    padding: 6px 14px;
+    background: #0d1117;
+    color: #8BE9FD;
+    border-radius: 4px 4px 0 0;
+    font-family: 'Fira Code', 'SF Mono', monospace;
+    font-size: 13px;
+  }
+
+  .query-response {
+    padding: 10px 14px;
+    background: #161b22;
+    color: #c9d1d9;
+    border-radius: 0 0 4px 4px;
+    font-family: 'Fira Code', 'SF Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .query-insight {
+    font-size: 13px;
+    color: #6a8898;
+    font-style: italic;
+    margin-top: 6px;
+  }
+
+  /* Big stat */
+  .stat-row {
+    display: flex;
+    gap: 64px;
+    margin: 32px 0;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-number {
+    font-family: 'EB Garamond', 'Georgia', serif;
+    font-size: 64px;
+    font-weight: 700;
+    color: #C0A870;
+  }
+
+  .dark .stat-number { color: #d4b87a; }
+
+  .stat-label {
+    font-size: 14px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+  }
+
+  /* Principles */
+  .principle-list {
+    text-align: left;
+    max-width: 700px;
+    margin-top: 16px;
+  }
+
+  .principle {
+    margin-bottom: 20px;
+  }
+
+  .principle strong {
+    font-size: 18px;
+    color: #333;
+  }
+
+  .principle p {
+    font-size: 15px;
+    color: #666;
+    margin-top: 4px;
+    line-height: 1.5;
+  }
+
+  /* View reveal cells */
+  .view-cell {
+    opacity: 0;
+    transition: opacity 300ms ease;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #E0DDD4;
+  }
+
+  .view-cell.visible {
+    opacity: 0.4;
+  }
+
+  .view-cell.current {
+    opacity: 1;
+    border: 2px solid #C9B8A0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+  }
+
+  .view-cell img {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .view-cell .caption {
+    font-size: 10px;
+    color: #888;
+    text-align: center;
+    padding: 3px 4px;
+    background: #fff;
+  }
+
+  /* Progressive reveal items (principles, etc.) */
+  .build-item {
+    opacity: 0;
+    transition: opacity 300ms ease;
+  }
+
+  .build-item.visible {
+    opacity: 0.4;
+  }
+
+  .build-item.current {
+    opacity: 1;
+  }
+
+  /* Navigation hint */
+  .nav-hint {
+    position: fixed;
+    bottom: 20px;
+    right: 30px;
+    font-size: 12px;
+    color: #bbb;
+  }
+
+  .dark .nav-hint { color: #555; }
+
+  /* Fleuron */
+  .fleuron {
+    font-size: 16px;
+    color: #C0B090;
+    letter-spacing: 8px;
+    position: absolute;
+    bottom: 40px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Slide 1: Title -->
+<div class="slide bg-warm active" id="s1">
+  <div class="title">Minard</div>
+  <div class="subtitle">Code cartography for PureScript</div>
+  <div class="ornament">❧ ⚜ ❦</div>
+  <div class="body-text">
+    A new integrated approach to understanding and navigating large codebases in collaboration with AI agents.
+  </div>
+  <div class="fleuron">❧ ⚜ ❦</div>
+</div>
+
+<!-- Slide 2: The Problem -->
+<div class="slide bg-warm" id="s2">
+  <div class="section-label">The Problem</div>
+  <div class="section-title">As you and your AI are writing<br>100's of KLOC...</div>
+  <div class="body-text" style="margin-bottom: 24px;">
+    How will you understand what's getting written?
+  </div>
+  <div class="body-text" style="margin-bottom: 24px;">
+    How will you know whether a change was pervasive or local?
+  </div>
+  <div class="body-text" style="margin-bottom: 24px;">
+    How will you see if it changed the coupling of modules?
+  </div>
+  <div class="body-text" style="margin-bottom: 32px;">
+    How will the <strong style="color: #C0A870;">AI</strong> understand what it's been writing?
+  </div>
+  <div class="body-text" style="font-size: 26px; font-weight: 600; color: #444;">
+    At scale, you need maps.
+  </div>
+</div>
+
+<!-- Slide 3: What — Four Lenses -->
+<div class="slide bg-warm" id="s3">
+  <div class="section-label">What</div>
+  <div class="section-title">Four Lenses, Three Levels Deep</div>
+  <div class="body-text" style="margin-bottom: 24px;">
+    Every lens drills from the full package universe down to individual declarations.
+  </div>
+  <div class="stat-row">
+    <div class="stat"><div class="stat-number">Maps</div><div class="stat-label">Structure</div></div>
+    <div class="stat"><div class="stat-number">Reports</div><div class="stat-label">Quality</div></div>
+    <div class="stat"><div class="stat-number">Anatomy</div><div class="stat-label">Architecture</div></div>
+    <div class="stat"><div class="stat-number">Git</div><div class="stat-label">History</div></div>
+  </div>
+</div>
+
+<!-- Views reveal slide — progressive build -->
+<div class="slide bg-cream" id="s-views" data-steps="9">
+  <!-- Fixed header area -->
+  <div style="text-align: center; margin-bottom: 20px;">
+    <div class="section-label view-label">Maps · Project</div>
+    <div class="section-title view-title" style="font-size: 44px;">Galaxy Treemap</div>
+    <div class="body-text view-desc" style="margin-bottom: 0; font-size: 18px;">Packages as rectangles, modules as bubbles inside them — two levels of structure, each clickable</div>
+  </div>
+  <!-- 2×4 grid that fills progressively -->
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: auto auto; gap: 10px; max-width: 1100px; width: 100%; margin-top: 8px;">
+    <!-- Row 1: Project level -->
+    <div class="view-cell" data-step="0" data-label="Maps · Project" data-title="Galaxy Treemap" data-desc="Packages as rectangles, modules as bubbles inside them — two levels of structure, each clickable">
+      <img src="screenshots/maps-1.jpg"><div class="caption">Galaxy Treemap</div>
+    </div>
+    <div class="view-cell" data-step="2" data-label="Reports · Project" data-title="Package Report" data-desc="AI-generated quality observations for each module, with human review workflow">
+      <img src="screenshots/report.jpg"><div class="caption">Package Report</div>
+    </div>
+    <div class="view-cell" data-step="4" data-label="Anatomy · Project" data-title="Project Anatomy" data-desc="Your dependency universe as a force-directed beeswarm, showing what your project actually stands on">
+      <img src="screenshots/anatomy.jpg"><div class="caption">Project Anatomy</div>
+    </div>
+    <div class="view-cell" data-step="6" data-label="Git · Project" data-title="Git Overview" data-desc="Commit activity across all modules, showing where development energy is concentrated">
+      <img src="screenshots/git-1.jpg"><div class="caption">Git Overview</div>
+    </div>
+    <!-- Row 2: Package level -->
+    <div class="view-cell" data-step="1" data-label="Maps · Package" data-title="Module Treemap" data-desc="Modules as rectangles, declarations as bubbles — click a rectangle to enter, a bubble to jump straight to it">
+      <img src="screenshots/maps-2.jpg"><div class="caption">Module Treemap</div>
+    </div>
+    <div class="view-cell" data-step="3" data-label="Reports · Package" data-title="Module Annotations" data-desc="AI observations aggregated across all modules, filterable by status and type">
+      <img src="screenshots/reports-2.jpg"><div class="caption">Module Annotations</div>
+    </div>
+    <div class="view-cell" data-step="5" data-label="Anatomy · Package" data-title="Decomposition" data-desc="Biconnected component analysis revealing the structural blocks and bridges in the dependency graph">
+      <img src="screenshots/anatomy-2-deomposition.jpg"><div class="caption">Decomposition</div>
+    </div>
+    <div class="view-cell" data-step="7" data-label="Git · Package" data-title="Commit Grid" data-desc="Per-module commit history as a heatmap, showing co-change patterns over time">
+      <img src="screenshots/git-2.jpg"><div class="caption">Commit Grid</div>
+    </div>
+  </div>
+</div>
+
+<!-- Module Level: convergence narrative -->
+<div class="slide bg-warm" id="s-converge">
+  <div class="section-label">Module Level</div>
+  <div class="section-title" style="font-size: 48px;">Where All Four Lenses Converge</div>
+  <div class="body-text" style="margin-bottom: 32px;">
+    At the lowest level before the actual code, all four lenses meet in a single, configurable view of the module.
+    Typographically enhanced signatures, intra- and inter-module dependencies, areas of concern,
+    and git history — all in one dynamic interface.
+  </div>
+  <div class="body-text" style="font-style: italic; color: #888;">
+    The next step from here is into the code itself — a single click opens the module at the relevant line in your editor.
+  </div>
+</div>
+
+<!-- VIDEO PLACEHOLDER: Galaxy > Solar > Planet > Editor drill-down -->
+<div class="slide bg-cream" id="s-demo-drilldown">
+  <div class="section-label" style="color: #ccc;">Demo Video</div>
+  <div class="section-title" style="font-size: 40px; color: #bbb;">Galaxy → Solar → Planet → Code</div>
+  <div style="width: 800px; height: 450px; border: 2px dashed #D8D0BC; border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+    <div style="text-align: center; color: #ccc;">
+      <div style="font-size: 48px; margin-bottom: 12px;">▶</div>
+      <div style="font-size: 14px;">Screen recording: top-level to a line of code in four clicks</div>
+    </div>
+  </div>
+</div>
+
+<!-- Module Planet: toast-rack isometric -->
+<div class="slide bg-cream" id="s-module">
+  <div class="section-label">Module Planet</div>
+  <div style="perspective: 1600px; margin: 20px 0;">
+    <div style="transform: rotateY(-35deg) rotateX(15deg); transform-style: preserve-3d; display: flex; gap: 16px; align-items: flex-end; justify-content: center;">
+      <div style="transform: translateZ(0px); text-align: center;">
+        <img src="screenshots/msv-signatures.jpg" style="height: 320px; width: auto; border-radius: 6px; border: 1px solid #C9B8A0; box-shadow: 4px 4px 20px rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #999; margin-top: 6px;">Signatures</div>
+      </div>
+      <div style="transform: translateZ(0px); text-align: center;">
+        <img src="screenshots/msv-dependencies.jpg" style="height: 320px; width: auto; border-radius: 6px; border: 1px solid #C9B8A0; box-shadow: 4px 4px 20px rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #999; margin-top: 6px;">Dependencies</div>
+      </div>
+      <div style="transform: translateZ(0px); text-align: center;">
+        <img src="screenshots/msv-layers.jpg" style="height: 320px; width: auto; border-radius: 6px; border: 1px solid #C9B8A0; box-shadow: 4px 4px 20px rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #999; margin-top: 6px;">Layers</div>
+      </div>
+      <div style="transform: translateZ(0px); text-align: center;">
+        <img src="screenshots/msv-concerns.jpg" style="height: 320px; width: auto; border-radius: 6px; border: 1px solid #C9B8A0; box-shadow: 4px 4px 20px rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #999; margin-top: 6px;">Concerns</div>
+      </div>
+      <div style="transform: translateZ(0px); text-align: center;">
+        <img src="screenshots/msv-layers-annotations.jpg" style="height: 320px; width: auto; border-radius: 6px; border: 1px solid #C9B8A0; box-shadow: 4px 4px 20px rgba(0,0,0,0.15);">
+        <div style="font-size: 10px; color: #999; margin-top: 6px;">Annotations</div>
+      </div>
+    </div>
+  </div>
+  <div class="section-title" style="font-size: 36px; margin-top: 16px;">Dynamic · Configurable · Navigable · Interactive · Actionable</div>
+</div>
+
+<!-- Overlays narrative -->
+<div class="slide bg-warm" id="s-overlays-intro">
+  <div class="section-label">Overlays</div>
+  <div class="section-title" style="font-size: 44px;">See What The Code Can't Tell You</div>
+  <div class="body-text" style="margin-bottom: 32px;">
+    Each visualisation is both navigation, orientation and also directly answers questions. 
+  </div>
+  <div class="card-row" style="max-width: 1000px;">
+    <div class="card">
+      <h3>What's unused?</h3>
+      <p>Instantly see which modules are unreachable from your entry point — dead code, visible at a glance.</p>
+    </div>
+    <div class="card">
+      <h3>What's pure?</h3>
+      <p>Separate pure computation from effectful I/O across your entire package — a structural property made visible.</p>
+    </div>
+    <div class="card">
+      <h3>What packages are local?</h3>
+      <p>See at a glance what packages are local and whether your target can be built from the registry</p>
+    </div>
+    <div class="card">
+      <h3>What changes together?</h3>
+      <p>Modules that are always modified in the same commit reveal hidden coupling that the type system can't see.</p>
+    </div>
+  </div>
+</div>
+
+<!-- VIDEO PLACEHOLDER: Overlay demo -->
+<div class="slide bg-cream" id="s-demo-overlays">
+  <div class="section-label" style="color: #ccc;">Demo Video</div>
+  <div class="section-title" style="font-size: 40px; color: #bbb;">Overlays in Action</div>
+  <div style="width: 800px; height: 450px; border: 2px dashed #D8D0BC; border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+    <div style="text-align: center; color: #ccc;">
+      <div style="font-size: 48px; margin-bottom: 12px;">▶</div>
+      <div style="font-size: 14px;">Screen recording: cycling through overlays on the Module Treemap</div>
+    </div>
+  </div>
+</div>
+
+<!-- VIDEO PLACEHOLDER: Module Planet widgets -->
+<div class="slide bg-cream" id="s-demo-planet">
+  <div class="section-label" style="color: #ccc;">Demo Video</div>
+  <div class="section-title" style="font-size: 40px; color: #bbb;">Moving Between Widgets in Planet View</div>
+  <div style="width: 800px; height: 450px; border: 2px dashed #D8D0BC; border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+    <div style="text-align: center; color: #ccc;">
+      <div style="font-size: 48px; margin-bottom: 12px;">▶</div>
+      <div style="font-size: 14px;">Screen recording: toggling panels, focusing declarations, exploring layers and concerns</div>
+    </div>
+  </div>
+</div>
+
+<!-- Slide 7: How — Pipeline -->
+<div class="slide bg-warm" id="s7">
+  <div class="section-label">How</div>
+  <div class="section-title">Expand Everything, Then Focus</div>
+  <div class="stat-row">
+    <div class="stat"><div class="stat-number">23</div><div class="stat-label">MB source</div></div>
+    <div class="stat"><div class="stat-number">138</div><div class="stat-label">MB compiled</div></div>
+    <div class="stat"><div class="stat-number">55</div><div class="stat-label">MB git history</div></div>
+  </div>
+  <div style="color: #C0A870; font-size: 28px; margin: 8px 0;">↓</div>
+  <div class="stat-row">
+    <div class="stat"><div class="stat-number">1.1</div><div class="stat-label">GB database</div></div>
+  </div>
+  <div style="color: #C0A870; font-size: 28px; margin: 8px 0;">↓</div>
+  <div class="stat-row">
+    <div class="stat"><div class="stat-number">50</div><div class="stat-label">KB per query</div></div>
+  </div>
+  <div class="body-text" style="margin-top: 16px;">
+    Source, compiler output, and git history flow into DuckDB — every call, type, import, and blame line materialized.
+    Then a single targeted query compresses 1.1 GB down to exactly the answer you need.
+  </div>
+</div>
+
+<!-- Slide 8: Why — Principles (progressive reveal) -->
+<div class="slide bg-warm" id="s8" data-steps="5">
+  <div class="section-label">Why</div>
+  <div class="section-title">Design Principles</div>
+  <div class="principle-list">
+    <div class="principle build-item" data-step="0"><strong>Database-first.</strong><p>Expensive analysis at load time. Queries are fast.</p></div>
+    <div class="principle build-item" data-step="1"><strong>CLI + Viz.</strong><p>The AI needs queryable data. The human needs pictures. Same database, different interfaces.</p></div>
+    <div class="principle build-item" data-step="2"><strong>Declarative.</strong><p>Visualizations describe what, not how. Hylograph's HATS AST handles the rest.</p></div>
+    <div class="principle build-item" data-step="3"><strong>Multi-scale.</strong><p>No single view suffices. Fluid navigation across levels is the core interaction.</p></div>
+    <div class="principle build-item" data-step="4"><strong>AI as participant.</strong><p>Cached structural analysis means agents don't re-derive understanding every conversation.</p></div>
+  </div>
+</div>
+
+<!-- Slide 9: AI -->
+<div class="slide bg-warm" id="s9">
+  <div class="section-label">AI</div>
+  <div class="section-title">AI as a First-Class Participant</div>
+  <div class="card-row">
+    <div class="card">
+      <h3>Cached Thinking</h3>
+      <p>AI annotations record structural analysis — "this module bridges two concerns", "this function is the only path between layers" — and persist for both bots and humans to build on.</p>
+      <div class="emphasis">When you start or resume work, the thinking is already there.</div>
+    </div>
+    <div class="card">
+      <h3>Conversational Review</h3>
+      <p>Every annotation can be confirmed, disputed, or superseded. Human review isn't approval — it's a conversation that builds shared understanding.</p>
+      <div class="emphasis">The history of interpretation is as valuable as the code.</div>
+    </div>
+    <div class="card">
+      <h3>API-First for Agents</h3>
+      <p>The full structural database is available via REST. An AI agent can query dependencies, trace call graphs, and read prior annotations — without reading source.</p>
+      <div class="emphasis">Your coding assistant can ask the database instead of grep.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Slide 10: API Demo -->
+<div class="slide bg-warm" id="s10">
+  <div class="section-label">API</div>
+  <div class="section-title" style="font-size: 44px;">What an AI Learns in 6 API Calls</div>
+  <div style="display: flex; gap: 20px; max-width: 1000px; width: 100%; margin-top: 16px;">
+    <div style="flex: 1;">
+      <div class="query-block">
+        <div class="query-label"><span class="qnum">Q1</span><span class="qtext" style="color: #333;">What is this project?</span></div>
+        <div class="query-endpoint">❯ GET /api/v2/stats</div>
+        <div class="query-response">• 437 packages, 4,556 modules, 50,270 declarations<br>• 84,177 function calls tracked</div>
+      </div>
+      <div class="query-block">
+        <div class="query-label"><span class="qnum">Q2</span><span class="qtext" style="color: #333;">Which packages are mine?</span></div>
+        <div class="query-endpoint">❯ GET /api/v2/packages → filter workspace</div>
+        <div class="query-response">• minard-frontend: 81 modules, 34K LOC<br>• minard-server, cartography-database, ...</div>
+      </div>
+      <div class="query-block">
+        <div class="query-label"><span class="qnum">Q3</span><span class="qtext" style="color: #333;">What's most complex?</span></div>
+        <div class="query-endpoint">❯ GET /api/v2/modules → sort by LOC</div>
+        <div class="query-response">• Data.Loader: 2,030 LOC, 100 declarations<br>• SceneCoordinator: 1,618 LOC — orchestrator</div>
+      </div>
+    </div>
+    <div style="flex: 1;">
+      <div class="query-block">
+        <div class="query-label"><span class="qnum">Q4</span><span class="qtext" style="color: #333;">What do annotations say?</span></div>
+        <div class="query-endpoint">❯ GET /api/v2/annotations?target_id=SceneCoordinator</div>
+        <div class="query-response">• [architecture] Orchestrator. Owns Scene state machine.<br>• [quality] handleAction has 25+ branches, ~900 lines.</div>
+      </div>
+      <div class="query-block">
+        <div class="query-label"><span class="qnum">Q5</span><span class="qtext" style="color: #333;">What does every module do?</span></div>
+        <div class="query-endpoint">❯ GET /api/v2/annotations?kind=summary</div>
+        <div class="query-response">• 85 module summaries, each 1–3 sentences<br>• Complete map of the codebase in one query</div>
+      </div>
+      <div class="query-block">
+        <div class="query-label"><span class="qnum">Q6</span><span class="qtext" style="color: #333;">What's the architecture?</span></div>
+        <div class="query-endpoint">❯ GET /api/v2/annotations?kind=architecture</div>
+        <div class="query-response">• "Four-layer architecture: Types, Data, Viz, Components"<br>• "Orchestrator. All interactions flow through action handler."</div>
+      </div>
+    </div>
+  </div>
+  <div style="margin-top: 20px; font-size: 18px; color: #C0A870; font-weight: 600;">6 queries. 0 source files. Full architectural understanding.</div>
+</div>
+
+<!-- Slide 11: Stats -->
+<div class="slide bg-warm" id="s11">
+  <div class="section-label">Minard Today</div>
+  <div class="stat-row">
+    <div class="stat"><div class="stat-number">34K</div><div class="stat-label">Lines of PureScript</div></div>
+    <div class="stat"><div class="stat-number">81</div><div class="stat-label">Modules</div></div>
+    <div class="stat"><div class="stat-number">7K</div><div class="stat-label">Lines of Rust</div></div>
+  </div>
+  <div class="stat-row">
+    <div class="stat"><div class="stat-number">437</div><div class="stat-label">Packages indexed</div></div>
+    <div class="stat"><div class="stat-number">84K</div><div class="stat-label">Function calls</div></div>
+    <div class="stat"><div class="stat-number">85</div><div class="stat-label">AI annotations</div></div>
+  </div>
+  <div class="body-text" style="margin-top: 32px;">
+    Written in PureScript and Rust. Aimed at PureScript codebases, with other languages coming later.
+  </div>
+</div>
+
+<!-- Slide 12: Get Started -->
+<div class="slide bg-warm" id="s12">
+  <div class="section-title">Try It</div>
+  <div class="body-text" style="margin-bottom: 32px;">
+    Minard is open source and ready to explore your PureScript codebase.
+  </div>
+  <div style="font-family: 'Fira Code', monospace; font-size: 20px; color: #555; background: #fff; padding: 20px 40px; border-radius: 8px; border: 1px solid #E0DDD4;">
+    git clone https://github.com/afcondon/minard<br>
+    cd minard && make bootstrap && make start
+  </div>
+  <div class="ornament" style="margin-top: 48px;">❧ ⚜ ❦</div>
+  <div style="margin-top: 16px; font-size: 18px; color: #888;">
+    <a href="https://github.com/afcondon/minard" style="color: #2563eb; text-decoration: none;">github.com/afcondon/minard</a>
+    &nbsp;·&nbsp;
+    <a href="https://minard.app" style="color: #2563eb; text-decoration: none;">minard.app</a>
+  </div>
+</div>
+
+<div class="nav-hint">← → to navigate</div>
+
+<script>
+  let current = 0;
+  let subStep = -1; // -1 means "no sub-step active yet on this slide"
+  const slides = document.querySelectorAll('.slide');
+
+  function show(n) {
+    slides.forEach(s => s.classList.remove('active'));
+    current = Math.max(0, Math.min(n, slides.length - 1));
+    slides[current].classList.add('active');
+    subStep = -1;
+
+    // If this slide has steps, show step 0 immediately
+    const totalSteps = parseInt(slides[current].dataset.steps || '0');
+    if (totalSteps > 0) {
+      subStep = 0;
+      applySubStep();
+    }
+  }
+
+  function applySubStep() {
+    const slide = slides[current];
+
+    // Handle view-cell reveals (screenshot grid)
+    const cells = slide.querySelectorAll('.view-cell');
+    if (cells.length > 0) {
+      const label = slide.querySelector('.view-label');
+      const title = slide.querySelector('.view-title');
+      const desc = slide.querySelector('.view-desc');
+
+      cells.forEach(cell => {
+        const step = parseInt(cell.dataset.step);
+        cell.classList.remove('visible', 'current');
+        if (step < subStep) cell.classList.add('visible');
+        else if (step === subStep) cell.classList.add('visible', 'current');
+      });
+
+      const currentCell = slide.querySelector('.view-cell[data-step="' + subStep + '"]');
+      if (currentCell && label && title && desc) {
+        label.textContent = currentCell.dataset.label;
+        title.textContent = currentCell.dataset.title;
+        desc.textContent = currentCell.dataset.desc;
+      }
+    }
+
+    // Handle build-item reveals (principles, etc.)
+    const items = slide.querySelectorAll('.build-item');
+    items.forEach(item => {
+      const step = parseInt(item.dataset.step);
+      item.classList.remove('visible', 'current');
+      if (step < subStep) item.classList.add('visible');
+      else if (step === subStep) item.classList.add('visible', 'current');
+    });
+  }
+
+  function advance() {
+    const totalSteps = parseInt(slides[current].dataset.steps || '0');
+    if (totalSteps > 0 && subStep < totalSteps - 1) {
+      subStep++;
+      applySubStep();
+    } else {
+      show(current + 1);
+    }
+  }
+
+  function retreat() {
+    const totalSteps = parseInt(slides[current].dataset.steps || '0');
+    if (totalSteps > 0 && subStep > 0) {
+      subStep--;
+      applySubStep();
+    } else {
+      show(current - 1);
+    }
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); advance(); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); retreat(); }
+  });
+
+  document.addEventListener('click', e => {
+    if (e.clientX > window.innerWidth / 2) advance();
+    else retreat();
+  });
+
+  // Initialize first slide
+  show(0);
+</script>
+</body>
+</html>
