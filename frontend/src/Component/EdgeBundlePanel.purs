@@ -21,7 +21,9 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Number (abs) as Num
 import Data.Number (pi)
+import Data.Enum (fromEnum)
 import Data.Set as Set
+import Data.String (toCodePointArray) as String
 import Data.Tuple (Tuple(..))
 import Effect.Aff.Class (class MonadAff)
 import Halogen as H
@@ -110,9 +112,12 @@ render state = case state.bundleResult of
     | otherwise ->
         let
           leafNodes = Array.filter _.isLeaf result.nodes
-          radius = 300.0
-          viewSize = radius * 2.0 + 120.0
+          -- Compute view size from the actual node positions
+          maxExtent = Array.foldl (\acc n -> max acc (max (Num.abs n.cartX) (Num.abs n.cartY))) 0.0 leafNodes
+          viewSize = maxExtent * 2.0 + 160.0
           viewBox = show (-viewSize / 2.0) <> " " <> show (-viewSize / 2.0) <> " " <> show viewSize <> " " <> show viewSize
+          -- Build map of node name → outgoing count for link coloring
+          nodeMap = Map.fromFoldable $ leafNodes <#> \n -> Tuple n.shortName n
         in
         HH.div [ HP.style "padding: 8px;" ]
           [ HH.div [ HP.style "font-size: 11px; color: #888; margin-bottom: 6px;" ]
@@ -125,7 +130,7 @@ render state = case state.bundleResult of
               , HP.style "display: block; border: 1px solid #d5d0c4; border-radius: 4px; background: #faf8f3; max-height: 600px;"
               ]
               ( -- Links first (behind nodes)
-                (result.links <#> renderLink state)
+                (result.links <#> renderLink state nodeMap)
                 -- Nodes
                 <> (leafNodes <#> renderNode state)
                 -- Labels
@@ -137,17 +142,25 @@ render state = case state.bundleResult of
 -- SVG Rendering
 -- =============================================================================
 
-renderLink :: forall w. State -> EdgeBundle.BundledLink -> HH.HTML w Action
-renderLink state link =
+renderLink :: forall w. State -> Map.Map String (EdgeBundle.PositionedNode DeclNode) -> EdgeBundle.BundledLink -> HH.HTML w Action
+renderLink state nodeMap link =
   let
-    isHighlighted = case state.hoveredNode of
-      Just name -> name == link.source || name == link.target
-      Nothing -> false
+    isSourceHovered = state.hoveredNode == Just link.source
+    isTargetHovered = state.hoveredNode == Just link.target
+    isHighlighted = isSourceHovered || isTargetHovered
     opacity = case state.hoveredNode of
-      Nothing -> "0.15"
-      Just _ -> if isHighlighted then "0.7" else "0.03"
-    strokeWidth = if isHighlighted then "1.5" else "0.8"
-    color = if isHighlighted then "#e07020" else "#c8b890"
+      Nothing -> "0.25"
+      Just _ -> if isHighlighted then "0.85" else "0.04"
+    strokeWidth = if isHighlighted then "2.0" else "1.0"
+    -- Color by source node — outgoing calls share a color
+    sourceIdx = case Map.lookup link.source nodeMap of
+      Just n -> n.outgoingCount
+      Nothing -> 0
+    -- Use a categorical palette based on source name hash for variety
+    hue = Int.toNumber ((Array.foldl (\acc c -> acc * 31 + c) 0 (map fromEnum $ Array.fromFoldable $ String.toCodePointArray link.source)) `mod` 360)
+    color = if isHighlighted
+      then "hsl(" <> show hue <> ", 70%, 45%)"
+      else "hsl(" <> show hue <> ", 30%, 70%)"
   in
   svgElem "path"
     [ sa "d" link.path
@@ -163,16 +176,26 @@ renderNode :: forall w. State -> EdgeBundle.PositionedNode DeclNode -> HH.HTML w
 renderNode state node =
   let
     isHovered = state.hoveredNode == Just node.shortName
-    r = if isHovered then 5.0 else 3.5
-    fillColor = case node.data_ of
-      Just d -> kindColor d.kind d.effectful
-      Nothing -> "#999"
+    r = if isHovered then 7.0 else 5.0
+    -- Size node by connection count
+    connections = node.outgoingCount + node.incomingCount
+    nodeR = if isHovered then 7.0
+            else max 4.0 (3.0 + min 5.0 (Int.toNumber connections * 0.8))
+    -- Color nodes by role: high outgoing = warm (callers), high incoming = cool (callees)
+    outRatio = if connections > 0
+      then Int.toNumber node.outgoingCount / Int.toNumber (max 1 connections)
+      else 0.5
+    fillColor = if node.outgoingCount > node.incomingCount
+      then "hsl(25, 70%, " <> show (45.0 + outRatio * 15.0) <> "%)"   -- warm: callers
+      else if node.incomingCount > node.outgoingCount
+        then "hsl(210, 60%, " <> show (45.0 + (1.0 - outRatio) * 15.0) <> "%)"  -- cool: callees
+        else "hsl(150, 40%, 55%)"  -- balanced: green
     strokeColor = if isHovered then "#333" else "rgba(0,0,0,0.2)"
   in
   svgElem "circle"
     [ sa "cx" (show node.cartX)
     , sa "cy" (show node.cartY)
-    , sa "r" (show r)
+    , sa "r" (show nodeR)
     , sa "fill" fillColor
     , sa "stroke" strokeColor
     , sa "stroke-width" (if isHovered then "1.5" else "0.5")
@@ -194,19 +217,19 @@ renderLabel state node =
     textAnchor = if isLeftSide then "end" else "start"
     labelRotation = if isLeftSide then angleDeg + 180.0 else angleDeg
     -- Offset from node
-    labelRadius = node.y + 8.0
+    labelRadius = node.y + 10.0
     labelX = labelRadius
     labelY = 0.0
     transform = "rotate(" <> show angleDeg <> ") translate(" <> show labelX <> ",0) rotate(" <> show (if isLeftSide then 180.0 else 0.0) <> ")"
     opacity = case state.hoveredNode of
-      Nothing -> if isHovered then "1" else "0.6"
-      Just _ -> if isHovered then "1" else "0.2"
+      Nothing -> if isHovered then "1" else "0.7"
+      Just _ -> if isHovered then "1" else "0.25"
   in
   svgElem "text"
     [ sa "transform" transform
     , sa "text-anchor" textAnchor
     , sa "dominant-baseline" "middle"
-    , sa "font-size" (if isHovered then "10" else "8")
+    , sa "font-size" (if isHovered then "11" else "9")
     , sa "font-family" "'Fira Code', 'SF Mono', monospace"
     , sa "fill" "#555"
     , sa "opacity" opacity
@@ -306,12 +329,16 @@ computeBundle input = do
         }
 
       -- Run edge bundle layout
+      -- Scale radius by number of declarations for readability
+      nodeCount = Array.length declNodes
+      outerR = max 200.0 (min 350.0 (80.0 + Int.toNumber nodeCount * 12.0))
+
       result = EdgeBundle.edgeBundle
         { getName: _.name
         , getImports: _.callees
-        , beta: 0.85
-        , innerRadius: 80.0
-        , outerRadius: 280.0
+        , beta: 0.92
+        , innerRadius: outerR * 0.3
+        , outerRadius: outerR
         }
         declNodes
 
