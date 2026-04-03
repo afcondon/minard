@@ -2,6 +2,10 @@
 
 Code cartography for PureScript projects.
 
+**[Try the landing page](https://minard.app)** | **[Watch the teaser](https://youtu.be/_DSgXYpDICI)**
+
+[![Watch the teaser](https://img.youtube.com/vi/_DSgXYpDICI/maxresdefault.jpg)](https://youtu.be/_DSgXYpDICI)
+
 When development is as accelerated as it is now with LLMs, and when LLMs have a context window that is constantly emptying, it's vital that both parties have a source of truth that they share. Minard aims to be that source of truth and a locus of discussion between human and AI developers.
 
 Named for [Charles Joseph Minard](https://en.wikipedia.org/wiki/Charles_Joseph_Minard), whose 1869 visualization of Napoleon's Russian campaign remains the best statistical graphic ever drawn.
@@ -129,6 +133,16 @@ cd frontend && npx serve public -p 3001
 ```
 
 Open http://localhost:3001.
+
+### Static Deploy (GH Pages / minard.app)
+
+To build a bundle for static hosting (shows a "clone me" banner instead of live navigation):
+
+```bash
+make bundle-static    # builds with clone banner, resets source to local mode
+```
+
+The output at `frontend/public/bundle.js` has the banner baked in. The source file (`BuildInfo.js`) is automatically reset to local mode after bundling — safe to commit.
 
 ## AI Collaboration
 

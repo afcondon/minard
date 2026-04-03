@@ -37,15 +37,16 @@ else
   LOADER := __NEEDS_BUILD__
 endif
 
-.PHONY: bootstrap start stop help clean-test
+.PHONY: bootstrap start stop help clean-test bundle-static
 
 help:
 	@echo "Minard — Code Cartography for PureScript"
 	@echo ""
-	@echo "  make bootstrap    Check prereqs, build everything, self-scan"
-	@echo "  make start        Start server + frontend (ports 3000/3001)"
-	@echo "  make stop         Stop services"
-	@echo "  make clean-test   Fresh clone → bootstrap → start in /tmp"
+	@echo "  make bootstrap      Check prereqs, build everything, self-scan"
+	@echo "  make start          Start server + frontend (ports 3000/3001)"
+	@echo "  make stop           Stop services"
+	@echo "  make bundle-static  Build frontend for GH Pages / minard.app (clone banner on)"
+	@echo "  make clean-test     Fresh clone → bootstrap → start in /tmp"
 	@echo ""
 
 # =============================================================================
@@ -94,11 +95,25 @@ _install-deps:
 
 _stamp-build:
 	@echo 'export const buildStamp = "'"$$(date '+%Y-%m-%d %H:%M')"'";' > frontend/src/BuildInfo.js
+	@echo 'export const isStaticDeploy = false;' >> frontend/src/BuildInfo.js
+
+_stamp-build-static:
+	@echo 'export const buildStamp = "'"$$(date '+%Y-%m-%d %H:%M')"'";' > frontend/src/BuildInfo.js
+	@echo 'export const isStaticDeploy = true;' >> frontend/src/BuildInfo.js
 
 _build-frontend: _install-deps _stamp-build
 	@echo "Building frontend..."
 	@spago build -p minard-frontend
 	@spago bundle -p minard-frontend
+
+bundle-static: _install-deps _stamp-build-static
+	@echo "Building static deploy bundle (clone banner enabled)..."
+	@spago build -p minard-frontend
+	@spago bundle -p minard-frontend
+	@echo "Resetting BuildInfo to local mode..."
+	@echo 'export const buildStamp = "'"$$(date '+%Y-%m-%d %H:%M')"'";' > frontend/src/BuildInfo.js
+	@echo 'export const isStaticDeploy = false;' >> frontend/src/BuildInfo.js
+	@echo "Static bundle ready at frontend/public/bundle.js"
 
 _self-scan:
 	@echo "Self-scanning minard codebase..."

@@ -88,6 +88,7 @@ render state =
   HH.div
     [ HP.style containerStyle ]
     [ if state.showInstallModal then renderInstallModal else HH.text ""
+    , if BuildInfo.isStaticDeploy then renderCloneBanner else HH.text ""
     , HH.div
         [ HP.style "max-width: 1200px; width: 100%; margin: 0 auto; padding: 60px 24px 80px; background: linear-gradient(180deg, #FAFAF8 0%, #F5F0E6 100%);" ]
         [ renderHero state
@@ -612,6 +613,24 @@ renderAPITranscript =
       ]
 
 -- =============================================================================
+-- Clone Banner (shown at top when no backend is available)
+-- =============================================================================
+
+renderCloneBanner :: forall m. H.ComponentHTML Action () m
+renderCloneBanner =
+  HH.div
+    [ HP.style $ "background: #2D7D46; color: #fff; padding: 14px 24px; text-align: center; "
+        <> "font-size: 14px; line-height: 1.6; position: sticky; top: 0; z-index: 900;"
+    ]
+    [ HH.span
+        [ HP.style "font-weight: 600; margin-right: 8px;" ]
+        [ HH.text "Clone and run Minard locally:" ]
+    , HH.code
+        [ HP.style "background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 4px; font-size: 13px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; letter-spacing: 0.3px;" ]
+        [ HH.text "git clone https://github.com/afcondon/minard && cd minard && make bootstrap && make start" ]
+    ]
+
+-- =============================================================================
 -- Get Started CTA
 -- =============================================================================
 
@@ -622,7 +641,15 @@ renderGetStarted state =
     [ HH.h2
         [ HP.style $ sectionHeadingStyle <> " margin-bottom: 16px;" ]
         [ HH.text "Start Exploring" ]
-    , HH.p
+    , if BuildInfo.isStaticDeploy
+        then renderGetStartedClone
+        else renderGetStartedLive state
+    ]
+
+renderGetStartedLive :: forall m. State -> H.ComponentHTML Action () m
+renderGetStartedLive state =
+  HH.div_
+    [ HH.p
         [ HP.style "font-size: 15px; color: #555; line-height: 1.7; max-width: 640px; margin: 0 auto 24px;" ]
         [ HH.text "Explore Minard\x2019s own codebase right now:" ]
     -- Mirror the nav buttons from the hero
@@ -655,6 +682,26 @@ renderGetStarted state =
           <> "; transition: all 150ms ease;"
       ]
       [ HH.text label ]
+
+renderGetStartedClone :: forall m. H.ComponentHTML Action () m
+renderGetStartedClone =
+  HH.div_
+    [ HH.p
+        [ HP.style "font-size: 15px; color: #555; line-height: 1.7; max-width: 640px; margin: 0 auto 24px;" ]
+        [ HH.text "Minard runs locally on your machine. Clone, bootstrap, and start exploring:" ]
+    , HH.div
+        [ HP.style "background: #1a1a2e; border-radius: 8px; padding: 20px 28px; max-width: 540px; margin: 0 auto 24px; text-align: left;" ]
+        [ HH.code
+            [ HP.style "color: #c8dce8; font-size: 14px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; line-height: 2; white-space: pre;" ]
+            [ HH.text "git clone https://github.com/afcondon/minard\ncd minard && make bootstrap && make start" ]
+        ]
+    , HH.a
+        [ HP.href "https://github.com/afcondon/minard"
+        , HP.target "_blank"
+        , HP.style "display: inline-block; padding: 12px 28px; background: #2D7D46; color: white; border-radius: 28px; font-size: 14px; font-weight: 600; text-decoration: none; letter-spacing: 0.3px;"
+        ]
+        [ HH.text "View on GitHub" ]
+    ]
 
 -- =============================================================================
 -- Shared Styles
@@ -698,13 +745,19 @@ renderInstallModal =
             [ HH.text "Minard" ]
         , HH.p
             [ HP.style "font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 20px;" ]
-            [ HH.text "Minard needs to be installed locally to run. It\x2019s open source and ready to explore your PureScript codebase." ]
+            [ HH.text "Minard needs to be installed locally to run. Clone, bootstrap, and start:" ]
+        , HH.div
+            [ HP.style "background: #1a1a2e; border-radius: 6px; padding: 14px 20px; margin: 0 0 20px; text-align: left;" ]
+            [ HH.code
+                [ HP.style "color: #c8dce8; font-size: 13px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; line-height: 2; white-space: pre;" ]
+                [ HH.text "git clone https://github.com/afcondon/minard\ncd minard && make bootstrap && make start" ]
+            ]
         , HH.a
             [ HP.href "https://github.com/afcondon/minard"
             , HP.target "_blank"
             , HP.style "display: inline-block; padding: 12px 28px; background: #2D7D46; color: white; border-radius: 28px; font-size: 14px; font-weight: 600; text-decoration: none; letter-spacing: 0.3px; margin-bottom: 12px;"
             ]
-            [ HH.text "Clone from GitHub" ]
+            [ HH.text "View on GitHub" ]
         , HH.p
             [ HP.style "font-size: 12px; color: #999; margin: 0;" ]
             [ HH.text "Click anywhere to dismiss" ]
