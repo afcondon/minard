@@ -13,6 +13,7 @@ module API.Annotations
 
 import Prelude
 
+import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Nullable (Nullable, toMaybe, toNullable)
 import Database.DuckDB (Database, queryAll, queryAllParams, run, firstRow)
@@ -41,7 +42,8 @@ foreign import buildAnnotationJson :: Foreign -> String
 foreign import buildReportMarkdown :: Array Foreign -> Array Foreign -> String
 foreign import parseAnnotationBody :: String -> Nullable Foreign
 foreign import validateCreateFields :: Foreign -> Nullable
-  { target_type :: String
+  { project_id :: Nullable Int
+  , target_type :: String
   , target_id :: String
   , target_id_2 :: Nullable String
   , kind :: String
@@ -68,6 +70,7 @@ list db query = do
       kind = toNullable (Object.lookup "kind" query)
       status = toNullable (Object.lookup "status" query)
       sessionId = toNullable (Object.lookup "session_id" query)
+      projectId = toNullable (Object.lookup "project_id" query >>= Int.fromString)
   rows <- queryAllParams db """
     SELECT * FROM annotations
     WHERE (? IS NULL OR target_type = ?)
@@ -75,6 +78,7 @@ list db query = do
       AND (? IS NULL OR kind = ?)
       AND (? IS NULL OR status = ?)
       AND (? IS NULL OR session_id = ?)
+      AND (? IS NULL OR project_id = ?)
     ORDER BY created_at DESC
     LIMIT 500
   """ [ unsafeToForeign targetType, unsafeToForeign targetType
@@ -82,6 +86,7 @@ list db query = do
       , unsafeToForeign kind, unsafeToForeign kind
       , unsafeToForeign status, unsafeToForeign status
       , unsafeToForeign sessionId, unsafeToForeign sessionId
+      , unsafeToForeign projectId, unsafeToForeign projectId
       ]
   ok' jsonHeaders (buildAnnotationsJson rows)
 
@@ -113,9 +118,10 @@ create db bodyStr =
         Nothing -> badRequest' jsonHeaders """{"error":"Missing required fields: target_type, target_id, kind, value, source"}"""
         Just v -> do
           run db """
-            INSERT INTO annotations (target_type, target_id, target_id_2, kind, value, source, confidence, session_id, supersedes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          """ [ unsafeToForeign v.target_type
+            INSERT INTO annotations (project_id, target_type, target_id, target_id_2, kind, value, source, confidence, session_id, supersedes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """ [ unsafeToForeign v.project_id
+              , unsafeToForeign v.target_type
               , unsafeToForeign v.target_id
               , unsafeToForeign v.target_id_2
               , unsafeToForeign v.kind
@@ -157,23 +163,65 @@ update db annId bodyStr =
 -- GET /api/v2/report
 -- =============================================================================
 
--- | Generate a markdown codebase report with all annotations and module stats
-report :: Database -> Aff Response
-report db = do
-  annotationRows <- queryAll db """
-    SELECT a.*, m.name as module_name, pv.name as package_name
+-- | Generate a markdown codebase report, scoped to a project. Annotations are
+-- | filtered by project_id directly. Module stats come from the project's
+-- | latest snapshot for declaration counts and LOC.
+report :: Database -> Maybe Int -> Maybe Int -> Aff Response
+report db mProject mSnapshot = do
+  let projectParam = unsafeToForeign (toNullable mProject)
+      snapshotParams = [projectParam, unsafeToForeign (toNullable mSnapshot)]
+  annotationRows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    ),
+    target_snapshot AS (
+      SELECT COALESCE(?,
+        (SELECT s.id FROM snapshots s
+         WHERE s.project_id = (SELECT project_id FROM target)
+         ORDER BY s.id DESC LIMIT 1)
+      ) as snapshot_id
+    ),
+    project_modules AS (
+      SELECT m.name as module_name, pv.name as package_name
+      FROM modules m
+      JOIN package_versions pv ON m.package_version_id = pv.id
+      JOIN snapshot_packages sp ON sp.package_version_id = pv.id
+      WHERE sp.snapshot_id = (SELECT snapshot_id FROM target_snapshot)
+    )
+    SELECT a.*,
+           pm.module_name as module_name,
+           pm.package_name as package_name
     FROM annotations a
-    LEFT JOIN modules m ON a.target_type = 'module' AND a.target_id = m.name
-    LEFT JOIN package_versions pv ON m.package_version_id = pv.id
-    ORDER BY pv.name, a.target_id, a.kind
-  """
-  moduleStatsRows <- queryAll db """
+    JOIN project_modules pm ON a.target_type = 'module' AND a.target_id = pm.module_name
+    WHERE a.project_id = (SELECT project_id FROM target)
+    UNION ALL
+    SELECT a.*,
+           a.target_id as module_name,
+           a.target_id as package_name
+    FROM annotations a
+    WHERE a.target_type = 'package'
+      AND a.project_id = (SELECT project_id FROM target)
+    ORDER BY package_name, target_id, kind
+  """ snapshotParams
+  moduleStatsRows <- queryAllParams db """
+    WITH target AS (
+      SELECT COALESCE(?, (SELECT MIN(id) FROM projects)) as project_id
+    ),
+    target_snapshot AS (
+      SELECT COALESCE(?,
+        (SELECT s.id FROM snapshots s
+         WHERE s.project_id = (SELECT project_id FROM target)
+         ORDER BY s.id DESC LIMIT 1)
+      ) as snapshot_id
+    )
     SELECT m.name as module_name, pv.name as package_name,
            COUNT(d.id) as decl_count, COALESCE(m.loc, 0) as loc
     FROM modules m
     JOIN package_versions pv ON m.package_version_id = pv.id
+    JOIN snapshot_packages sp ON sp.package_version_id = pv.id
     LEFT JOIN declarations d ON d.module_id = m.id
+    WHERE sp.snapshot_id = (SELECT snapshot_id FROM target_snapshot)
     GROUP BY m.id, m.name, pv.name, m.loc
     ORDER BY pv.name, m.name
-  """
+  """ snapshotParams
   ok' markdownHeaders (buildReportMarkdown annotationRows moduleStatsRows)

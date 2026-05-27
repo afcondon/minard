@@ -152,6 +152,7 @@ main = launchAff_ do
     CREATE SEQUENCE IF NOT EXISTS seq_annotation_id START 1;
     CREATE TABLE IF NOT EXISTS annotations (
       id              INTEGER PRIMARY KEY DEFAULT nextval('seq_annotation_id'),
+      project_id      INTEGER,
       target_type     VARCHAR NOT NULL,
       target_id       VARCHAR NOT NULL,
       target_id_2     VARCHAR,
@@ -168,6 +169,12 @@ main = launchAff_ do
     CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind);
     CREATE INDEX IF NOT EXISTS idx_annotations_status ON annotations(status);
     CREATE INDEX IF NOT EXISTS idx_annotations_session ON annotations(session_id);
+    CREATE INDEX IF NOT EXISTS idx_annotations_project ON annotations(project_id);
+  """
+  -- Migration: add project_id column if table predates this schema
+  DB.exec db """
+    ALTER TABLE annotations ADD COLUMN IF NOT EXISTS project_id INTEGER;
+    CREATE INDEX IF NOT EXISTS idx_annotations_project ON annotations(project_id);
   """
   liftEffect $ log "Annotations table ready"
 
@@ -238,7 +245,11 @@ main = launchAff_ do
     let mProject = Object.lookup "project" query >>= Int.fromString
     let mSnapshot = case Object.lookup "snapshot" query >>= Int.fromString of
           Just s -> Just s
-          Nothing -> mDefaultSnapshot
+          Nothing -> case mProject of
+            -- When a project is specified, let SQL pick that project's latest snapshot.
+            -- Only fall back to the global default when no scoping at all was requested.
+            Just _ -> Nothing
+            Nothing -> mDefaultSnapshot
     case r of
       V2Stats -> Unified.getStats db
       V2ListPackages -> Unified.listPackages db mProject mSnapshot
@@ -293,7 +304,7 @@ main = launchAff_ do
           Annotations.update db annId bodyStr
         Options -> ok' corsHeaders ""
         _ -> ok "{ \"error\": \"Method not allowed\" }"
-      V2Report -> Annotations.report db
+      V2Report -> Annotations.report db mProject mSnapshot
       V2ListProjects -> Projects.listProjects db
       V2ValidatePath -> case method of
         Post -> do

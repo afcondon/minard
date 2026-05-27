@@ -17,6 +17,7 @@ export const buildAnnotationJson = (row) => {
 function formatAnnotation(row) {
   return {
     id: Number(row.id),
+    projectId: row.project_id != null ? Number(row.project_id) : null,
     targetType: row.target_type,
     targetId: row.target_id,
     targetId2: row.target_id_2 || null,
@@ -57,6 +58,7 @@ export const validateCreateFields = (body) => {
     return null;
   }
   return {
+    project_id: body.project_id != null ? Number(body.project_id) : null,
     target_type: String(body.target_type),
     target_id: String(body.target_id),
     target_id_2: body.target_id_2 ? String(body.target_id_2) : null,
