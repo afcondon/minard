@@ -272,7 +272,7 @@ type Input =
 data Output
   = RequestPackageSetData
   | SceneChanged Scene
-  | ProjectLoaded          -- A project was loaded; AppShell should re-fetch all data
+  | ProjectLoaded (Maybe Int)  -- A project was loaded; Just id for explicit switch, Nothing for add (falls back to default)
   | RequestDataRefresh (Array Loader.ProjectInfo)  -- User clicked Sync; re-run loader + re-fetch
 
 -- | Slot type for parent component

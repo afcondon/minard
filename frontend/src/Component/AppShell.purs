@@ -62,6 +62,7 @@ type State =
   , currentScene :: Scene  -- Track current scene for header display
   , currentFocal :: Maybe String  -- For URL routing
   , currentScope :: BeeswarmScope  -- For URL routing
+  , currentProjectId :: Maybe Int  -- Currently selected project; scopes all data fetches
   }
 
 -- | Actions handled at the shell level
@@ -103,6 +104,7 @@ initialState _ =
   , currentScene: ProjectManagement
   , currentFocal: Nothing
   , currentScope: ProjectOnly
+  , currentProjectId: Nothing
   }
 
 -- =============================================================================
@@ -197,7 +199,7 @@ handleAction = case _ of
             log "[AppShell] No projects found"
           else do
             log $ "[AppShell] Found " <> show (Array.length projects) <> " project(s), loading data in background..."
-            loadAllData
+            loadAllData Nothing
 
   DataLoaded loaded -> do
     log $ "[AppShell] Data loaded: " <> show loaded.model.moduleCount <> " modules, "
@@ -231,7 +233,7 @@ handleAction = case _ of
         Nothing -> do
           log "[AppShell] Fetching package set data from V2 API..."
           void $ H.fork do
-            result <- H.liftAff $ Loader.fetchPackageSetFromV2
+            result <- H.liftAff (Loader.fetchPackageSetFromV2 state.currentProjectId)
             case result of
               Left err -> log $ "[AppShell] Failed to fetch package set: " <> err
               Right psData -> handleAction (PackageSetLoaded psData)
@@ -240,18 +242,21 @@ handleAction = case _ of
       log $ "[AppShell] Scene changed to: " <> show newScene
       H.modify_ _ { currentScene = newScene }
 
-    SceneCoordinator.ProjectLoaded -> do
-      log "[AppShell] Project loaded — re-fetching all data..."
-      H.modify_ _ { phase = Loading }
-      void $ H.fork loadAllData
+    SceneCoordinator.ProjectLoaded mProjectId -> do
+      log $ "[AppShell] Project loaded — refreshing data in place (project=" <> show mProjectId <> ")..."
+      -- Refresh in place rather than dropping to phase=Loading; setting Loading
+      -- would unmount SceneCoordinator and force a full re-init from URL hash.
+      H.modify_ _ { currentProjectId = mProjectId }
+      void $ H.fork (refreshAllData mProjectId)
 
     SceneCoordinator.RequestDataRefresh projects -> do
       log $ "[AppShell] Sync requested for " <> show (Array.length projects) <> " project(s)"
+      state <- H.get
       void $ H.fork do
         -- Step 1: Re-run Rust loader for each project (sequential)
         _results <- H.liftAff $ Loader.reloadProjects projects
         -- Step 2: Re-fetch bulk data (same as loadAllData but no phase change)
-        refreshAllData
+        refreshAllData state.currentProjectId
 
   RefreshDataLoaded loaded -> do
     log $ "[AppShell] Refresh data loaded: " <> show loaded.model.moduleCount <> " modules, "
@@ -267,23 +272,23 @@ handleAction = case _ of
       }
 
 -- | Load all model data from the V2 API
-loadAllData :: forall output m. MonadAff m => H.HalogenM State Action Slots output m Unit
-loadAllData = do
-  result <- H.liftAff Loader.loadModelFromV2WithRaw
+loadAllData :: forall output m. MonadAff m => Maybe Int -> H.HalogenM State Action Slots output m Unit
+loadAllData mProject = do
+  result <- H.liftAff (Loader.loadModelFromV2WithRaw mProject)
   case result of
     Left err -> handleAction (DataFailed err)
     Right loaded -> do
       handleAction (DataLoaded loaded)
       -- Also fetch package set data so the landing page buttons enable
-      psResult <- H.liftAff Loader.fetchPackageSetFromV2
+      psResult <- H.liftAff (Loader.fetchPackageSetFromV2 mProject)
       case psResult of
         Left err -> log $ "[AppShell] Failed to fetch package set: " <> err
         Right psData -> handleAction (PackageSetLoaded psData)
 
 -- | Refresh all data without changing phase (existing viz stays visible)
-refreshAllData :: forall output m. MonadAff m => H.HalogenM State Action Slots output m Unit
-refreshAllData = do
-  result <- H.liftAff Loader.loadModelFromV2WithRaw
+refreshAllData :: forall output m. MonadAff m => Maybe Int -> H.HalogenM State Action Slots output m Unit
+refreshAllData mProject = do
+  result <- H.liftAff (Loader.loadModelFromV2WithRaw mProject)
   case result of
     Left err -> do
       log $ "[AppShell] Refresh failed: " <> err
@@ -291,7 +296,7 @@ refreshAllData = do
     Right loaded -> do
       handleAction (RefreshDataLoaded loaded)
       -- Also refresh package set data
-      psResult <- H.liftAff Loader.fetchPackageSetFromV2
+      psResult <- H.liftAff (Loader.fetchPackageSetFromV2 mProject)
       case psResult of
         Left err -> log $ "[AppShell] Failed to refresh package set: " <> err
         Right psData -> handleAction (PackageSetLoaded psData)

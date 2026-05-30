@@ -506,7 +506,9 @@ handleAction = case _ of
       case state.cachedModules of
         Just modules -> startModuleVisualization modules
         Nothing -> do
-          modulesResult <- liftAff Loader.fetchV2Modules
+          -- TODO: plumb currentProjectId through SceneCoordinator + this component's Input
+          -- so the on-demand module fetch is scoped. Today this uses the server default.
+          modulesResult <- liftAff (Loader.fetchV2Modules Nothing)
           case modulesResult of
             Left err -> do
               log $ "[ProjectAnatomyViz] Failed to fetch modules: " <> err

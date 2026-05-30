@@ -1314,10 +1314,10 @@ handleAction = case _ of
   HandleProjectManagementOutput output -> case output of
     ProjectManagementViz.ProjectAdded _loadResult -> do
       log "[SceneCoordinator] Project loaded, notifying AppShell"
-      H.raise ProjectLoaded
-    ProjectManagementViz.NavigateToProject _projectId -> do
-      log "[SceneCoordinator] Navigate to loaded project"
-      H.raise ProjectLoaded
+      H.raise (ProjectLoaded Nothing)
+    ProjectManagementViz.NavigateToProject projectId -> do
+      log $ "[SceneCoordinator] Navigate to loaded project " <> show projectId
+      H.raise (ProjectLoaded (Just projectId))
     ProjectManagementViz.ProjectDeleted _projectId -> do
       log "[SceneCoordinator] Project deleted"
       -- Re-fetch projects list

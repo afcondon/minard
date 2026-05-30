@@ -765,9 +765,9 @@ fetchPackageSet packageSetId = do
 
 -- | Fetch packages from V2 API and convert to PackageSetData format
 -- | This provides backward compatibility for visualizations that expect PackageSetData
-fetchPackageSetFromV2 :: Aff (Either String PackageSetData)
-fetchPackageSetFromV2 = do
-  packagesResult <- fetchV2Packages
+fetchPackageSetFromV2 :: Maybe Int -> Aff (Either String PackageSetData)
+fetchPackageSetFromV2 mProject = do
+  packagesResult <- fetchV2Packages mProject
   pure $ do
     v2Packages <- packagesResult
     Right $ v2ToPackageSetData v2Packages
@@ -1130,10 +1130,16 @@ fetchV2Stats = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/stats")
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
 
--- | Fetch all packages
-fetchV2Packages :: Aff (Either String (Array V2Package))
-fetchV2Packages = do
-  result <- fetchJson (apiBaseUrl <> "/api/v2/packages")
+-- | Build a "?project=N" query string, or "" when no project filter is set.
+projectQuery :: Maybe Int -> String
+projectQuery = case _ of
+  Nothing -> ""
+  Just pid -> "?project=" <> show pid
+
+-- | Fetch all packages, optionally scoped to a project.
+fetchV2Packages :: Maybe Int -> Aff (Either String (Array V2Package))
+fetchV2Packages mProject = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/packages" <> projectQuery mProject)
   pure $ do
     json <- result
     response :: V2PackagesResponse <- decodeJson json # mapLeft printJsonDecodeError
@@ -1154,10 +1160,10 @@ fetchV2Package packageId = do
   result <- fetchJson (apiBaseUrl <> "/api/v2/packages/" <> show packageId)
   pure $ result >>= \json -> decodeJson json # mapLeft printJsonDecodeError
 
--- | Fetch modules (paginated, 500 limit)
-fetchV2Modules :: Aff (Either String (Array V2ModuleListItem))
-fetchV2Modules = do
-  result <- fetchJson (apiBaseUrl <> "/api/v2/modules")
+-- | Fetch modules (paginated, 500 limit), optionally scoped to a project.
+fetchV2Modules :: Maybe Int -> Aff (Either String (Array V2ModuleListItem))
+fetchV2Modules mProject = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/modules" <> projectQuery mProject)
   pure $ do
     json <- result
     response :: V2ModulesResponse <- decodeJson json # mapLeft printJsonDecodeError
@@ -1304,10 +1310,11 @@ searchV2Declarations query = do
 -- Bulk Data Fetchers
 -- =============================================================================
 
--- | Fetch all module imports in one request (for building dependency graph)
-fetchV2AllImports :: Aff (Either String (Array V2ModuleImports))
-fetchV2AllImports = do
-  result <- fetchJson (apiBaseUrl <> "/api/v2/all-imports")
+-- | Fetch all module imports in one request (for building dependency graph),
+-- | optionally scoped to a project.
+fetchV2AllImports :: Maybe Int -> Aff (Either String (Array V2ModuleImports))
+fetchV2AllImports mProject = do
+  result <- fetchJson (apiBaseUrl <> "/api/v2/all-imports" <> projectQuery mProject)
   pure $ do
     json <- result
     response :: V2AllImportsResponse <- decodeJson json # mapLeft printJsonDecodeError
@@ -1327,15 +1334,15 @@ fetchV2AllCalls = do
 -- Unified Model Loader (V2 API)
 -- =============================================================================
 
--- | Load model from unified v2 API
+-- | Load model from unified v2 API, optionally scoped to a project.
 -- | This replaces the legacy project/snapshot-based loading with direct access
 -- | to the unified schema.
-loadModelFromV2 :: Aff (Either String LoadedModel)
-loadModelFromV2 = do
+loadModelFromV2 :: Maybe Int -> Aff (Either String LoadedModel)
+loadModelFromV2 mProject = do
   -- Fetch all data in parallel
-  packagesResult <- fetchV2Packages
-  modulesResult <- fetchV2Modules
-  importsResult <- fetchV2AllImports
+  packagesResult <- fetchV2Packages mProject
+  modulesResult <- fetchV2Modules mProject
+  importsResult <- fetchV2AllImports mProject
 
   pure $ do
     packages <- packagesResult
@@ -1361,15 +1368,15 @@ type LoadedModelWithV2 =
   , v2Imports :: Array V2ModuleImports
   }
 
--- | Load model from v2 API, also returning raw V2 data
+-- | Load model from v2 API, also returning raw V2 data, optionally scoped to a project.
 -- | Use this when you need both the transformed model and raw data for
 -- | specialized visualizations like the topological beeswarm.
-loadModelFromV2WithRaw :: Aff (Either String LoadedModelWithV2)
-loadModelFromV2WithRaw = do
+loadModelFromV2WithRaw :: Maybe Int -> Aff (Either String LoadedModelWithV2)
+loadModelFromV2WithRaw mProject = do
   -- Fetch all data
-  packagesResult <- fetchV2Packages
-  modulesResult <- fetchV2Modules
-  importsResult <- fetchV2AllImports
+  packagesResult <- fetchV2Packages mProject
+  modulesResult <- fetchV2Modules mProject
+  importsResult <- fetchV2AllImports mProject
 
   pure $ do
     v2Packages <- packagesResult
