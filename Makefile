@@ -132,7 +132,7 @@ _self-scan:
 
 start:
 	@echo "Starting Minard..."
-	@cd $(MINARD) && PORT=$(API_PORT) node server/run.js &
+	@cd $(MINARD) && PORT=$(API_PORT) MINARD_DB=$(DB) node server/run.js &
 	@cd $(MINARD)/frontend && npx serve public -p $(FRONTEND_PORT) &
 	@sleep 1
 	@echo ""

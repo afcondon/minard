@@ -22,6 +22,7 @@ import API.Snapshots as Snapshots
 import API.Unified as Unified
 
 foreign import getPortFromEnv :: Effect Int
+foreign import getDbPathFromEnv :: Effect String
 
 -- =============================================================================
 -- Routes (V2 API only)
@@ -138,16 +139,19 @@ route = root $ sum
 -- Server
 -- =============================================================================
 
-dbPath :: String
-dbPath = "./database/ce-unified.duckdb"
-
 main :: Effect Unit
 main = launchAff_ do
+  dbPath <- liftEffect getDbPathFromEnv
   db <- DB.openDB dbPath
   dbRef <- liftEffect $ Ref.new db
   liftEffect $ log $ "Connected to database: " <> dbPath
 
-  -- Ensure annotations table exists (idempotent migration)
+  -- Ensure annotations table exists (idempotent migration).
+  -- NOTE on ordering: CREATE TABLE IF NOT EXISTS is a no-op when the table
+  -- already exists — e.g. a fresh DuckDB created by the loader, whose
+  -- annotations table predates the project_id column. So the ALTER below
+  -- must run BEFORE any index that references project_id, otherwise the
+  -- index creation fails with a binder error on a brand-new database.
   DB.exec db """
     CREATE SEQUENCE IF NOT EXISTS seq_annotation_id START 1;
     CREATE TABLE IF NOT EXISTS annotations (
@@ -165,15 +169,17 @@ main = launchAff_ do
       session_id      VARCHAR,
       created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+  """
+  -- Backfill project_id on tables created by an older schema / the loader.
+  DB.exec db """
+    ALTER TABLE annotations ADD COLUMN IF NOT EXISTS project_id INTEGER;
+  """
+  -- Indexes last, once every referenced column is guaranteed to exist.
+  DB.exec db """
     CREATE INDEX IF NOT EXISTS idx_annotations_target ON annotations(target_type, target_id);
     CREATE INDEX IF NOT EXISTS idx_annotations_kind ON annotations(kind);
     CREATE INDEX IF NOT EXISTS idx_annotations_status ON annotations(status);
     CREATE INDEX IF NOT EXISTS idx_annotations_session ON annotations(session_id);
-    CREATE INDEX IF NOT EXISTS idx_annotations_project ON annotations(project_id);
-  """
-  -- Migration: add project_id column if table predates this schema
-  DB.exec db """
-    ALTER TABLE annotations ADD COLUMN IF NOT EXISTS project_id INTEGER;
     CREATE INDEX IF NOT EXISTS idx_annotations_project ON annotations(project_id);
   """
   liftEffect $ log "Annotations table ready"
@@ -193,7 +199,7 @@ main = launchAff_ do
 
   port <- liftEffect getPortFromEnv
   liftEffect do
-    _ <- serve { port } { route, router: mkRouter dbRef defaultSnapshotRef }
+    _ <- serve { port } { route, router: mkRouter dbRef defaultSnapshotRef dbPath }
     log $ "Minard API server running on http://localhost:" <> show port
     log ""
     log "Endpoints:"
@@ -239,7 +245,7 @@ main = launchAff_ do
     log "  GET /health                              - Health check"
   where
   corsHeaders = headers { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
-  mkRouter dbRef defaultSnapshotRef { route: r, query, method, body } = do
+  mkRouter dbRef defaultSnapshotRef dbPath { route: r, query, method, body } = do
     db <- liftEffect $ Ref.read dbRef
     mDefaultSnapshot <- liftEffect $ Ref.read defaultSnapshotRef
     let mProject = Object.lookup "project" query >>= Int.fromString
