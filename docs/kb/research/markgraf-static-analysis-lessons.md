@@ -24,25 +24,45 @@ On a database where `annotations` already existed *without* `project_id`
 binder error, server crashes on boot. The `ALTER` that would have fixed it
 ran too late.
 
-**Catchable? Yes — and minard-db already has the checker.**
-`MinardDB.Migration.Safety` scans a `Migration` sequence for exactly
-`MissingTargetColumn` (a step references a column not yet present). This bug
-is a textbook instance. Two gaps stop it from firing today:
+**Catchable? In principle yes — minard-db has the right *shape* but not
+this case.** I checked the actual code (`MinardDB.Migration`,
+`Migration.SQL`, `Migration.Safety`). `Safety` does scan for
+`MissingTargetColumn` — but `checkSchemaRI` only walks `table.foreignKeys`,
+so today it catches column-reference integrity for **foreign keys only,
+not indexes**. Our bug was a `CREATE INDEX` on a missing column. Four
+concrete, ordered gaps stand between the current suite and catching it —
+this is a real work item, not a wiring-up:
 
-- **No ingestion path from embedded SQL.** minard-db operates on the
-  abstract `Migration` ADT; the bug lived in `DB.exec db """..."""` string
-  literals in a PureScript file. We need a DDL extractor that lifts embedded
-  migration SQL (and the loader's `database/schema/*.sql`) into the
-  `Migration` model so `Safety` can run on the *real* migrations, not just
-  hand-written fixtures. Minard already parses these source files — the
-  string-literal SQL is sitting right there in the AST.
-- **`IF NOT EXISTS` no-op semantics aren't modelled.** A naive analyzer sees
-  `project_id` in the `CREATE TABLE` and concludes it exists — missing the
-  bug. The model needs an `ifNotExists` flag on `CreateTable`/`AddColumn`
-  and the rule that *on a pre-existing, divergent table the columns
-  declared in a skipped CREATE are NOT guaranteed.* This is the subtle,
-  load-bearing part: the bug only exists because of the gap between the
-  declared schema and what a no-op'd CREATE actually leaves behind.
+1. **Parse indexes.** `Migration.SQL` *deliberately* skips indexes (see its
+   module header: "What we do NOT handle (deliberately): … indexes …"). It
+   must learn `CREATE INDEX [IF NOT EXISTS] name ON table(cols)`.
+2. **Model indexes.** The `Migration` ADT (`CreateTable`, `DropTable`,
+   `AddColumn`, `DropColumn`, `AddForeignKey`, `DropForeignKey`) has no
+   index constructor. Add `CreateIndex { table, columns, ifNotExists }`.
+3. **Model `IF NOT EXISTS` no-op semantics — the load-bearing part.** The
+   parser currently *parses `IF NOT EXISTS` and throws it away*
+   (`Migration.SQL` line ~429 yields a bare `CreateTable`), and
+   `applyMigration (CreateTable t)` on an existing table returns
+   `Left "already exists"`. Neither models what actually bit us: a
+   `CREATE TABLE IF NOT EXISTS` that **silently no-ops on a pre-existing,
+   divergent table, leaving the OLD columns** (no `project_id`). Without an
+   `ifNotExists` flag and that no-op-keeps-divergent-table rule, the
+   analyzer can't even see that `project_id` is absent — it's right there
+   in the CREATE text.
+4. **Extend the RI check to index columns.** Generalize `checkOneFK`'s
+   column-presence logic so `CreateIndex` referencing an absent column
+   raises `MissingTargetColumn` too.
+
+With all four, feeding the real annotations migration would report exactly:
+*"CREATE INDEX idx_annotations_project references annotations.project_id,
+absent because the CREATE TABLE IF NOT EXISTS no-op'd on the pre-existing
+table and the ALTER that adds it runs later."* That is the bug.
+
+**Ingestion.** Separately, the migrations live as `DB.exec db """..."""`
+string literals in `server/src/Main.purs` (and the loader's
+`database/schema/*.sql`). An extractor must lift that embedded SQL into
+`Migration.SQL.parseSql`. Minard already parses these source files; the
+string-literal SQL is in the AST.
 
 ## 2. Divergent multi-site schema definitions
 
@@ -106,7 +126,14 @@ hard-coded `dbPath` sitting next to `getPortFromEnv`.
 ## Priority for the mill
 
 1 and 2 are the prize: both are squarely in the suite's stated ambitions
-(minard-db migration safety; polyglot cross-artifact view), the checker for
-#1 *already exists* and just needs to be pointed at real ingested SQL, and
-together they'd have caught the only true clone-and-run blocker before it
-ever reached an external user.
+(minard-db migration safety; polyglot cross-artifact view), and together
+they'd have caught the only true clone-and-run blocker before it reached an
+external user. #1 is not free — it's the four-step extension above
+(parse + model indexes, model `IF NOT EXISTS` no-op semantics, extend the
+column-RI check) plus an embedded-SQL ingestion path — but minard-db's
+existing `MissingTargetColumn` machinery and Alloy temporal model give it a
+running start: the column-reference integrity check and the trace-based
+"introduced / resolved / standing" framing are exactly the substrate this
+needs. The IF-NOT-EXISTS no-op rule (step 3) is the genuinely new modelling
+work and the most interesting, since it's where declared schema and
+effective schema diverge.
