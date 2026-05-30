@@ -117,11 +117,21 @@ pub struct PackageSetAddress {
     pub registry: Option<String>,
 }
 
+/// An extra package pinned in the workspace. Spago writes these in two shapes:
+/// - a bare registry version string: `"yoga-json": "5.2.0"`
+/// - a git/path spec: `{ "git": "...", "ref": "..." }` or `{ "path": "..." }`
 #[derive(Debug, Deserialize)]
-pub struct ExtraPackage {
-    pub path: Option<String>,
-    pub git: Option<String>,
-    pub ref_: Option<String>,
+#[serde(untagged)]
+pub enum ExtraPackage {
+    /// Registry version pin, e.g. `"5.2.0"`
+    Version(String),
+    /// Git or local-path spec
+    Spec {
+        path: Option<String>,
+        git: Option<String>,
+        #[serde(rename = "ref")]
+        ref_: Option<String>,
+    },
 }
 
 /// Package entry in the resolved packages section

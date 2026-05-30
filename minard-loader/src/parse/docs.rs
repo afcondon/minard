@@ -155,8 +155,15 @@ impl DocsJson {
     }
 
     /// Parse docs.json from a string
+    ///
+    /// Uses a recursion-limit-disabled deserializer: some generated modules
+    /// (e.g. React.Basic.DOM.Generated, Yoga.React.DOM.Attributes) nest deeply
+    /// enough to exceed serde_json's default 128-level limit. The compiler emits
+    /// these as trusted input, so disabling the guard is safe here.
     pub fn from_str(content: &str, path: &Path) -> Result<Self> {
-        serde_json::from_str(content).map_err(|e| LoaderError::JsonParse {
+        let mut de = serde_json::Deserializer::from_str(content);
+        de.disable_recursion_limit();
+        Self::deserialize(&mut de).map_err(|e| LoaderError::JsonParse {
             path: path.to_path_buf(),
             source: e,
         })
