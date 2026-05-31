@@ -8,6 +8,10 @@ is the natural home. Recorded as grist for the Minard mill.
 
 ## 1. Embedded-SQL migration ordering — `MissingTargetColumn`
 
+> **Planned.** This lesson is now scoped as a buildable plan in the
+> notothenia repo: `minard-db/docs/phase3f-effective-schema-and-indexes.md`
+> (DESIGN.md Phase 3f).
+
 **The bug.** The server's annotations migration (`server/src/Main.purs`)
 ran, in one batch:
 
