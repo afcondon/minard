@@ -27,7 +27,7 @@ import Hylograph.ForceEngine.Simulation (SimulationNode)
 import Hylograph.ForceEngine.Types (ForceSpec(..), defaultCollide, defaultLink, defaultManyBody)
 import Hylograph.HATS (Tree, elem, forEach, staticStr, staticNum, thunkedNum, thunkedStr, onClick, withBehaviors)
 import Hylograph.HATS.InterpreterTick (rerender)
-import Hylograph.Internal.Selection.Types (ElementType(..))
+import Hylograph.Internal.Element.Types (ElementType(..))
 import SiteExplorer.Types (RouteInfo, RouteStatus(..))
 
 -- =============================================================================
