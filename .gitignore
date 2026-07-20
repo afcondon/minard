@@ -24,3 +24,4 @@ frontend/public/bundle.js
 frontend/test-*.js
 frontend/test-*.html
 *.duckdb
+.direnv/
