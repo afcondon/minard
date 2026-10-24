@@ -1,0 +1,57 @@
+:root { --cream: #f5f2eb; --ink: #16140f; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--cream);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+#app { width: 100vw; height: 100vh; }
+#app > svg { display: block; width: 100%; height: 100%; }
+.mm-msg { padding: 2rem; font-weight: 300; }
+.mm-err { color: #e23b2e; }
+
+.mm-stage { position: relative; width: 100%; height: 100%; }
+.mm-stage > svg { display: block; width: 100%; height: 100%; }
+/* editorial (De Stijl) view: cream margin around the black grid, masthead above */
+.mm-editorial {
+  display: flex; flex-direction: column;
+  padding: clamp(14px, 2.4vw, 40px);
+  gap: clamp(8px, 1.4vw, 20px);
+}
+.mm-editorial > svg { flex: 1 1 auto; height: auto; min-height: 0; }
+.mm-title {
+  font-weight: 200;
+  font-size: clamp(1.4rem, 3.4vw, 2.8rem);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.mm-toggle {
+  position: absolute; top: 1rem; right: 1rem;
+  font: inherit; font-size: 0.78rem; letter-spacing: 0.04em;
+  border: 1px solid var(--ink); background: var(--cream); color: var(--ink);
+  padding: 0.3rem 0.8rem; border-radius: 2px; cursor: pointer;
+}
+.mm-toggle.on { background: var(--ink); color: var(--cream); }
+
+/* cursor-tracking tooltip: project description (cell/info icon) or sub-project (bubble) */
+.mm-tip {
+  position: fixed; pointer-events: none; z-index: 20;
+  max-width: 22rem;
+  background: var(--ink); color: var(--cream);
+  padding: 0.5rem 0.7rem; border-radius: 3px;
+  font-size: 0.8rem; line-height: 1.45;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.28);
+}
+.mm-tip-img {
+  display: block; width: 5.5rem; height: 5.5rem; object-fit: cover;
+  border-radius: 50%; margin: 0.1rem auto 0.55rem;
+  border: 2px solid rgba(245, 242, 235, 0.28);
+}
+.mm-tip-title { font-weight: 600; margin-bottom: 0.25rem; }
+.mm-tip-body {
+  font-weight: 300; opacity: 0.9;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 7; line-clamp: 7;
+  overflow: hidden;
+}
