@@ -6,7 +6,10 @@
 -- |   * Atlas (two tiers, the full Marginalia view) -- light domain-tinted cells.
 -- | Hovering a cell (or its corner info icon) tooltips the project's description; hovering
 -- | a bubble tooltips that sub-project's. The tree carries no colour; style is applied here.
-module MM.Component (component) where
+-- |
+-- | Clicking an umbrella cell SELECTS it (the other cells dim) and tells MM.App, which
+-- | shares the selection with the Timeline view. A second click clears it.
+module MM.Component (Input, Output(..), component) where
 
 import Prelude
 
@@ -31,6 +34,8 @@ import Halogen.HTML.Core (AttrName(..), ClassName(..), ElemName(..), Namespace(.
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import MM.Layout (Bubble, Cell, layoutTree)
+import MM.Palette as Palette
+import MM.Timeline.Types (UmbrellaId(..))
 import MM.Types (Edge, TreeData(..), parseTree)
 import Web.UIEvent.MouseEvent (MouseEvent, clientX, clientY, ctrlKey, metaKey)
 
@@ -62,6 +67,11 @@ vbH = 1000.0
 
 type Tip = { title :: String, body :: String, cover :: Maybe String, x :: Int, y :: Int, key :: String, pinned :: Boolean }
 
+-- | The umbrella selected in either view, owned by MM.App.
+type Input = { selected :: Maybe UmbrellaId }
+
+data Output = SelectUmbrella (Maybe UmbrellaId)
+
 type Loaded =
   { cells :: Array Cell
   , edges :: Array Edge
@@ -71,10 +81,12 @@ type Loaded =
   , link :: LinkConfig
   }
 
-data State
+data Status
   = Loading
   | Failed String
   | Ready Loaded
+
+type State = { selected :: Maybe UmbrellaId, status :: Status }
 
 data Action
   = Initialize
@@ -83,6 +95,9 @@ data Action
   | LeaveTip
   | ClickTip Tip -- tap/click: toggle a pinned tip (touch-friendly)
   | OpenLink String -- modifier-click: open the resolved target (tracker page or repo)
+  | ClickCell Int Tip -- plain click on an umbrella cell: toggle its selection (and pin its tip)
+  | ClickBubble Int Tip -- plain click on a bubble: pin its tip and select its umbrella
+  | Receive Input
 
 data Theme = Atlas | Editorial
 
@@ -91,52 +106,65 @@ themeClass = case _ of
   Editorial -> "mm-editorial"
   Atlas -> "mm-atlas"
 
-component :: forall q i o m. MonadAff m => H.Component q i o m
+component :: forall q m. MonadAff m => H.Component q Input Output m
 component =
   H.mkComponent
-    { initialState: const Loading
+    { initialState: \input -> { selected: input.selected, status: Loading }
     , render
     , eval: H.mkEval H.defaultEval
         { handleAction = handleAction
         , initialize = Just Initialize
+        , receive = Just <<< Receive
         }
     }
 
-handleAction :: forall o m. MonadAff m => Action -> H.HalogenM State Action () o m Unit
+handleAction :: forall m. MonadAff m => Action -> H.HalogenM State Action () Output m Unit
 handleAction = case _ of
   Initialize -> do
     cfg <- liftEffect readLinkConfig
     resp <- H.liftAff $ AX.get ARF.string cfg.dataUrl
     case resp of
-      Left err -> H.put (Failed (AX.printError err))
+      Left err -> H.modify_ _ { status = Failed (AX.printError err) }
       Right r -> case parseTree r.body of
-        Left e -> H.put (Failed e)
+        Left e -> H.modify_ _ { status = Failed e }
         Right td@(TreeData rec) ->
-          H.put (Ready { cells: layoutTree vbW vbH td, edges: rec.edges, rectDepth: rec.rectDepth, showEdges: false, tip: Nothing, link: cfg })
+          H.modify_ _ { status = Ready { cells: layoutTree vbW vbH td, edges: rec.edges, rectDepth: rec.rectDepth, showEdges: false, tip: Nothing, link: cfg } }
+  Receive input ->
+    H.modify_ _ { selected = input.selected }
+  ClickCell id t -> do
+    st <- H.get
+    handleAction (ClickTip t)
+    H.raise (SelectUmbrella (if st.selected == Just (UmbrellaId id) then Nothing else Just (UmbrellaId id)))
+  ClickBubble id t -> do
+    st <- H.get
+    handleAction (ClickTip t)
+    when (st.selected /= Just (UmbrellaId id)) (H.raise (SelectUmbrella (Just (UmbrellaId id))))
   ToggleEdges ->
-    H.modify_ case _ of
+    modifyStatus case _ of
       Ready l -> Ready (l { showEdges = not l.showEdges })
       s -> s
   HoverTip t ->
-    H.modify_ case _ of
+    modifyStatus case _ of
       Ready l -> case l.tip of
         Just p | p.pinned -> Ready l -- a pin holds; hover doesn't override
         _ -> Ready (l { tip = Just t })
       s -> s
   LeaveTip ->
-    H.modify_ case _ of
+    modifyStatus case _ of
       Ready l -> case l.tip of
         Just p | p.pinned -> Ready l
         _ -> Ready (l { tip = Nothing })
       s -> s
   ClickTip t ->
-    H.modify_ case _ of
+    modifyStatus case _ of
       Ready l -> case l.tip of
         Just p | p.pinned && p.key == t.key -> Ready (l { tip = Nothing }) -- tap again dismisses
         _ -> Ready (l { tip = Just t })
       s -> s
   OpenLink url ->
     liftEffect (openInNewTabImpl url)
+  where
+  modifyStatus f = H.modify_ \st -> st { status = f st.status }
 
 -- SVG helpers --------------------------------------------------------------
 
@@ -185,6 +213,26 @@ tipProps link key title body cover =
         Nothing -> ClickTip (mk true e))
     ]
 
+-- Like tipProps, but a plain click runs the given action (which also selects the umbrella).
+cellProps
+  :: forall r
+   . (Tip -> Action)
+  -> Maybe String
+  -> String
+  -> String
+  -> Maybe String
+  -> Maybe String
+  -> Array (HP.IProp (onMouseMove :: MouseEvent, onMouseLeave :: MouseEvent, onClick :: MouseEvent | r) Action)
+cellProps onPlainClick link key title body cover =
+  let mk pinned e = { title, body: fromMaybe "" body, cover, x: clientX e, y: clientY e, key, pinned }
+  in
+    [ HE.onMouseMove (\e -> HoverTip (mk false e))
+    , HE.onMouseLeave (\_ -> LeaveTip)
+    , HE.onClick (\e -> case (if metaKey e || ctrlKey e then link else Nothing) of
+        Just url -> OpenLink url
+        Nothing -> onPlainClick (mk true e))
+    ]
+
 -- Atlas palette (semantic, by domain) --------------------------------------
 
 domainColor :: Maybe String -> String
@@ -214,21 +262,12 @@ statusOpacity = case _ of
 
 -- Editorial palette (De Stijl, keyed on project identity) -------------------
 
+-- Shared with the timeline (MM.Palette), so an umbrella is one colour in both views.
 editorialColor :: Int -> String
-editorialColor = case _ of
-  125 -> "#e23b2e"
-  133 -> "#f6c700"
-  134 -> "#faf8f3"
-  223 -> "#1d54b8"
-  136 -> "#16140f"
-  _ -> "#faf8f3"
+editorialColor id = Palette.umbrellaColor (UmbrellaId id)
 
 inkOn :: String -> String
-inkOn = case _ of
-  "#f6c700" -> "#16140f"
-  "#faf8f3" -> "#16140f"
-  "#cdbfa3" -> "#16140f"
-  _ -> "#f5f2eb"
+inkOn = Palette.inkOn
 
 edgeColor :: String -> String
 edgeColor = case _ of
@@ -250,7 +289,7 @@ excluded = []
 -- Render -------------------------------------------------------------------
 
 render :: forall m. State -> H.ComponentHTML Action () m
-render = case _ of
+render st = case st.status of
   Loading -> HH.div [ HP.class_ (ClassName "mm-msg") ] [ HH.text "Loading the project graph..." ]
   Failed e -> HH.div [ HP.class_ (ClassName "mm-msg mm-err") ] [ HH.text ("Could not load tree.json: " <> e) ]
   Ready l ->
@@ -261,16 +300,12 @@ render = case _ of
         Editorial -> [ rectEl 0.0 0.0 vbW vbH "#16140f" [] ]
         Atlas -> []
       cellHtml = case theme of
-        Editorial -> concatMap (editorialCell l.link) visible
+        Editorial -> concatMap (dimmed st.selected (editorialCell l.link)) visible
         Atlas -> concatMap (atlasCell l.link) visible
       arcs = if l.showEdges then renderArcs (positionsOf visible) l.edges else []
-      masthead = case theme of
-        Editorial -> [ HH.h1 [ HP.class_ (ClassName "mm-title") ] [ HH.text "What I've been working on\x2026" ] ]
-        Atlas -> []
     in
       HH.div [ HP.class_ (ClassName ("mm-stage " <> themeClass theme)) ]
-        ( masthead <>
-            [ svgEl "svg"
+        ( [ svgEl "svg"
                 [ attr "viewBox" ("0 0 " <> show vbW <> " " <> show vbH)
                 , attr "width" "100%"
                 , attr "height" "100%"
@@ -306,6 +341,14 @@ tooltip = case _ of
 
 -- Editorial cell (De Stijl) ------------------------------------------------
 
+-- With an umbrella selected, every other cell is washed back with a veil of the page
+-- colour (not opacity, which would let the black backdrop muddy it); the grid stays.
+dimmed :: forall w. Maybe UmbrellaId -> (Cell -> Array (HH.HTML w Action)) -> Cell -> Array (HH.HTML w Action)
+dimmed selected draw cell = case selected of
+  Just (UmbrellaId s) | s /= cell.id ->
+    draw cell <> [ rectEl cell.x cell.y cell.w cell.h Palette.cream [ attr "fill-opacity" "0.72", attr "pointer-events" "none" ] ]
+  _ -> draw cell
+
 editorialCell :: forall w. LinkConfig -> Cell -> Array (HH.HTML w Action)
 editorialCell cfg cell =
   let
@@ -327,8 +370,8 @@ editorialCell cfg cell =
       Nothing -> []
     nameY = cell.y + pad + (if cell.tagline == Nothing then 8.0 + nameSize else 34.0 + nameSize)
   in
-    [ rectEl cell.x cell.y cell.w cell.h c (tipProps link ("c" <> show cell.id) cell.name cell.description cell.cover) ]
-      <> map (editorialBubble cfg ink) cell.bubbles
+    [ rectEl cell.x cell.y cell.w cell.h c (cellProps (ClickCell cell.id) link ("c" <> show cell.id) cell.name cell.description cell.cover <> [ attr "style" "cursor:pointer" ]) ]
+      <> map (editorialBubble cfg ink cell.id) cell.bubbles
       <> kickerHtml
       <>
         [ textEl (cell.x + pad) nameY cell.name
@@ -349,7 +392,7 @@ infoIcon cfg ink cell =
     ix = cell.x + cell.w - 26.0
     iy = cell.y + cell.h - 26.0
   in
-    svgEl "g" (tipProps link ("c" <> show cell.id) cell.name cell.description cell.cover <> [ attr "style" "cursor:pointer" ])
+    svgEl "g" (cellProps (ClickCell cell.id) link ("c" <> show cell.id) cell.name cell.description cell.cover <> [ attr "style" "cursor:pointer" ])
       [ svgEl "circle"
           [ attr "cx" (show ix), attr "cy" (show iy), attr "r" "11"
           , attr "fill" "none", attr "stroke" ink, attr "stroke-opacity" "0.55", attr "stroke-width" "1.5"
@@ -361,8 +404,8 @@ infoIcon cfg ink cell =
           ]
       ]
 
-editorialBubble :: forall w. LinkConfig -> String -> Bubble -> HH.HTML w Action
-editorialBubble cfg ink b =
+editorialBubble :: forall w. LinkConfig -> String -> Int -> Bubble -> HH.HTML w Action
+editorialBubble cfg ink umbrellaId b =
   let
     link = resolveLink cfg b.id b.repoUrl
     -- Coverage map: fill-opacity says whether this sub-project has a DESCRIPTION (text),
@@ -385,7 +428,7 @@ editorialBubble cfg ink b =
       | otherwise = []
     style = [ attr "fill" ink, attr "fill-opacity" fillOp, attr "style" "cursor:pointer" ] <> ring
   in
-    svgEl "circle" (geom <> style <> tipProps link ("b" <> show b.id) b.name b.description b.cover) []
+    svgEl "circle" (geom <> style <> cellProps (ClickBubble umbrellaId) link ("b" <> show b.id) b.name b.description b.cover) []
 
 bubbleTitle :: Bubble -> String
 bubbleTitle b = b.name <> case b.status of

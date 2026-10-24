@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to overrides.json (gitignored) and edit. Every key is a thread's ORIGINAL name from timeline.json. include: name -> id of a project on the map (any depth). fate: one of shipped, active, parked, half-done, abandoned, superseded, unknown. successor: name -> successor thread's original name, or null to drop a guess.",
+  "include": { "<thread name>": 125 },
+  "exclude": ["<thread name>"],
+  "rename": { "<thread name>": "<public name>" },
+  "fate": { "<thread name>": "shipped" },
+  "what": { "<thread name>": "<public one-liner>" },
+  "successor": { "<thread name>": "<successor thread name>" }
+}

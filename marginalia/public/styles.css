@@ -1,4 +1,7 @@
-:root { --cream: #f5f2eb; --ink: #16140f; }
+:root {
+  --cream: #f5f2eb; --ink: #16140f;
+  --gutter: clamp(16px, 2.4vw, 40px);
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -6,39 +9,65 @@ body {
   color: var(--ink);
   font-family: system-ui, -apple-system, 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow: hidden; /* the page never scrolls; the timeline scrolls inside itself */
 }
-#app { width: 100vw; height: 100vh; }
-#app > svg { display: block; width: 100%; height: 100%; }
+#app { width: 100vw; height: 100vh; height: 100dvh; }
 .mm-msg { padding: 2rem; font-weight: 300; }
 .mm-err { color: #e23b2e; }
 
-.mm-stage { position: relative; width: 100%; height: 100%; }
-.mm-stage > svg { display: block; width: 100%; height: 100%; }
-/* editorial (De Stijl) view: cream margin around the black grid, masthead above */
-.mm-editorial {
+/* shell: masthead + view switch, then the active view filling the rest */
+.mm-app {
   display: flex; flex-direction: column;
-  padding: clamp(14px, 2.4vw, 40px);
+  width: 100%; height: 100%;
+  padding: var(--gutter);
   gap: clamp(8px, 1.4vw, 20px);
 }
-.mm-editorial > svg { flex: 1 1 auto; height: auto; min-height: 0; }
+.mm-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+}
+.mm-head-text { min-width: 0; flex: 1 1 24rem; }
 .mm-title {
   font-weight: 200;
   font-size: clamp(1.4rem, 3.4vw, 2.8rem);
   letter-spacing: -0.01em;
+  line-height: 1.1;
   color: var(--ink);
 }
+.mm-sub {
+  margin-top: 0.35rem; max-width: 46rem;
+  font-size: 0.85rem; font-weight: 300; line-height: 1.45; opacity: 0.8;
+}
+.mm-switch { display: flex; flex: 0 0 auto; }
+.mm-switch .mm-btn + .mm-btn { border-left: 0; }
+.mm-main { position: relative; flex: 1 1 auto; min-height: 0; }
+.mm-pane { position: absolute; inset: 0; }
+.mm-pane.is-hidden { display: none; }
+
+.mm-btn {
+  font: inherit; font-size: 0.78rem; letter-spacing: 0.04em;
+  border: 1px solid var(--ink); background: var(--cream); color: var(--ink);
+  padding: 0.3rem 0.8rem; border-radius: 2px; cursor: pointer;
+  white-space: nowrap;
+}
+.mm-btn.on { background: var(--ink); color: var(--cream); }
+.mm-btn:focus-visible, .tl-head:focus-visible { outline: 2px solid #1d54b8; outline-offset: 2px; }
+
+/* map */
+.mm-stage { position: relative; width: 100%; height: 100%; }
+.mm-stage > svg { display: block; width: 100%; height: 100%; }
 .mm-toggle {
-  position: absolute; top: 1rem; right: 1rem;
+  position: absolute; top: 0.6rem; right: 0.6rem;
   font: inherit; font-size: 0.78rem; letter-spacing: 0.04em;
   border: 1px solid var(--ink); background: var(--cream); color: var(--ink);
   padding: 0.3rem 0.8rem; border-radius: 2px; cursor: pointer;
 }
 .mm-toggle.on { background: var(--ink); color: var(--cream); }
 
-/* cursor-tracking tooltip: project description (cell/info icon) or sub-project (bubble) */
+/* cursor-tracking tooltip: project description (cell/info icon), sub-project (bubble), thread */
 .mm-tip {
   position: fixed; pointer-events: none; z-index: 20;
-  max-width: 22rem;
+  max-width: min(22rem, calc(100vw - 2rem));
   background: var(--ink); color: var(--cream);
   padding: 0.5rem 0.7rem; border-radius: 3px;
   font-size: 0.8rem; line-height: 1.45;
@@ -54,4 +83,42 @@ body {
   font-weight: 300; opacity: 0.9;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 7; line-clamp: 7;
   overflow: hidden;
+}
+
+/* timeline */
+.tl { display: flex; flex-direction: column; height: 100%; gap: 0.6rem; }
+.tl-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.5rem 1.2rem;
+}
+.tl-legend {
+  list-style: none; display: flex; flex-wrap: wrap; gap: 0.3rem 0.95rem;
+  font-size: 0.75rem; letter-spacing: 0.02em;
+}
+.tl-legend li { display: flex; align-items: center; gap: 0.35rem; }
+.tl-legend svg { display: block; overflow: visible; }
+.tl-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.tl-count { font-size: 0.75rem; opacity: 0.7; font-variant-numeric: tabular-nums; }
+
+/* the chart scrolls in both directions inside itself; the month axis sticks to its top */
+.tl-scroll {
+  flex: 1 1 auto; min-height: 0;
+  overflow: auto; -webkit-overflow-scrolling: touch;
+  border-top: 1px solid var(--ink);
+}
+.tl-svg { display: block; width: 100%; min-width: 1080px; height: auto; }
+.tl-axis { position: sticky; top: 0; z-index: 2; }
+.tl-head { cursor: pointer; }
+.tl-head:hover text { text-decoration: underline; }
+.tl-thread { cursor: default; }
+.tl-thread:hover text { text-decoration: underline; }
+
+.tl-tip-meta { font-size: 0.72rem; opacity: 0.75; margin-bottom: 0.25rem; }
+.tl-tip-meta:last-of-type { margin-top: 0.3rem; margin-bottom: 0.1rem; }
+.tl-tip-fate { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.85; }
+.tl-tip-fate.is-unfinished { opacity: 1; font-weight: 600; }
+
+@media (max-width: 600px) {
+  .mm-sub { font-size: 0.78rem; }
+  .tl-legend { font-size: 0.7rem; gap: 0.25rem 0.7rem; }
 }
