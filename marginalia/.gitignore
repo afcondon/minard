@@ -9,3 +9,4 @@ preview/
 # Git view: raw per-commit data from both machines (repo and file paths, subjects).
 git-activity/private/
 public/git-activity.json
+review-public.md

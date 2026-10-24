@@ -24,6 +24,8 @@ cp "$SITE/tree.json" "$OUT/tree.json"
 cp -R "$SITE/covers" "$OUT/covers"
 # Andrew's own images for Line-view notes (overrides.json "image"), if any.
 [ -d "$HERE/images" ] && cp -R "$HERE/images" "$OUT/images"
+# Last: people's names to initials, hosts and paths out (overrides.json "redact").
+node "$HERE/redact-public.mjs" "$OUT"/*.json
 cat > "$HERE/preview/index.html" <<'HTML'
 <!DOCTYPE html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=map/"><a href="map/">map/</a>
 HTML
