@@ -3,7 +3,8 @@
 -- |
 -- |   { period: { from, to }, generatedAt, umbrellas: [{ id, name }],
 -- |     threads: [{ name, what, kind, fate, first, last, days[], umbrella,
--- |                 project: { id, name } | null, successor: name | null }] }
+-- |                 project: { id, name } | null, successor: name | null,
+-- |                 cover?, note?, image? }] }
 -- |
 -- | Dates are "YYYY-MM-DD" on the wire and `Date` here. Fate and kind are closed
 -- | sets, so they are ADTs, and an unknown string fails the decode rather than
@@ -126,6 +127,9 @@ type ThreadFields =
   , umbrella :: UmbrellaId
   , project :: Maybe MapProject
   , successor :: Maybe ThreadName
+  , cover :: Maybe String -- screenshot of the thread's own map project (Line view)
+  , note :: Maybe String -- Andrew's hand-written note, from overrides.json (Line view)
+  , image :: Maybe String -- Andrew's chosen image, from overrides.json (Line view)
   }
 
 newtype Thread = Thread ThreadFields
@@ -218,6 +222,9 @@ threadCodec = CA.coercible "Thread" fields
     , umbrella: umbrellaIdCodec
     , project: CAC.maybe mapProjectCodec
     , successor: CAC.maybe threadNameCodec
+    , cover: CAR.optional CA.string
+    , note: CAR.optional CA.string
+    , image: CAR.optional CA.string
     }
 
 timelineCodec :: JsonCodec Timeline

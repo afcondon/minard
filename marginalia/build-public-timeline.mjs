@@ -67,6 +67,8 @@ const ov = {
   fate: overrides.fate || {}, // name -> fate
   what: overrides.what || {}, // name -> public one-liner
   successor: overrides.successor || {}, // name -> successor thread name (or null)
+  note: overrides.note || {}, // name -> Andrew's own short note (Line view)
+  image: overrides.image || {}, // name -> image path relative to the map page (Line view)
 };
 for (const [n, f] of Object.entries(ov.fate)) {
   if (!FATES.includes(f)) throw new Error(`overrides.fate["${n}"] = "${f}" is not one of ${FATES.join(', ')}`);
@@ -77,7 +79,7 @@ const umbrellas = tree.nodes.children.map((u) => ({ id: u.id, name: u.name }));
 const onMap = new Map(); // project id -> { id, name, umbrella }
 for (const u of tree.nodes.children) {
   (function walk(n) {
-    onMap.set(n.id, { id: n.id, name: n.name, umbrella: u.id });
+    onMap.set(n.id, { id: n.id, name: n.name, umbrella: u.id, cover: n.cover || null });
     n.children.forEach(walk);
   })(u);
 }
@@ -250,6 +252,13 @@ function publicThread({ t, hit }) {
     umbrella: hit.umbrella,
     project: hit.id === hit.umbrella ? null : { id: hit.id, name: hit.name },
     successor: succ && publishedNames.has(succ) ? publicName(byName.get(succ)) : null,
+    // Line view extras, present only when there is something to show:
+    // a screenshot only where the thread's OWN Marginalia project is the map node that
+    // carries the cover (a cover is never inherited from an ancestor), and Andrew's
+    // hand-written note/image from overrides.json.
+    ...(hit.cover && t.marginalia && t.marginalia.id === hit.id ? { cover: hit.cover } : {}),
+    ...(ov.note[t.name] ? { note: oneLine(ov.note[t.name]) } : {}),
+    ...(ov.image[t.name] ? { image: String(ov.image[t.name]) } : {}),
   };
 }
 
@@ -258,7 +267,7 @@ const published = included
   .sort((a, b) => a.first.localeCompare(b.first) || a.name.localeCompare(b.name));
 
 // Belt and braces: the output must contain only whitelisted keys.
-const ALLOWED = new Set(['name', 'what', 'kind', 'fate', 'first', 'last', 'days', 'umbrella', 'project', 'successor']);
+const ALLOWED = new Set(['name', 'what', 'kind', 'fate', 'first', 'last', 'days', 'umbrella', 'project', 'successor', 'cover', 'note', 'image']);
 for (const p of published) {
   for (const k of Object.keys(p)) if (!ALLOWED.has(k)) throw new Error(`refusing to publish field "${k}"`);
 }

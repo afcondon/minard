@@ -122,3 +122,63 @@ body {
   .mm-sub { font-size: 0.78rem; }
   .tl-legend { font-size: 0.7rem; gap: 0.25rem 0.7rem; }
 }
+
+/* line: one line of time down the page; this pane scrolls vertically */
+.mm-pane-line { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+.ln { display: flex; flex-direction: column; gap: 0.8rem; }
+.ln-bar { display: flex; flex-direction: column; gap: 0.5rem; }
+.ln-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.ln-chip { display: inline-flex; align-items: center; gap: 0.4rem; }
+.ln-chip svg { display: block; }
+.ln-legend {
+  list-style: none; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.9rem;
+  font-size: 0.75rem; letter-spacing: 0.02em;
+}
+.ln-legend li { display: flex; align-items: center; gap: 0.35rem; }
+.ln-legend svg { display: block; overflow: visible; }
+.ln-legend .ln-rule { opacity: 0.7; flex-basis: 100%; }
+.ln-chart { position: relative; width: 100%; border-top: 1px solid var(--ink); }
+.ln-svg { position: absolute; top: 0; left: 0; display: block; overflow: visible; }
+.ln-head { cursor: pointer; }
+.ln-head:focus-visible { outline: 2px solid #1d54b8; }
+
+/* cards: FIXED heights (MM.Line.Layout.cardHeight = 80, +38 with a note) */
+.ln-card {
+  position: absolute; overflow: hidden;
+  background: var(--cream);
+  border: 1px solid rgba(22, 20, 15, 0.22);
+  border-left: 4px solid var(--strand, var(--ink));
+  padding: 6px 9px 6px 8px;
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+}
+.ln-card.is-left { border-left-width: 1px; border-left-color: rgba(22, 20, 15, 0.22); border-right: 4px solid var(--strand, var(--ink)); }
+.ln-card.is-focus { box-shadow: 0 0 0 1.5px var(--ink), 0 4px 14px rgba(0, 0, 0, 0.14); z-index: 3; }
+.ln-kicker {
+  display: flex; align-items: center; gap: 6px;
+  height: 14px; line-height: 14px; margin-bottom: 4px;
+  font-size: 10px; letter-spacing: 0.08em; white-space: nowrap;
+}
+.ln-kicker svg { flex: 0 0 auto; display: block; overflow: visible; }
+.ln-moment { overflow: hidden; text-overflow: ellipsis; opacity: 0.8; }
+.ln-card.is-unfinished .ln-moment { opacity: 1; font-weight: 700; }
+.ln-date { margin-left: auto; padding-left: 6px; opacity: 0.65; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+.ln-main { display: flex; gap: 8px; }
+.ln-thumb { flex: 0 0 44px; width: 44px; height: 44px; object-fit: cover; border: 1px solid var(--ink); }
+.ln-text { min-width: 0; flex: 1 1 auto; }
+.ln-name {
+  font-size: 13px; line-height: 17px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ln-what {
+  font-size: 11.5px; line-height: 15px; font-weight: 300; height: 30px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+.ln-note {
+  margin-top: 4px; padding-top: 3px; border-top: 1px solid rgba(22, 20, 15, 0.18);
+  font-size: 11.5px; line-height: 15px; font-style: italic; height: 34px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+.ln-chart.is-narrow .ln-days { display: none; }
+.ln-chart.is-narrow .ln-card { padding-left: 6px; padding-right: 6px; }
+.ln-chart.is-narrow .ln-kicker { letter-spacing: 0.02em; gap: 4px; }

@@ -5,7 +5,7 @@
 #
 #   marginalia/stage-preview.sh            # build public data, bundle, stage
 #   python3 -m http.server 8765 -d marginalia/preview
-#   open http://localhost:8765/map/        # or /map/#timeline
+#   open http://localhost:8765/map/        # or /map/#timeline, /map/#line
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SITE="${SITE:-$HERE/../../../cloudflare-sites/andrewcondon/map}"
@@ -19,6 +19,8 @@ mkdir -p "$OUT"
 cp "$HERE/site/index.html" "$HERE/public/styles.css" "$HERE/public/bundle.js" "$HERE/public/timeline-public.json" "$OUT/"
 cp "$SITE/tree.json" "$OUT/tree.json"
 cp -R "$SITE/covers" "$OUT/covers"
+# Andrew's own images for Line-view notes (overrides.json "image"), if any.
+[ -d "$HERE/images" ] && cp -R "$HERE/images" "$OUT/images"
 cat > "$HERE/preview/index.html" <<'HTML'
 <!DOCTYPE html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=map/"><a href="map/">map/</a>
 HTML

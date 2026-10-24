@@ -3,9 +3,12 @@
 -- | which view is showing and which umbrella is selected, and keeps both in the URL
 -- | hash so a view can be linked to:
 -- |
--- |   #map            #timeline            #timeline/125   (125 = Hylograph's id)
+-- |   #map   #timeline   #line   and /<umbrella id> on any of them (#timeline/125)
 -- |
--- | Both views stay mounted (the hidden one is `display:none`), so switching keeps
+-- | Three views: Map (where), Timeline (when, as swimlanes), Line (one line of time
+-- | down the page with annotations).
+-- |
+-- | All views stay mounted (the hidden one is `display:none`), so switching keeps
 -- | the timeline's scroll position and neither refetches its data.
 module MM.App (component) where
 
@@ -27,6 +30,7 @@ import Halogen.HTML.Properties as HP
 import Halogen.HTML.Properties.ARIA as HPA
 import Halogen.Query.Event (eventListener)
 import MM.Component as MapView
+import MM.Line.Component as LineView
 import MM.Timeline.Component as TimelineView
 import MM.Timeline.Types (UmbrellaId(..))
 import Type.Proxy (Proxy(..))
@@ -37,7 +41,7 @@ import Web.HTML.Window (location, toEventTarget)
 
 foreign import readTimelineUrl :: Effect String
 
-data View = MapView | TimelineView
+data View = MapView | TimelineView | LineView
 
 derive instance Eq View
 
@@ -54,6 +58,7 @@ data Action
 type Slots =
   ( map :: forall q. H.Slot q MapView.Output Unit
   , timeline :: forall q. H.Slot q TimelineView.Output Unit
+  , line :: forall q. H.Slot q LineView.Output Unit
   )
 
 component :: forall q i o m. MonadAff m => H.Component q i o m
@@ -76,6 +81,7 @@ parseRoute h =
     parts = split (Pattern "/") body
     view = case index parts 0 of
       Just "timeline" -> TimelineView
+      Just "line" -> LineView
       _ -> MapView
     selected = UmbrellaId <$> (index (drop 1 parts) 0 >>= fromString)
   in
@@ -85,7 +91,8 @@ printRoute :: Route -> String
 printRoute r =
   (case r.view of
     MapView -> "map"
-    TimelineView -> "timeline")
+    TimelineView -> "timeline"
+    LineView -> "line")
     <> case r.selected of
       Just u -> "/" <> show (unwrap u)
       Nothing -> ""
@@ -124,36 +131,49 @@ render :: forall m. MonadAff m => State -> H.ComponentHTML Action Slots m
 render st =
   let
     r = st.route
-    isMap = r.view == MapView
     pane v content =
-      HH.div [ HP.class_ (ClassName ("mm-pane" <> if r.view == v then "" else " is-hidden")) ] [ content ]
+      HH.div [ HP.class_ (ClassName ("mm-pane mm-pane-" <> viewKey v <> if r.view == v then "" else " is-hidden")) ] [ content ]
+    title = case r.view of
+      MapView -> "What I've been working on\x2026"
+      TimelineView -> "\x2026" <> "and when."
+      LineView -> "\x2026" <> "and as it happened."
+    sub = case r.view of
+      MapView -> "A handful of long-running efforts. Each block is one umbrella; its size echoes how many sub-projects it holds. Select one to follow it into the timeline."
+      TimelineView -> "Thirteen months of work with Claude Code, September 2025 to October 2026: every thread, including the ones that didn't finish."
+      LineView -> "One line of time, oldest at the top. Each umbrella is a strand that swells in the weeks it was busy; the notes mark where threads began, shipped, or went quiet."
   in
     HH.div [ HP.class_ (ClassName "mm-app") ]
       [ HH.header [ HP.class_ (ClassName "mm-head") ]
           [ HH.div [ HP.class_ (ClassName "mm-head-text") ]
               [ HH.h1 [ HP.class_ (ClassName "mm-title") ]
-                  [ HH.text (if isMap then "What I've been working on\x2026" else "\x2026" <> "and when.") ]
+                  [ HH.text title ]
               , HH.p [ HP.class_ (ClassName "mm-sub") ]
-                  [ HH.text
-                      ( if isMap then "A handful of long-running efforts. Each block is one umbrella; its size echoes how many sub-projects it holds. Select one to follow it into the timeline."
-                        else "Thirteen months of work with Claude Code, September 2025 to October 2026: every thread, including the ones that didn't finish."
-                      )
-                  ]
+                  [ HH.text sub ]
               ]
           , HH.nav [ HP.class_ (ClassName "mm-switch"), HPA.label "View" ]
               [ switchButton "Map" MapView r.view
               , switchButton "Timeline" TimelineView r.view
+              , switchButton "Line" LineView r.view
               ]
           ]
       , HH.main [ HP.class_ (ClassName "mm-main") ]
           [ pane MapView (HH.slot (Proxy :: _ "map") unit MapView.component { selected: r.selected } fromMap)
           , pane TimelineView
               (HH.slot (Proxy :: _ "timeline") unit TimelineView.component { selected: r.selected, dataUrl: st.timelineUrl } fromTimeline)
+          , pane LineView
+              (HH.slot (Proxy :: _ "line") unit LineView.component { selected: r.selected, dataUrl: st.timelineUrl } fromLine)
           ]
       ]
   where
   fromMap (MapView.SelectUmbrella u) = Select u
   fromTimeline (TimelineView.SelectUmbrella u) = Select u
+  fromLine (LineView.SelectUmbrella u) = Select u
+
+viewKey :: View -> String
+viewKey = case _ of
+  MapView -> "map"
+  TimelineView -> "timeline"
+  LineView -> "line"
 
 switchButton :: forall w. String -> View -> View -> HH.HTML w Action
 switchButton label v current =

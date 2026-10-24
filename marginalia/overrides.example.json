@@ -1,9 +1,28 @@
 {
-  "_comment": "Copy to overrides.json (gitignored) and edit. Every key is a thread's ORIGINAL name from timeline.json. include: name -> id of a project on the map (any depth). fate: one of shipped, active, parked, half-done, abandoned, superseded, unknown. successor: name -> successor thread's original name, or null to drop a guess.",
-  "include": { "<thread name>": 125 },
-  "exclude": ["<thread name>"],
-  "rename": { "<thread name>": "<public name>" },
-  "fate": { "<thread name>": "shipped" },
-  "what": { "<thread name>": "<public one-liner>" },
-  "successor": { "<thread name>": "<successor thread name>" }
+  "_comment": "Copy to overrides.json (gitignored) and edit. Every key is a thread's ORIGINAL name from timeline.json. include: name -> id of a project on the map (any depth). fate: one of shipped, active, parked, half-done, abandoned, superseded, unknown. successor: name -> successor thread's original name, or null to drop a guess. note: name -> your own short note, shown on the Line view. image: name -> image path relative to the map page (e.g. images/x.jpg; stage-preview.sh copies marginalia/images/).",
+  "include": {
+    "<thread name>": 125
+  },
+  "exclude": [
+    "<thread name>"
+  ],
+  "rename": {
+    "<thread name>": "<public name>"
+  },
+  "fate": {
+    "<thread name>": "shipped"
+  },
+  "what": {
+    "<thread name>": "<public one-liner>"
+  },
+  "successor": {
+    "<thread name>": "<successor thread name>"
+  },
+  "note": {
+    "<thread name>": "<a sentence in your own words: why it stopped, what it taught you>",
+    "<another thread name>": "<placeholder note>"
+  },
+  "image": {
+    "<thread name>": "images/<screenshot>.jpg"
+  }
 }
