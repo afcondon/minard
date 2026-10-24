@@ -182,3 +182,11 @@ body {
 .ln-chart.is-narrow .ln-days { display: none; }
 .ln-chart.is-narrow .ln-card { padding-left: 6px; padding-right: 6px; }
 .ln-chart.is-narrow .ln-kicker { letter-spacing: 0.02em; gap: 4px; }
+.ln-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.2rem; }
+.ln-group { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+.ln-seg { gap: 0; }
+.ln-seg .mm-btn + .mm-btn { border-left: 0; }
+.ln-group-label { font-size: 0.75rem; margin-right: 0.45rem; opacity: 0.75; }
+.ln-month { cursor: pointer; }
+.ln-month:hover text { text-decoration: underline; }
+.ln-month:focus-visible { outline: 2px solid #1d54b8; }

@@ -262,7 +262,7 @@ chartSvg (Timeline tl) chart selected =
       , attr "viewBox" ("0 0 " <> num chart.width <> " " <> num (max 1.0 chart.height))
       , attr "preserveAspectRatio" "xMinYMin meet"
       , attr "role" "img"
-      , attr "aria-label" "Timeline of threads by umbrella, September 2025 to October 2026"
+      , attr "aria-label" "Timeline of threads by umbrella, October 2025 to October 2026"
       ]
       ( [ defs ]
           <> concatMap bandBackground chart.bands
@@ -359,6 +359,11 @@ barMarks key colour uname b =
     label = case b.labelSide of
       LabelAfter -> textAt (b.x1 + endMarkWidth t.fate + 5.0) (y + barHeight - 0.5) b.label labelProps
       LabelBefore -> textAt (b.x0 - 5.0) (y + barHeight - 0.5) b.label (labelProps <> [ attr "text-anchor" "end" ])
+      LabelInside ->
+        -- on the bar itself; legible ink for the bar's fill
+        let solidBar = t.fate == Shipped || t.fate == Active
+        in textAt (b.x0 + 6.0) (y + barHeight - 0.8) b.label
+             (labelProps <> [ attr "fill" (if solidBar then Palette.inkOn (Palette.barFill colour) else Palette.ink), attr "font-size" "8.5" ])
     -- an invisible hit area over the whole row slot, so a 3px bar is still easy to hover/tap
     hit = rectAt b.rect.x b.rect.y (max 8.0 (b.x1 - b.x0 + endMarkWidth t.fate)) b.rect.height [ attr "fill" "transparent" ]
   in

@@ -33,7 +33,9 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.HTML.Properties.ARIA as HPA
 import Halogen.Query.Event (eventListener)
-import MM.Line.Layout (Annotation, Card, Geometry, Mode(..), Moment(..), Strand, cardHeight, layoutLine, minActiveDays, momentLabel)
+import MM.Line.Layout (Annotation, Card, Geometry, Mode(..), Moment(..), Segment, Strand, cardHeight, layoutLine, monthKeys, momentLabel)
+import MM.Line.Options (FateGroup, LineOptions, MonthKey, allGroups, densitySteps, groupLabel)
+import Data.Set as Set
 import MM.Marks (attr, fateMark, fmtDate, hatchDef, lineAt, num, pathD, rectAt, svgEl, textAt)
 import MM.Palette as Palette
 import MM.Timeline.Types (Fate(..), Thread(..), ThreadName, Timeline(..), Umbrella, UmbrellaId, fateLabel, parseTimeline)
@@ -41,9 +43,10 @@ import Web.Event.Event (EventType(..))
 import Web.HTML (window)
 import Web.HTML.Window (innerWidth, toEventTarget)
 
-type Input = { selected :: Maybe UmbrellaId, dataUrl :: String }
+type Input = { selected :: Maybe UmbrellaId, options :: LineOptions, dataUrl :: String }
 
-data Output = SelectUmbrella (Maybe UmbrellaId)
+-- | Selection and options live in MM.App (and the URL); this view asks for changes.
+data Output = SelectUmbrella (Maybe UmbrellaId) | SetOptions LineOptions
 
 type Focus = { name :: ThreadName, umbrella :: UmbrellaId, pinned :: Boolean }
 
@@ -64,6 +67,11 @@ data Action
   | Enter Annotation
   | Leave
   | Tap Annotation
+  | ToggleMonth MonthKey
+  | FoldAll
+  | UnfoldAll
+  | ToggleFate FateGroup
+  | SetDensity Int
 
 component :: forall q m. MonadAff m => H.Component q Input Output m
 component =
@@ -77,10 +85,10 @@ component =
         }
     }
 
-geometryFor :: Number -> Maybe UmbrellaId -> Timeline -> Geometry
-geometryFor width selected = layoutLine width shown
+geometryFor :: Number -> Input -> Timeline -> Geometry
+geometryFor width input = layoutLine width shown input.options
   where
-  shown u = case selected of
+  shown u = case input.selected of
     Just s -> s == u
     Nothing -> true
 
@@ -107,17 +115,26 @@ handleAction = case _ of
       Left err -> H.modify_ _ { status = Failed (AX.printError err) }
       Right r -> case parseTimeline r.body of
         Left e -> H.modify_ _ { status = Failed e }
-        Right tl -> H.modify_ _ { status = Ready { timeline: tl, geometry: geometryFor width st.input.selected tl, focus: Nothing } }
+        Right tl -> H.modify_ _ { status = Ready { timeline: tl, geometry: geometryFor width st.input tl, focus: Nothing } }
   Receive input -> do
     st <- H.get
-    when (input.selected /= st.input.selected) do
-      H.modify_ _ { input = input, status = relayout st.width input.selected st.status }
+    when (input.selected /= st.input.selected || input.options /= st.input.options) do
+      H.modify_ _ { input = input, status = relayout st.width input st.status }
   Resize -> do
     width <- availableWidth <$> liftEffect (window >>= innerWidth)
     st <- H.get
     when (width /= st.width) do
-      H.modify_ _ { width = width, status = relayout width st.input.selected st.status }
+      H.modify_ _ { width = width, status = relayout width st.input st.status }
   Select u -> H.raise (SelectUmbrella u)
+  ToggleMonth k -> setOptions \o -> o { folded = toggle k o.folded }
+  FoldAll -> do
+    st <- H.get
+    case st.status of
+      Ready l -> setOptions _ { folded = Set.fromFoldable (monthKeys l.timeline) }
+      _ -> pure unit
+  UnfoldAll -> setOptions _ { folded = Set.empty }
+  ToggleFate g -> setOptions \o -> o { fates = toggle g o.fates }
+  SetDensity n -> setOptions _ { minDays = n }
   Enter a -> modifyLoaded \l -> case l.focus of
     Just f | f.pinned -> l
     _ -> l { focus = Just (focusOf false a) }
@@ -128,13 +145,18 @@ handleAction = case _ of
     Just f | f.pinned && f.name == nameOf a -> l { focus = Nothing }
     _ -> l { focus = Just (focusOf true a) }
   where
-  relayout width sel = case _ of
-    Ready l -> Ready (l { geometry = geometryFor width sel l.timeline, focus = Nothing })
+  relayout width input = case _ of
+    Ready l -> Ready (l { geometry = geometryFor width input l.timeline, focus = Nothing })
     s -> s
   modifyLoaded f = H.modify_ \st -> case st.status of
     Ready l -> st { status = Ready (f l) }
     s -> st { status = s }
   focusOf pinned a = { name: nameOf a, umbrella: a.umbrella, pinned }
+  setOptions f = do
+    st <- H.get
+    H.raise (SetOptions (f st.input.options))
+  toggle :: forall a. Ord a => a -> Set.Set a -> Set.Set a
+  toggle x set = if Set.member x set then Set.delete x set else Set.insert x set
 
 nameOf :: Annotation -> ThreadName
 nameOf a = let Thread t = a.thread in t.name
@@ -211,17 +233,30 @@ render st = case st.status of
       Timeline tl = l.timeline
       g = l.geometry
       selected = st.input.selected
+      opts = st.input.options
     in
       HH.div [ HP.class_ (ClassName "ln") ]
         [ HH.div [ HP.class_ (ClassName "ln-bar") ]
             [ HH.div [ HP.class_ (ClassName "ln-chips") ] (map (chip selected) tl.umbrellas)
+            , HH.div [ HP.class_ (ClassName "ln-controls") ]
+                [ HH.div [ HP.class_ (ClassName "ln-group"), HPA.label "Show cards for" ]
+                    (map (fateChip opts) allGroups)
+                , HH.div [ HP.class_ (ClassName "ln-group ln-seg"), HPA.label "Minimum active days" ]
+                    ( [ HH.span [ HP.class_ (ClassName "ln-group-label") ] [ HH.text "days \x2265" ] ]
+                        <> map (densityButton opts) densitySteps
+                    )
+                , HH.div [ HP.class_ (ClassName "ln-group ln-seg") ]
+                    [ HH.button [ HP.class_ (ClassName "mm-btn"), HE.onClick \_ -> FoldAll ] [ HH.text "fold all" ]
+                    , HH.button [ HP.class_ (ClassName "mm-btn"), HE.onClick \_ -> UnfoldAll ] [ HH.text "unfold all" ]
+                    ]
+                ]
             , HH.ul [ HP.class_ (ClassName "ln-legend") ]
                 ( map anchorLegend [ Started, ShippedAt, WentQuiet, SupersededAt, ParkedAt ]
                     <> [ HH.li [ HP.class_ (ClassName "ln-rule") ]
                            [ HH.text
                                ( show (length g.cards) <> " notes: every half-done or abandoned thread, and any other with "
-                                   <> show minActiveDays
-                                   <> "+ active days. A strand's width is how many of its threads were worked on that week."
+                                   <> show opts.minDays
+                                   <> "+ active days. A strand's width is how many of its threads were worked on that week; click a month to fold it."
                                )
                            ]
                        ]
@@ -233,6 +268,28 @@ render st = case st.status of
             ]
             ([ ribbonSvg g selected l.focus ] <> map (cardHtml l.focus) g.cards)
         ]
+
+fateChip :: forall w. LineOptions -> FateGroup -> HH.HTML w Action
+fateChip opts grp =
+  let on = Set.member grp opts.fates
+  in
+    HH.button
+      [ HP.class_ (ClassName ("mm-btn" <> if on then " on" else ""))
+      , HPA.pressed (if on then "true" else "false")
+      , HE.onClick \_ -> ToggleFate grp
+      ]
+      [ HH.text (groupLabel grp) ]
+
+densityButton :: forall w. LineOptions -> Int -> HH.HTML w Action
+densityButton opts n =
+  let on = opts.minDays == n
+  in
+    HH.button
+      [ HP.class_ (ClassName ("mm-btn" <> if on then " on" else ""))
+      , HPA.pressed (if on then "true" else "false")
+      , HE.onClick \_ -> SetDensity n
+      ]
+      [ HH.text (show n) ]
 
 modeClass :: Mode -> String
 modeClass = case _ of
@@ -265,18 +322,8 @@ ribbonSvg g selected focus =
       Nothing -> case selected of
         Just s -> s == u
         Nothing -> true
-    monthLabelX = g.ribbonLeft - 6.0
-    months = concatMap
-      ( \m ->
-          [ lineAt (g.ribbonLeft - 4.0) m.y (g.ribbonRight + 4.0) m.y
-              [ attr "stroke" Palette.ink, attr "stroke-width" (if m.yearStart then "1.4" else "0.6"), attr "stroke-opacity" (if m.yearStart then "0.9" else "0.45") ]
-          , textAt monthLabelX (m.y + 4.0) m.label
-              [ attr "fill" Palette.ink, attr "font-size" (if g.mode == Narrow then "10" else "11"), attr "text-anchor" "end"
-              , attr "font-weight" (if m.yearStart then "600" else "400"), attr "letter-spacing" "0.03em"
-              ]
-          ]
-      )
-      g.months
+    bands = concatMap (foldBand g) g.segments
+    months = concatMap (monthHeader g) g.segments
     strandEls = concatMap (strandEl lit) g.strands
     heads = map (strandHead selected) g.strands
     focusCard = focus >>= \f -> find (\c -> nameOf c.annotation == f.name) g.cards
@@ -295,22 +342,61 @@ ribbonSvg g selected focus =
       , attr "height" (num g.height)
       , attr "viewBox" ("0 0 " <> num g.width <> " " <> num g.height)
       , attr "role" "img"
-      , attr "aria-label" "A line of time, September 2025 at the top to October 2026, with a strand per umbrella"
+      , attr "aria-label" "A line of time, October 2025 at the top to October 2026, with a strand per umbrella"
       ]
       ( [ svgEl "defs" [] (concatMap (\s -> strandPattern s.umbrella.id) g.strands <> [ hatchDef "ln" Palette.blue ]) ]
-          <> months
+          <> bands
           <> strandEls
           <> heads
           <> leaders
           <> spanEls
           <> anchors
-          <> case g.caption of
-            Just c ->
-              [ textAt (g.ribbonRight + 14.0) c.y c.text
-                  [ attr "fill" Palette.ink, attr "fill-opacity" "0.7", attr "font-size" "12", attr "font-style" "italic" ]
-              ]
-            Nothing -> []
+          <> months
       )
+
+-- A folded month: a faint band across the page behind its compressed ribbon.
+foldBand :: forall w i. Geometry -> Segment -> Array (HH.HTML w i)
+foldBand g seg =
+  if seg.folded then [ rectAt 0.0 seg.y0 g.width (seg.y1 - seg.y0) [ attr "fill" Palette.ink, attr "fill-opacity" "0.045" ] ]
+  else []
+
+-- A month's header: its rule across the ribbon and its label in the gutter, which
+-- folds or unfolds it. A folded month also says what it holds.
+monthHeader :: forall m. Geometry -> Segment -> Array (H.ComponentHTML Action () m)
+monthHeader g seg =
+  let
+    labelX = g.ribbonLeft - 8.0
+    glyph = if seg.folded then "\x25B8 " else "\x25BE "
+    summary = case g.mode of
+      Wide ->
+        seg.longLabel <> " \x00b7 " <> show seg.threads <> (if seg.threads == 1 then " thread" else " threads")
+          <> (if seg.quiet > 0 then " (" <> show seg.quiet <> " went quiet)" else "")
+      Narrow ->
+        show seg.threads <> " threads" <> (if seg.quiet > 0 then ", " <> show seg.quiet <> " went quiet" else "")
+    hitW = g.ribbonLeft
+  in
+    [ lineAt (g.ribbonLeft - 4.0) seg.y0 (g.ribbonRight + 4.0) seg.y0
+        [ attr "stroke" Palette.ink, attr "stroke-width" (if seg.yearStart then "1.4" else "0.6"), attr "stroke-opacity" (if seg.yearStart then "0.9" else "0.45") ]
+    , svgEl "g"
+        [ attr "class" "ln-month", attr "role" "button", attr "tabindex" "0"
+        , attr "aria-expanded" (if seg.folded then "false" else "true")
+        , attr "aria-label" ((if seg.folded then "Unfold " else "Fold ") <> seg.longLabel)
+        , HE.onClick \_ -> ToggleMonth seg.key
+        ]
+        ( [ rectAt (max 0.0 (labelX - 80.0)) (seg.y0 - 10.0) (min 80.0 hitW) 22.0 [ attr "fill" "transparent" ]
+          , textAt labelX (seg.y0 + 4.0) (glyph <> seg.label)
+              [ attr "fill" Palette.ink, attr "font-size" (if g.mode == Narrow then "10" else "11"), attr "text-anchor" "end"
+              , attr "font-weight" (if seg.yearStart then "600" else "400"), attr "letter-spacing" "0.03em"
+              ]
+          ]
+            <>
+              if seg.folded then
+                [ textAt (g.ribbonRight + 14.0) ((seg.y0 + seg.y1) / 2.0 + 4.0) summary
+                    [ attr "fill" Palette.ink, attr "fill-opacity" "0.8", attr "font-size" "12" ]
+                ]
+              else []
+        )
+    ]
 
 strandEl :: forall w i. (UmbrellaId -> Boolean) -> Strand -> Array (HH.HTML w i)
 strandEl lit s =

@@ -3,7 +3,8 @@
 -- | which view is showing and which umbrella is selected, and keeps both in the URL
 -- | hash so a view can be linked to:
 -- |
--- |   #map   #timeline   #line   and /<umbrella id> on any of them (#timeline/125)
+-- |   #map   #timeline   #line   and /<umbrella id> on any of them (#timeline/125),
+-- |   plus the Line view's folds and filters after a ? (#line/125?fold=2025-10&min=12)
 -- |
 -- | Three views: Map (where), Timeline (when, as swimlanes), Line (one line of time
 -- | down the page with annotations).
@@ -16,7 +17,7 @@ import Prelude
 
 import Data.Array (drop, index)
 import Data.Int (fromString)
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Newtype (unwrap)
 import Data.String (Pattern(..), split, stripPrefix)
 import Effect (Effect)
@@ -31,6 +32,7 @@ import Halogen.HTML.Properties.ARIA as HPA
 import Halogen.Query.Event (eventListener)
 import MM.Component as MapView
 import MM.Line.Component as LineView
+import MM.Line.Options (LineOptions, defaultOptions, parseOptions, printOptions)
 import MM.Timeline.Component as TimelineView
 import MM.Timeline.Types (UmbrellaId(..))
 import Type.Proxy (Proxy(..))
@@ -45,7 +47,8 @@ data View = MapView | TimelineView | LineView
 
 derive instance Eq View
 
-type Route = { view :: View, selected :: Maybe UmbrellaId }
+-- | `line` is the Line view's fold/filter state, after a `?` in the hash.
+type Route = { view :: View, selected :: Maybe UmbrellaId, line :: LineOptions }
 
 type State = { route :: Route, timelineUrl :: String }
 
@@ -54,6 +57,7 @@ data Action
   | HashChanged
   | Show View
   | Select (Maybe UmbrellaId)
+  | SetLine LineOptions
 
 type Slots =
   ( map :: forall q. H.Slot q MapView.Output Unit
@@ -64,7 +68,7 @@ type Slots =
 component :: forall q i o m. MonadAff m => H.Component q i o m
 component =
   H.mkComponent
-    { initialState: const { route: { view: MapView, selected: Nothing }, timelineUrl: "timeline-public.json" }
+    { initialState: const { route: { view: MapView, selected: Nothing, line: defaultOptions }, timelineUrl: "timeline-public.json" }
     , render
     , eval: H.mkEval H.defaultEval
         { handleAction = handleAction
@@ -77,7 +81,10 @@ component =
 parseRoute :: String -> Route
 parseRoute h =
   let
-    body = fromMaybe h (stripPrefix (Pattern "#") h)
+    full = fromMaybe h (stripPrefix (Pattern "#") h)
+    pathAndQuery = split (Pattern "?") full
+    body = fromMaybe "" (index pathAndQuery 0)
+    line = maybe defaultOptions parseOptions (index pathAndQuery 1)
     parts = split (Pattern "/") body
     view = case index parts 0 of
       Just "timeline" -> TimelineView
@@ -85,7 +92,7 @@ parseRoute h =
       _ -> MapView
     selected = UmbrellaId <$> (index (drop 1 parts) 0 >>= fromString)
   in
-    { view, selected }
+    { view, selected, line }
 
 printRoute :: Route -> String
 printRoute r =
@@ -93,9 +100,12 @@ printRoute r =
     MapView -> "map"
     TimelineView -> "timeline"
     LineView -> "line")
-    <> case r.selected of
+    <> (case r.selected of
       Just u -> "/" <> show (unwrap u)
-      Nothing -> ""
+      Nothing -> "")
+    <> case printOptions r.line of
+      "" -> ""
+      q -> "?" <> q
 
 readRoute :: Effect Route
 readRoute = parseRoute <$> (window >>= location >>= hash)
@@ -120,6 +130,7 @@ handleAction = case _ of
     H.modify_ _ { route = route }
   Show v -> go \r -> r { view = v }
   Select u -> go \r -> r { selected = u }
+  SetLine o -> go \r -> r { line = o }
   where
   go f = do
     st <- H.modify \s -> s { route = f s.route }
@@ -139,7 +150,7 @@ render st =
       LineView -> "\x2026" <> "and as it happened."
     sub = case r.view of
       MapView -> "A handful of long-running efforts. Each block is one umbrella; its size echoes how many sub-projects it holds. Select one to follow it into the timeline."
-      TimelineView -> "Thirteen months of work with Claude Code, September 2025 to October 2026: every thread, including the ones that didn't finish."
+      TimelineView -> "A year of work with Claude Code, from 14 October 2025 to October 2026: every thread, including the ones that didn't finish."
       LineView -> "One line of time, oldest at the top. Each umbrella is a strand that swells in the weeks it was busy; the notes mark where threads began, shipped, or went quiet."
   in
     HH.div [ HP.class_ (ClassName "mm-app") ]
@@ -161,13 +172,14 @@ render st =
           , pane TimelineView
               (HH.slot (Proxy :: _ "timeline") unit TimelineView.component { selected: r.selected, dataUrl: st.timelineUrl } fromTimeline)
           , pane LineView
-              (HH.slot (Proxy :: _ "line") unit LineView.component { selected: r.selected, dataUrl: st.timelineUrl } fromLine)
+              (HH.slot (Proxy :: _ "line") unit LineView.component { selected: r.selected, options: r.line, dataUrl: st.timelineUrl } fromLine)
           ]
       ]
   where
   fromMap (MapView.SelectUmbrella u) = Select u
   fromTimeline (TimelineView.SelectUmbrella u) = Select u
   fromLine (LineView.SelectUmbrella u) = Select u
+  fromLine (LineView.SetOptions o) = SetLine o
 
 viewKey :: View -> String
 viewKey = case _ of

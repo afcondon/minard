@@ -47,6 +47,12 @@ const EXCLUDED = flag('--excluded', path.join(HERE, 'excluded.md'));
 const API = (process.env.MARGINALIA_API || 'http://andrews-mac-mini:3100').replace(/\/$/, '');
 const USE_API = !args.includes('--no-api');
 
+// Year zero: the first day of work with Claude Code (the first prompt history). Every
+// view starts here. Days before it are clipped, and a thread with no days left is
+// dropped. The one place this date lives.
+const YEAR_ZERO = '2025-10-14';
+const clipDays = (t) => [...new Set(t.days)].filter((d) => d >= YEAR_ZERO).sort();
+
 const FATES = ['shipped', 'active', 'parked', 'half-done', 'abandoned', 'superseded', 'unknown'];
 const KINDS = ['repo', 'feature', 'idea', 'infra', 'doc'];
 
@@ -173,6 +179,10 @@ function homeOf(t, seen = new Set()) {
 const included = [];
 const excluded = [];
 for (const t of timeline.threads) {
+  if (clipDays(t).length === 0) {
+    excluded.push({ t, reason: `all its days fall before year zero (${YEAR_ZERO})` });
+    continue;
+  }
   if (ov.exclude.has(t.name)) {
     excluded.push({ t, reason: 'excluded by overrides.json' });
     continue;
@@ -246,9 +256,9 @@ function publicThread({ t, hit }) {
     what: oneLine(ov.what[t.name] || t.what),
     kind,
     fate,
-    first: t.first,
+    first: t.first < YEAR_ZERO ? clipDays(t)[0] : t.first,
     last: t.last,
-    days: [...new Set(t.days)].sort(),
+    days: clipDays(t),
     umbrella: hit.umbrella,
     project: hit.id === hit.umbrella ? null : { id: hit.id, name: hit.name },
     successor: succ && publishedNames.has(succ) ? publicName(byName.get(succ)) : null,
@@ -275,7 +285,7 @@ const dupes = published.map((p) => p.name).filter((n, i, a) => a.indexOf(n) !== 
 if (dupes.length) throw new Error(`duplicate public names after renames: ${dupes.join(', ')}`);
 
 const out = {
-  period: { from: timeline.period[0], to: timeline.period[1] },
+  period: { from: YEAR_ZERO > timeline.period[0] ? YEAR_ZERO : timeline.period[0], to: timeline.period[1] },
   generatedAt: new Date().toISOString().slice(0, 10),
   umbrellas,
   threads: published,

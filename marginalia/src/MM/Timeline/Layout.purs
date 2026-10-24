@@ -65,7 +65,9 @@ defaultConfig =
   , minBar: 3.0
   }
 
-data LabelSide = LabelAfter | LabelBefore
+-- | Where a bar's label goes: after it, before it, or (for a bar that spans nearly
+-- | the whole period, so neither side has room) inside it, at its start.
+data LabelSide = LabelAfter | LabelBefore | LabelInside
 
 derive instance Eq LabelSide
 
@@ -224,10 +226,14 @@ place cfg plotRight xOfDay acc th@(Thread t) =
     label = labelOf th
     labelW = toNumber (Str.length label) * cfg.charWidth
     afterEnd = x1 + endMark t.fate + cfg.labelGap + labelW
-    side = if afterEnd <= plotRight + cfg.padLeft then LabelAfter else LabelBefore
+    side
+      | afterEnd <= plotRight + cfg.padLeft = LabelAfter
+      | x0 - cfg.labelGap - labelW >= 0.0 = LabelBefore
+      | otherwise = LabelInside
     extent = case side of
       LabelAfter -> { lo: x0, hi: afterEnd }
       LabelBefore -> { lo: max 0.0 (x0 - cfg.labelGap - labelW), hi: x1 + endMark t.fate }
+      LabelInside -> { lo: x0, hi: x1 + endMark t.fate }
     fits end = end + cfg.rowGap <= extent.lo
     row = fromMaybe (length acc.rowEnds) (findIndex fits acc.rowEnds)
     rowEnds =
