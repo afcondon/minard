@@ -25,6 +25,9 @@ module MM.Timeline.Types
   , kindLabel
   , dayNumber
   , dateFromDayNumber
+  , dateCodec
+  , umbrellaIdCodec
+  , umbrellaCodec
   , parseTimeline
   ) where
 

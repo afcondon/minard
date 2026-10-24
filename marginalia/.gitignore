@@ -5,3 +5,7 @@ public/timeline-public.json
 excluded.md
 overrides.json
 preview/
+
+# Git view: raw per-commit data from both machines (repo and file paths, subjects).
+git-activity/private/
+public/git-activity.json

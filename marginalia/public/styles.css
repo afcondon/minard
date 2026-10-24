@@ -190,3 +190,22 @@ body {
 .ln-month { cursor: pointer; }
 .ln-month:hover text { text-decoration: underline; }
 .ln-month:focus-visible { outline: 2px solid #1d54b8; }
+
+/* git: the commit calendar, with weekly lines of code and prose under the same columns */
+.mm-pane-git { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+.gt { display: flex; flex-direction: column; gap: 0.9rem; padding-bottom: 1rem; }
+.gt-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.6rem 1.4rem; border-top: 3px solid var(--ink); padding-top: 0.7rem;
+}
+.gt-big { font-size: clamp(1.4rem, 2.6vw, 2.1rem); font-weight: 600; letter-spacing: -0.01em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.gt-small { font-size: 0.75rem; opacity: 0.75; margin-top: 0.15rem; }
+.gt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.4rem; }
+.gt-key { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.6rem; font-size: 0.72rem; }
+.gt-key-step { display: inline-flex; align-items: center; gap: 0.25rem; font-variant-numeric: tabular-nums; }
+.gt-key svg, .ln-chip svg { display: block; }
+.gt-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.gt-svg { display: block; width: 100%; min-width: 720px; height: auto; }
+.gt-cell:hover { stroke: var(--ink); stroke-opacity: 1; stroke-width: 1.2; }
+.gt-week:hover { fill: rgba(22, 20, 15, 0.05); }
+.gt-note { font-size: 0.75rem; line-height: 1.45; opacity: 0.75; max-width: 62rem; }

@@ -12,11 +12,14 @@ SITE="${SITE:-$HERE/../../../cloudflare-sites/andrewcondon/map}"
 OUT="$HERE/preview/map"
 
 node "$HERE/build-public-timeline.mjs" "$@"
+# The Git view's totals, from the per-machine exports (git-activity/collect.sh), if present.
+if ls "$HERE"/git-activity/private/*.tsv >/dev/null 2>&1; then node "$HERE/build-git-activity.mjs"; fi
 (cd "$HERE/.." && spago bundle -p minard-marginalia)
 
 rm -rf "$HERE/preview"
 mkdir -p "$OUT"
 cp "$HERE/site/index.html" "$HERE/public/styles.css" "$HERE/public/bundle.js" "$HERE/public/timeline-public.json" "$OUT/"
+[ -f "$HERE/public/git-activity.json" ] && cp "$HERE/public/git-activity.json" "$OUT/"
 cp "$SITE/tree.json" "$OUT/tree.json"
 cp -R "$SITE/covers" "$OUT/covers"
 # Andrew's own images for Line-view notes (overrides.json "image"), if any.

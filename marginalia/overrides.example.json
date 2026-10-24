@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to overrides.json (gitignored) and edit. Every key is a thread's ORIGINAL name from timeline.json. include: name -> id of a project on the map (any depth). fate: one of shipped, active, parked, half-done, abandoned, superseded, unknown. successor: name -> successor thread's original name, or null to drop a guess. note: name -> your own short note, shown on the Line view. image: name -> image path relative to the map page (e.g. images/x.jpg; stage-preview.sh copies marginalia/images/).",
+  "_comment": "Copy to overrides.json (gitignored) and edit. Every key is a thread's ORIGINAL name from timeline.json. include: name -> id of a project on the map (any depth). fate: one of shipped, active, parked, half-done, abandoned, superseded, unknown. successor: name -> successor thread's original name, or null to drop a guess. note: name -> your own short note, shown on the Line view. image: name -> image path relative to the map page (e.g. images/x.jpg; stage-preview.sh copies marginalia/images/). gitUmbrella (Git view only): repo path prefix under ~/work -> map umbrella id, for repos Marginalia's tree doesn't place under an umbrella; longest prefix wins.",
   "include": {
     "<thread name>": 125
   },
@@ -24,5 +24,8 @@
   },
   "image": {
     "<thread name>": "images/<screenshot>.jpg"
+  },
+  "gitUmbrella": {
+    "<repo path prefix under ~/work, e.g. afc-work/music/>": 223
   }
 }

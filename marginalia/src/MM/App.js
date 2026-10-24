@@ -4,3 +4,9 @@ export const readTimelineUrl = () => {
   const c = (typeof window !== "undefined" && window.MM_CONFIG) || {};
   return c.timelineUrl || "timeline-public.json";
 };
+
+// The Git view's data: window.MM_CONFIG = { gitUrl: "git-activity.json" }.
+export const readGitUrl = () => {
+  const c = (typeof window !== "undefined" && window.MM_CONFIG) || {};
+  return c.gitUrl || "git-activity.json";
+};
